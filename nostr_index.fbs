@@ -1,0 +1,32 @@
+namespace NostrIndex;
+
+struct Fixed32Bytes {
+    val: [ubyte:32];
+}
+
+struct Fixed64Bytes {
+    val: [ubyte:64];
+}
+
+table TagGeneral {
+    key: uint8;
+    val: [ubyte];
+}
+
+table TagFixed32 {
+    key: uint8;
+    val: Fixed32Bytes;
+}
+
+table Event {
+    id: Fixed32Bytes;
+    pubkey: Fixed32Bytes;
+    created_at: uint64;
+    kind: uint64;
+    tagsGeneral: [TagGeneral];
+    tagsFixed32: [TagFixed32];
+    signature: Fixed64Bytes;
+}
+
+table Empty {}
+root_type Empty;
