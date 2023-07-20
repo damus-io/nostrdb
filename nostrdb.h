@@ -76,7 +76,8 @@ void ndb_builder_set_id(struct ndb_builder *builder, unsigned char *id);
 void ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind);
 int ndb_builder_add_tag(struct ndb_builder *builder, const char **strs, uint16_t num_strs);
 
-static inline int ndb_str_is_packed(union packed_str str) {
+static inline int
+ndb_str_is_packed(union packed_str str) {
 	return (str.offset >> 31) & 0x1;
 }
 
@@ -88,34 +89,41 @@ ndb_note_string(struct ndb_note *note, union packed_str *str) {
 	return ((const char *)note) + note->strings + str->offset;
 }
 
-static inline unsigned char *ndb_note_id(struct ndb_note *note) {
+static inline unsigned char *
+ndb_note_id(struct ndb_note *note) {
 	return note->id;
 }
 
-static inline unsigned char *ndb_note_pubkey(struct ndb_note *note) {
+static inline unsigned char *
+ndb_note_pubkey(struct ndb_note *note) {
 	return note->pubkey;
 }
 
-static inline unsigned char *ndb_note_signature(struct ndb_note *note) {
+static inline unsigned char *
+ndb_note_signature(struct ndb_note *note) {
 	return note->signature;
 }
 
-static inline uint32_t ndb_note_created_at(struct ndb_note *note) {
+static inline uint32_t
+ndb_note_created_at(struct ndb_note *note) {
 	return note->created_at;
 }
 
-static inline const char *ndb_note_content(struct ndb_note *note) {
+static inline const char *
+ndb_note_content(struct ndb_note *note) {
 	return ndb_note_string(note, &note->content);
 }
 
-static inline struct ndb_note *ndb_note_from_bytes(unsigned char *bytes) {
+static inline struct ndb_note *
+ndb_note_from_bytes(unsigned char *bytes) {
 	struct ndb_note *note = (struct ndb_note *)bytes;
 	if (note->version != 1)
 		return 0;
 	return note;
 }
 
-static inline union packed_str ndb_offset_str(uint32_t offset) {
+static inline union packed_str
+ndb_offset_str(uint32_t offset) {
 	// ensure accidents like -1 don't corrupt our packed_str
 	union packed_str str;
 	str.offset = offset & 0x7FFFFFFF;

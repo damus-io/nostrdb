@@ -4,7 +4,8 @@
 #include "hex.h"
 #include <stdlib.h>
 
-int ndb_builder_new(struct ndb_builder *builder, int *bufsize) {
+int
+ndb_builder_new(struct ndb_builder *builder, int *bufsize) {
 	struct ndb_note *note;
 	struct cursor mem;
 	// 1MB + 0.5MB
@@ -33,7 +34,8 @@ int ndb_builder_new(struct ndb_builder *builder, int *bufsize) {
 	return 1;
 }
 
-int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note) {
+int
+ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note) {
 	int strings_len = builder->strings.p - builder->strings.start;
 	unsigned char *end = builder->note_cur.p + strings_len;
 	int total_size = end - builder->note_cur.start;
@@ -50,11 +52,13 @@ int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note) {
 	return total_size;
 }
 
-struct ndb_note *ndb_builder_note(struct ndb_builder *builder) {
+struct ndb_note *
+ndb_builder_note(struct ndb_builder *builder) {
 	return builder->note;
 }
 
-int ndb_builder_make_string(struct ndb_builder *builder, const char *str, int len, union packed_str *pstr) {
+int
+ndb_builder_make_string(struct ndb_builder *builder, const char *str, int len, union packed_str *pstr) {
 	uint32_t loc;
 
 	if (len == 0) {
@@ -96,12 +100,14 @@ int ndb_builder_make_string(struct ndb_builder *builder, const char *str, int le
 	return 1;
 }
 
-int ndb_builder_set_content(struct ndb_builder *builder, const char *content, int len) {
+int
+ndb_builder_set_content(struct ndb_builder *builder, const char *content, int len) {
 	return ndb_builder_make_string(builder, content, len, &builder->note->content);
 }
 
 
-static inline int jsoneq(const char *json, jsmntok_t *tok, int tok_len, const char *s) {
+static inline int
+jsoneq(const char *json, jsmntok_t *tok, int tok_len, const char *s) {
 	if (tok->type == JSMN_STRING && (int)strlen(s) == tok_len &&
 	    memcmp(json + tok->start, s, tok_len) == 0) {
 		return 1;
@@ -174,27 +180,33 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note) {
 	return ndb_builder_finalize(&builder, note);
 }
 
-void ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey) {
+void
+ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey) {
 	memcpy(builder->note->pubkey, pubkey, 32);
 }
 
-void ndb_builder_set_id(struct ndb_builder *builder, unsigned char *id) {
+void
+ndb_builder_set_id(struct ndb_builder *builder, unsigned char *id) {
 	memcpy(builder->note->id, id, 32);
 }
 
-void ndb_builder_set_signature(struct ndb_builder *builder, unsigned char *signature) {
+void
+ndb_builder_set_signature(struct ndb_builder *builder, unsigned char *signature) {
 	memcpy(builder->note->signature, signature, 64);
 }
 
-void ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind) {
+void
+ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind) {
 	builder->note->kind = kind;
 }
 
-static inline int cursor_push_tag(struct cursor *cur, struct ndb_tag *tag) {
+static inline int
+cursor_push_tag(struct cursor *cur, struct ndb_tag *tag) {
 	return cursor_push_u16(cur, tag->count);
 }
 
-int ndb_builder_add_tag(struct ndb_builder *builder, const char **strs, uint16_t num_strs) {
+int
+ndb_builder_add_tag(struct ndb_builder *builder, const char **strs, uint16_t num_strs) {
 	int i;
 	union packed_str pstr;
 	const char *str;
