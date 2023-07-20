@@ -105,7 +105,8 @@ static void test_parse_json() {
 		"{\"id\": \"" HEX_ID "\",\"pubkey\": \"" HEX_PK "\",\"created_at\": 1689836342,\"kind\": 1,\"tags\": [[\"p\",\"" HEX_ID "\"], [\"word\", \"words\", \"w\"]],\"content\": \"共通語\",\"sig\": \"e4d528651311d567f461d7be916c37cbf2b4d530e672f29f15f353291ed6df60c665928e67d2f18861c5ca88\"}";
 	int ok;
 
-	ndb_note_from_json(json, strlen(json), &note, buffer, sizeof(buffer));
+	ok = ndb_note_from_json(json, strlen(json), &note, buffer, sizeof(buffer));
+	assert(ok);
 
 	const char *content = ndb_note_content(note);
 	unsigned char *id = ndb_note_id(note);

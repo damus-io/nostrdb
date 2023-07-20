@@ -59,8 +59,11 @@ static inline int
 ndb_json_parser_init(struct ndb_json_parser *p, const char *json, int json_len, unsigned char *buf, int bufsize) {
 	int half = bufsize / 2;
 
-	p->toks = (jsmntok_t*)buf + half;
-	p->toks_end = (jsmntok_t*)buf + bufsize;
+	unsigned char *tok_start = buf + half;
+	unsigned char *tok_end = buf + bufsize;
+
+	p->toks = (jsmntok_t*)tok_start;
+	p->toks_end = (jsmntok_t*)tok_end;
 	p->num_tokens = 0;
 	p->json = json;
 	p->json_len = json_len;
@@ -83,7 +86,7 @@ ndb_json_parser_init(struct ndb_json_parser *p, const char *json, int json_len, 
 
 static inline int
 ndb_json_parser_parse(struct ndb_json_parser *p) {
-	int cap = (p->toks_end - p->toks)/sizeof(*p->toks);
+	int cap = ((unsigned char *)p->toks_end - (unsigned char*)p->toks)/sizeof(*p->toks);
 	p->num_tokens =
 		jsmn_parse(&p->json_parser, p->json, p->json_len, p->toks, cap);
 
