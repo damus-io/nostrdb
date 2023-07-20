@@ -1,8 +1,11 @@
 
-CFLAGS = -Wall
+CFLAGS = -Wall -Werror -O3
 
 check: test
 	./test
+
+clean:
+	rm test
 
 tags:
 	ctags *.c *.h
@@ -13,4 +16,4 @@ test: test.c nostrdb.c nostrdb.h
 %.o: %.c
 	$(CC) $(CFLAGS)
 
-.PHONY: tags
+.PHONY: tags clean
