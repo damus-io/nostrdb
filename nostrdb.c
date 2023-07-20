@@ -12,7 +12,6 @@ struct ndb_json_parser {
 	jsmn_parser json_parser;
 	jsmntok_t *toks, *toks_end;
 	int num_tokens;
-	struct cursor mem;
 };
 
 static inline int
@@ -73,6 +72,7 @@ ndb_json_parser_init(struct ndb_json_parser *p, const char *json, int json_len, 
 	// something even more clever like golden-ratio style subdivision where
 	// the more important stuff gets a larger chunk and then it spirals
 	// downward into smaller chunks. Thanks for coming to my TED talk.
+
 	if (!ndb_builder_new(&p->builder, buf, half))
 		return 0;
 
@@ -178,19 +178,19 @@ static inline int toksize(jsmntok_t *tok) {
 }
 
 static inline int
-build_tag_from_json_tokens(const char *json, jsmntok_t *tag, struct ndb_builder *builder) {
-	printf("tag %.*s %d\n", toksize(tag), json + tag->start, tag->type);
+build_tag_from_json_tokens(struct ndb_json_parser *p, jsmntok_t *tag) {
+	printf("tag %.*s %d\n", toksize(tag), p->json + tag->start, tag->type);
 
 	return 1;
 }
 
 static inline int
-ndb_builder_process_json_tags(const char *json, jsmntok_t *array, struct ndb_builder *builder) {
+ndb_builder_process_json_tags(struct ndb_json_parser *p, jsmntok_t *array) {
 	jsmntok_t *tag = array;
-	printf("json_tags %.*s %d\n", toksize(tag), json + tag->start, tag->type);
+	printf("json_tags %.*s %d\n", toksize(tag), p->json + tag->start, tag->type);
 
 	for (int i = 0; i < array->size; i++) {
-		if (!build_tag_from_json_tokens(json, &tag[i+1], builder))
+		if (!build_tag_from_json_tokens(p, &tag[i+1]))
 			return 0;
 		tag += array->size;
 	}
@@ -260,7 +260,7 @@ ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 			}
 		} else if (start[0] == 't' && jsoneq(json, tok, tok_len, "tags")) {
 			tok = &parser.toks[i+1];
-			ndb_builder_process_json_tags(json, tok, &parser.builder);
+			ndb_builder_process_json_tags(&parser, tok);
 			i += tok->size;
 		}
 	}
