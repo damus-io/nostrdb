@@ -87,8 +87,9 @@ static void test_parse_json() {
 	char hex_id[65] = {0};
 	struct ndb_note *note;
 #define HEX_ID "5004a081e397c6da9dc2f2d6b3134006a9d0e8c1b46689d9fe150bb2f21a204d"
+#define HEX_PK "b169f596968917a1abeb4234d3cf3aa9baee2112e58998d17c6db416ad33fe40"
 	static const char *json = 
-		"{\"id\": \"" HEX_ID "\",\"pubkey\": \"b169f596968917a1abeb4234d3cf3aa9baee2112e58998d17c6db416ad33fe40\",\"created_at\": 1689836342,\"kind\": 1,\"tags\": [],\"content\": \"共通語\",\"sig\": \"e4d528651311d567f461d7be916c37cbf2b4d530e672f29f15f353291ed6df60c665928e67d2f18861c5ca88\"}";
+		"{\"id\": \"" HEX_ID "\",\"pubkey\": \"" HEX_PK "\",\"created_at\": 1689836342,\"kind\": 1,\"tags\": [[\"p\",\"" HEX_ID "\"], [\"word\", \"words\"]],\"content\": \"共通語\",\"sig\": \"e4d528651311d567f461d7be916c37cbf2b4d530e672f29f15f353291ed6df60c665928e67d2f18861c5ca88\"}";
 
 	ndb_note_from_json(json, strlen(json), &note);
 

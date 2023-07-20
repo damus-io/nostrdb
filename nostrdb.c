@@ -2,7 +2,18 @@
 #include "nostrdb.h"
 #include "jsmn.h"
 #include "hex.h"
+#include "cursor.h"
 #include <stdlib.h>
+
+struct ndb_json_parser {
+	struct ndb_builder builder;
+	struct cursor buf;
+};
+
+static inline int
+cursor_push_tag(struct cursor *cur, struct ndb_tag *tag) {
+	return cursor_push_u16(cur, tag->count);
+}
 
 int
 ndb_builder_new(struct ndb_builder *builder, int *bufsize) {
@@ -115,16 +126,43 @@ jsoneq(const char *json, jsmntok_t *tok, int tok_len, const char *s) {
 	return 0;
 }
 
-int ndb_note_from_json(const char *json, int len, struct ndb_note **note) {
-	int i, r;
-	struct ndb_builder builder;
-	jsmn_parser p;
+static inline int toksize(jsmntok_t *tok) {
+	return tok->end - tok->start;
+}
+
+static inline int
+build_tag_from_json_tokens(const char *json, jsmntok_t *tag, struct ndb_builder *builder) {
+	printf("tag %.*s %d\n", toksize(tag), json + tag->start, tag->type);
+
+	return 1;
+}
+
+static inline int
+ndb_builder_process_json_tags(const char *json, jsmntok_t *array, struct ndb_builder *builder) {
+	jsmntok_t *tag = array;
+	printf("json_tags %.*s %d\n", toksize(tag), json + tag->start, tag->type);
+
+	for (int i = 0; i < array->size; i++) {
+		if (!build_tag_from_json_tokens(json, &tag[i+1], builder))
+			return 0;
+		tag += array->size;
+	}
+
+	return 1;
+}
+
+
+int
+ndb_note_from_json(const char *json, int len, struct ndb_note **note) {
 	jsmntok_t toks[4096], *tok = NULL;
 	unsigned char buf[64];
-	jsmn_init(&p);
-	int tok_len;
+	struct ndb_builder builder;
+	jsmn_parser p;
+
+	int i, r, tok_len;
 	const char *start;
 
+	jsmn_init(&p);
 	ndb_builder_new(&builder, &len);
 
 	r = jsmn_parse(&p, json, len, toks, sizeof(toks)/sizeof(toks[0]));
@@ -134,46 +172,48 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note) {
 
 	for (i = 1; i < r; i++) {
 		tok = &toks[i];
-		tok_len = tok->end - tok->start;
 		start = json + tok->start;
+		tok_len = toksize(tok);
+
+		//printf("toplevel %.*s %d\n", tok_len, json + tok->start, tok->type);
 		if (tok_len == 0 || i + 1 >= r)
 			continue;
 
 		if (start[0] == 'p' && jsoneq(json, tok, tok_len, "pubkey")) {
 			// pubkey
-			tok = &toks[i+1]; tok_len = tok->end - tok->start;
-			hex_decode(json + tok->start, tok_len, buf, sizeof(buf));
+			tok = &toks[i+1];
+			hex_decode(json + tok->start, toksize(tok), buf, sizeof(buf));
 			ndb_builder_set_pubkey(&builder, buf);
 		} else if (tok_len == 2 && start[0] == 'i' && start[1] == 'd') {
 			// id
-			tok = &toks[i+1]; tok_len = tok->end - tok->start;
-			hex_decode(json + tok->start, tok_len, buf, sizeof(buf));
+			tok = &toks[i+1];
+			hex_decode(json + tok->start, toksize(tok), buf, sizeof(buf));
 			// TODO: validate id
 			ndb_builder_set_id(&builder, buf);
 		} else if (tok_len == 3 && start[0] == 's' && start[1] == 'i' && start[2] == 'g') {
 			// sig
-			tok = &toks[i+1]; tok_len = tok->end - tok->start;
-			hex_decode(json + tok->start, tok_len, buf, sizeof(buf));
+			tok = &toks[i+1];
+			hex_decode(json + tok->start, toksize(tok), buf, sizeof(buf));
 			ndb_builder_set_signature(&builder, buf);
 		} else if (start[0] == 'k' && jsoneq(json, tok, tok_len, "kind")) {
 			// kind
-			tok = &toks[i+1]; tok_len = tok->end - tok->start;
-			printf("json_kind %.*s\n", tok_len, json + tok->start);
+			tok = &toks[i+1];
+			printf("json_kind %.*s\n", toksize(tok), json + tok->start);
 		} else if (start[0] == 'c') {
 			if (jsoneq(json, tok, tok_len, "created_at")) {
 				// created_at
-				tok = &toks[i+1]; tok_len = tok->end - tok->start;
-				printf("json_created_at %.*s\n", tok_len, json + tok->start);
+				tok = &toks[i+1];
+				printf("json_created_at %.*s\n", toksize(tok), json + tok->start);
 			} else if (jsoneq(json, tok, tok_len, "content")) {
 				// content
-				tok = &toks[i+1]; tok_len = tok->end - tok->start;
-				if (!ndb_builder_set_content(&builder, json + tok->start, tok_len))
-				printf("json_content %.*s\n", tok_len, json + tok->start);
+				tok = &toks[i+1];
+				if (!ndb_builder_set_content(&builder, json + tok->start, toksize(tok)))
+					return 0;
 			}
 		} else if (start[0] == 't' && jsoneq(json, tok, tok_len, "tags")) {
-			// tags
-			tok = &toks[i+1]; tok_len = tok->end - tok->start;
-			printf("json_tags %.*s\n", tok_len, json + tok->start);
+			tok = &toks[i+1];
+			ndb_builder_process_json_tags(json, tok, &builder);
+			i += tok->size;
 		}
 	}
 
@@ -198,11 +238,6 @@ ndb_builder_set_signature(struct ndb_builder *builder, unsigned char *signature)
 void
 ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind) {
 	builder->note->kind = kind;
-}
-
-static inline int
-cursor_push_tag(struct cursor *cur, struct ndb_tag *tag) {
-	return cursor_push_u16(cur, tag->count);
 }
 
 int
