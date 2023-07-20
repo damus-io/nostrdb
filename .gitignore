@@ -4,3 +4,4 @@ test
 .build-result
 .envrc
 shell.nix
+*.dSYM
