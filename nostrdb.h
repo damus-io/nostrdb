@@ -8,12 +8,12 @@
 // representation
 #pragma pack(push, 1)
 
-// we assume little endian everywhere. sorry not sorry.
 union packed_str {
 	uint32_t offset;
 
 	struct {
 		char str[3];
+		// we assume little endian everywhere. sorry not sorry.
 		unsigned char flag;
 	} packed;
 
