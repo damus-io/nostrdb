@@ -177,20 +177,40 @@ static inline int toksize(jsmntok_t *tok) {
 	return tok->end - tok->start;
 }
 
+// Push a json array into an ndb tag ["p", "abcd..."] -> struct ndb_tag
 static inline int
-build_tag_from_json_tokens(struct ndb_json_parser *p, jsmntok_t *tag) {
-	printf("tag %.*s %d\n", toksize(tag), p->json + tag->start, tag->type);
+ndb_builder_tag_from_json_array(struct ndb_json_parser *p, jsmntok_t *array) {
+	jsmntok_t *str_tok;
+	const char *str;
+
+	if (array->size == 0)
+		return 0;
+
+	if (!ndb_builder_new_tag(&p->builder))
+		return 0;
+
+	for (int i = 0; i < array->size; i++) {
+		str_tok = &array[i+1];
+		str = p->json + str_tok->start;
+
+		if (!ndb_builder_push_tag_str(&p->builder, str, toksize(str_tok)))
+			return 0;
+	}
 
 	return 1;
 }
 
+// Push json tags into ndb data
+//   [["t", "hashtag"], ["p", "abcde..."]] -> struct ndb_tags
 static inline int
 ndb_builder_process_json_tags(struct ndb_json_parser *p, jsmntok_t *array) {
 	jsmntok_t *tag = array;
-	printf("json_tags %.*s %d\n", toksize(tag), p->json + tag->start, tag->type);
+
+	if (array->size == 0)
+		return 1;
 
 	for (int i = 0; i < array->size; i++) {
-		if (!build_tag_from_json_tokens(p, &tag[i+1]))
+		if (!ndb_builder_tag_from_json_array(p, &tag[i+1]))
 			return 0;
 		tag += array->size;
 	}
@@ -289,26 +309,23 @@ ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind) {
 }
 
 int
-ndb_builder_add_tag(struct ndb_builder *builder, const char **strs, uint16_t num_strs) {
-	int i;
-	union packed_str pstr;
-	const char *str;
-	struct ndb_tag tag;
-
+ndb_builder_new_tag(struct ndb_builder *builder) {
 	builder->note->tags.count++;
-	tag.count = num_strs;
-
-	if (!cursor_push_tag(&builder->note_cur, &tag))
-		return 0;
-
-	for (i = 0; i < num_strs; i++) {
-		str = strs[i];
-		if (!ndb_builder_make_string(builder, str, strlen(str), &pstr))
-			return 0;
-		if (!cursor_push_u32(&builder->note_cur, pstr.offset))
-			return 0;
-	}
-
-	return 1;
+	struct ndb_tag tag = {0};
+	builder->current_tag = (struct ndb_tag *)builder->note_cur.p;
+	return cursor_push_tag(&builder->note_cur, &tag);
 }
 
+/// Push an element to the current tag
+/// 
+/// Basic idea is to call ndb_builder_new_tag
+inline int
+ndb_builder_push_tag_str(struct ndb_builder *builder, const char *str, int len) {
+	union packed_str pstr;
+	if (!ndb_builder_make_string(builder, str, len, &pstr))
+		return 0;
+	if (!cursor_push_u32(&builder->note_cur, pstr.offset))
+		return 0;
+	builder->current_tag->count++;
+	return 1;
+}

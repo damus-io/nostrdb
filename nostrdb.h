@@ -55,6 +55,7 @@ struct ndb_builder {
 	struct cursor strings;
 	struct cursor str_indices;
 	struct ndb_note *note;
+	struct ndb_tag *current_tag;
 };
 
 struct ndb_iterator {
@@ -74,7 +75,8 @@ void ndb_builder_set_signature(struct ndb_builder *builder, unsigned char *signa
 void ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey);
 void ndb_builder_set_id(struct ndb_builder *builder, unsigned char *id);
 void ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind);
-int ndb_builder_add_tag(struct ndb_builder *builder, const char **strs, uint16_t num_strs);
+int ndb_builder_new_tag(struct ndb_builder *builder);
+int ndb_builder_push_tag_str(struct ndb_builder *builder, const char *str, int len);
 // BYE BUILDER
 
 static inline int
@@ -83,11 +85,21 @@ ndb_str_is_packed(union packed_str str) {
 }
 
 static inline const char *
-ndb_note_string(struct ndb_note *note, union packed_str *str) {
+ndb_note_str(struct ndb_note *note, union packed_str *str) {
 	if (ndb_str_is_packed(*str))
 		return str->packed.str;
 
 	return ((const char *)note) + note->strings + str->offset;
+}
+
+static inline const char *
+ndb_tag_str(struct ndb_note *note, struct ndb_tag *tag, int ind) {
+	return ndb_note_str(note, &tag->strs[ind]);
+}
+
+static inline const char *
+ndb_iter_tag_str(struct ndb_iterator *iter, int ind) {
+	return ndb_tag_str(iter->note, iter->tag, ind);
 }
 
 static inline unsigned char *
@@ -112,7 +124,7 @@ ndb_note_created_at(struct ndb_note *note) {
 
 static inline const char *
 ndb_note_content(struct ndb_note *note) {
-	return ndb_note_string(note, &note->content);
+	return ndb_note_str(note, &note->content);
 }
 
 static inline struct ndb_note *
@@ -156,7 +168,7 @@ ndb_note_tag_index(struct ndb_note *note, struct ndb_tag *tag, int index) {
 		return 0;
 	}
 
-	return ndb_note_string(note, &tag->strs[index]);
+	return ndb_note_str(note, &tag->strs[index]);
 }
 
 static inline int
