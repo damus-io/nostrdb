@@ -2,3 +2,5 @@ tags
 test
 .buildcmd
 .build-result
+.envrc
+shell.nix

@@ -1,4 +1,4 @@
-CFLAGS = -Wall -Wno-unused-function -Werror -O3 -DJSMN_PARENT_LINKS
+CFLAGS = -Wall -Wno-unused-function -Werror -O1 -g -DJSMN_PARENT_LINKS -DJSMN_STRICT
 
 check: test
 	./test

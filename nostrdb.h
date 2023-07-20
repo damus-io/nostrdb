@@ -55,7 +55,6 @@ struct ndb_builder {
 	struct cursor strings;
 	struct cursor str_indices;
 	struct ndb_note *note;
-	int size;
 };
 
 struct ndb_iterator {
@@ -66,8 +65,9 @@ struct ndb_iterator {
 	int index;
 };
 
-int ndb_note_from_json(const char *json, int len, struct ndb_note **);
-int ndb_builder_new(struct ndb_builder *builder, int *bufsize);
+// HI BUILDER
+int ndb_note_from_json(const char *json, int len, struct ndb_note **, unsigned char *buf, int buflen);
+int ndb_builder_new(struct ndb_builder *builder, unsigned char *buf, int bufsize);
 int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note);
 int ndb_builder_set_content(struct ndb_builder *builder, const char *content, int len);
 void ndb_builder_set_signature(struct ndb_builder *builder, unsigned char *signature);
@@ -75,6 +75,7 @@ void ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey);
 void ndb_builder_set_id(struct ndb_builder *builder, unsigned char *id);
 void ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind);
 int ndb_builder_add_tag(struct ndb_builder *builder, const char **strs, uint16_t num_strs);
+// BYE BUILDER
 
 static inline int
 ndb_str_is_packed(union packed_str str) {
@@ -164,7 +165,7 @@ ndb_tags_iterate_start(struct ndb_note *note, struct ndb_iterator *iter) {
 	iter->tag = note->tags.tag;
 	iter->index = 0;
 
-	return iter->tag->count != 0;
+	return note->tags.count != 0 && iter->tag->count != 0;
 }
 
 static inline int

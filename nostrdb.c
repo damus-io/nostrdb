@@ -6,8 +6,13 @@
 #include <stdlib.h>
 
 struct ndb_json_parser {
+	const char *json;
+	int json_len;
 	struct ndb_builder builder;
-	struct cursor buf;
+	jsmn_parser json_parser;
+	jsmntok_t *toks, *toks_end;
+	int num_tokens;
+	struct cursor mem;
 };
 
 static inline int
@@ -16,26 +21,32 @@ cursor_push_tag(struct cursor *cur, struct ndb_tag *tag) {
 }
 
 int
-ndb_builder_new(struct ndb_builder *builder, int *bufsize) {
+ndb_builder_new(struct ndb_builder *builder, unsigned char *buf, int bufsize) {
 	struct ndb_note *note;
 	struct cursor mem;
-	// 1MB + 0.5MB
-	builder->size = 1024 * 1024;
-	if (bufsize)
-		builder->size = *bufsize;
+	int half, size, str_indices_size;
 
-	int str_indices_size = builder->size / 32;
-	unsigned char *bytes = malloc(builder->size + str_indices_size);
-	if (!bytes) return 0;
+	// come on bruh
+	if (bufsize < sizeof(struct ndb_note) * 2)
+		return 0;
 
-	make_cursor(bytes, bytes + builder->size + str_indices_size, &mem);
+	str_indices_size = bufsize / 32;
+	size = bufsize - str_indices_size;
+	half = size / 2;
 
-	note = builder->note = (struct ndb_note *)bytes;
-	size_t half = builder->size >> 1;
+	//debug("size %d half %d str_indices %d\n", size, half, str_indices_size);
 
-	if (!cursor_slice(&mem, &builder->note_cur, half)) return 0;
-	if (!cursor_slice(&mem, &builder->strings, half)) return 0;
-	if (!cursor_slice(&mem, &builder->str_indices, str_indices_size)) return 0;
+	// make a safe cursor of our available memory
+	make_cursor(buf, buf + bufsize, &mem);
+
+	note = builder->note = (struct ndb_note *)buf;
+
+	// take slices of the memory into subcursors
+	if (!(cursor_slice(&mem, &builder->note_cur, half) &&
+	      cursor_slice(&mem, &builder->strings, half) &&
+	      cursor_slice(&mem, &builder->str_indices, str_indices_size))) {
+		return 0;
+	}
 
 	memset(note, 0, sizeof(*note));
 	builder->note_cur.p += sizeof(*note);
@@ -43,6 +54,40 @@ ndb_builder_new(struct ndb_builder *builder, int *bufsize) {
 	note->version = 1;
 
 	return 1;
+}
+
+static inline int
+ndb_json_parser_init(struct ndb_json_parser *p, const char *json, int json_len, unsigned char *buf, int bufsize) {
+	int half = bufsize / 2;
+
+	p->toks = (jsmntok_t*)buf + half;
+	p->toks_end = (jsmntok_t*)buf + bufsize;
+	p->num_tokens = 0;
+	p->json = json;
+	p->json_len = json_len;
+
+	// ndb_builder gets the first half of the buffer, and jsmn gets the
+	// second half. I like this way of alloating memory (without actually
+	// dynamically allocating memory). You get one big chunk upfront and
+	// then submodules can recursively subdivide it. Maybe you could do
+	// something even more clever like golden-ratio style subdivision where
+	// the more important stuff gets a larger chunk and then it spirals
+	// downward into smaller chunks. Thanks for coming to my TED talk.
+	if (!ndb_builder_new(&p->builder, buf, half))
+		return 0;
+
+	jsmn_init(&p->json_parser);
+
+	return 1;
+}
+
+static inline int
+ndb_json_parser_parse(struct ndb_json_parser *p) {
+	int cap = (p->toks_end - p->toks)/sizeof(*p->toks);
+	p->num_tokens =
+		jsmn_parse(&p->json_parser, p->json, p->json_len, p->toks, cap);
+
+	return p->num_tokens;
 }
 
 int
@@ -57,8 +102,10 @@ ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note) {
 	// set the strings location
 	builder->note->strings = builder->note_cur.p - builder->note_cur.start;
 
-	// remove any extra data
-	*note = realloc(builder->note_cur.start, total_size);
+	// record the total size
+	//builder->note->size = total_size;
+
+	*note = builder->note;
 
 	return total_size;
 }
@@ -153,71 +200,72 @@ ndb_builder_process_json_tags(const char *json, jsmntok_t *array, struct ndb_bui
 
 
 int
-ndb_note_from_json(const char *json, int len, struct ndb_note **note) {
-	jsmntok_t toks[4096], *tok = NULL;
-	unsigned char buf[64];
-	struct ndb_builder builder;
-	jsmn_parser p;
+ndb_note_from_json(const char *json, int len, struct ndb_note **note,
+		   unsigned char *buf, int bufsize)
+{
+	jsmntok_t *tok = NULL;
+	unsigned char hexbuf[64];
 
-	int i, r, tok_len;
+	int i, tok_len;
 	const char *start;
+	struct ndb_json_parser parser;
 
-	jsmn_init(&p);
-	ndb_builder_new(&builder, &len);
+	ndb_json_parser_init(&parser, json, len, buf, bufsize);
 
-	r = jsmn_parse(&p, json, len, toks, sizeof(toks)/sizeof(toks[0]));
+	if (ndb_json_parser_parse(&parser) < 0)
+		return 0;
 
-	if (r < 0) return 0;
-	if (r < 1 || toks[0].type != JSMN_OBJECT) return 0;
+	if (parser.num_tokens < 1 || parser.toks[0].type != JSMN_OBJECT)
+		return 0;
 
-	for (i = 1; i < r; i++) {
-		tok = &toks[i];
+	for (i = 1; i < parser.num_tokens; i++) {
+		tok = &parser.toks[i];
 		start = json + tok->start;
 		tok_len = toksize(tok);
 
 		//printf("toplevel %.*s %d\n", tok_len, json + tok->start, tok->type);
-		if (tok_len == 0 || i + 1 >= r)
+		if (tok_len == 0 || i + 1 >= parser.num_tokens)
 			continue;
 
 		if (start[0] == 'p' && jsoneq(json, tok, tok_len, "pubkey")) {
 			// pubkey
-			tok = &toks[i+1];
-			hex_decode(json + tok->start, toksize(tok), buf, sizeof(buf));
-			ndb_builder_set_pubkey(&builder, buf);
+			tok = &parser.toks[i+1];
+			hex_decode(json + tok->start, toksize(tok), hexbuf, sizeof(hexbuf));
+			ndb_builder_set_pubkey(&parser.builder, hexbuf);
 		} else if (tok_len == 2 && start[0] == 'i' && start[1] == 'd') {
 			// id
-			tok = &toks[i+1];
-			hex_decode(json + tok->start, toksize(tok), buf, sizeof(buf));
+			tok = &parser.toks[i+1];
+			hex_decode(json + tok->start, toksize(tok), hexbuf, sizeof(hexbuf));
 			// TODO: validate id
-			ndb_builder_set_id(&builder, buf);
+			ndb_builder_set_id(&parser.builder, hexbuf);
 		} else if (tok_len == 3 && start[0] == 's' && start[1] == 'i' && start[2] == 'g') {
 			// sig
-			tok = &toks[i+1];
-			hex_decode(json + tok->start, toksize(tok), buf, sizeof(buf));
-			ndb_builder_set_signature(&builder, buf);
+			tok = &parser.toks[i+1];
+			hex_decode(json + tok->start, toksize(tok), hexbuf, sizeof(hexbuf));
+			ndb_builder_set_signature(&parser.builder, hexbuf);
 		} else if (start[0] == 'k' && jsoneq(json, tok, tok_len, "kind")) {
 			// kind
-			tok = &toks[i+1];
+			tok = &parser.toks[i+1];
 			printf("json_kind %.*s\n", toksize(tok), json + tok->start);
 		} else if (start[0] == 'c') {
 			if (jsoneq(json, tok, tok_len, "created_at")) {
 				// created_at
-				tok = &toks[i+1];
+				tok = &parser.toks[i+1];
 				printf("json_created_at %.*s\n", toksize(tok), json + tok->start);
 			} else if (jsoneq(json, tok, tok_len, "content")) {
 				// content
-				tok = &toks[i+1];
-				if (!ndb_builder_set_content(&builder, json + tok->start, toksize(tok)))
+				tok = &parser.toks[i+1];
+				if (!ndb_builder_set_content(&parser.builder, json + tok->start, toksize(tok)))
 					return 0;
 			}
 		} else if (start[0] == 't' && jsoneq(json, tok, tok_len, "tags")) {
-			tok = &toks[i+1];
-			ndb_builder_process_json_tags(json, tok, &builder);
+			tok = &parser.toks[i+1];
+			ndb_builder_process_json_tags(json, tok, &parser.builder);
 			i += tok->size;
 		}
 	}
 
-	return ndb_builder_finalize(&builder, note);
+	return ndb_builder_finalize(&parser.builder, note);
 }
 
 void

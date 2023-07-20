@@ -8,6 +8,7 @@
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
 static void test_basic_event() {
+	unsigned char buf[512];
 	struct ndb_builder builder, *b = &builder;
 	struct ndb_note *note;
 	int ok;
@@ -26,20 +27,23 @@ static void test_basic_event() {
 	const char *tag[] = { "p", hex_pk };
 	const char *word_tag[] = { "word", "words", "w" };
 
-	ndb_builder_new(b, 0);
+	ok = ndb_builder_new(b, buf, sizeof(buf));
+	assert(ok);
 	note = builder.note;
 
 	memset(note->padding, 3, sizeof(note->padding));
 
 	const char *content = "hello, world!";
-	ndb_builder_set_content(b, content, strlen(content));
-	ndb_builder_set_id(b, id);
-	ndb_builder_set_pubkey(b, pubkey);
-	ndb_builder_set_signature(b, sig);
-	ndb_builder_add_tag(b, tag, ARRAY_SIZE(tag));
-	ndb_builder_add_tag(b, word_tag, ARRAY_SIZE(word_tag));
 
-	ndb_builder_finalize(b, &note);
+	ok = ndb_builder_set_content(b, content, strlen(content)); assert(ok);
+	ndb_builder_set_id(b, id); assert(ok);
+	ndb_builder_set_pubkey(b, pubkey); assert(ok);
+	ndb_builder_set_signature(b, sig); assert(ok);
+	ok = ndb_builder_add_tag(b, tag, ARRAY_SIZE(tag)); assert(ok);
+	ok = ndb_builder_add_tag(b, word_tag, ARRAY_SIZE(word_tag)); assert(ok);
+
+	ok = ndb_builder_finalize(b, &note);
+	assert(ok);
 
 	assert(note->tags.count == 2);
 
@@ -72,9 +76,13 @@ static void test_empty_tags() {
 	struct ndb_iterator iter, *it = &iter;
 	struct ndb_note *note;
 	int ok;
+	unsigned char buf[1024];
 
-	ndb_builder_new(b, 0);
-	ndb_builder_finalize(b, &note);
+	ok = ndb_builder_new(b, buf, sizeof(buf));
+	assert(ok);
+
+	ok = ndb_builder_finalize(b, &note);
+	assert(ok);
 
 	assert(note->tags.count == 0);
 
@@ -85,13 +93,14 @@ static void test_empty_tags() {
 
 static void test_parse_json() {
 	char hex_id[65] = {0};
+	unsigned char buffer[1024];
 	struct ndb_note *note;
 #define HEX_ID "5004a081e397c6da9dc2f2d6b3134006a9d0e8c1b46689d9fe150bb2f21a204d"
 #define HEX_PK "b169f596968917a1abeb4234d3cf3aa9baee2112e58998d17c6db416ad33fe40"
 	static const char *json = 
 		"{\"id\": \"" HEX_ID "\",\"pubkey\": \"" HEX_PK "\",\"created_at\": 1689836342,\"kind\": 1,\"tags\": [[\"p\",\"" HEX_ID "\"], [\"word\", \"words\"]],\"content\": \"共通語\",\"sig\": \"e4d528651311d567f461d7be916c37cbf2b4d530e672f29f15f353291ed6df60c665928e67d2f18861c5ca88\"}";
 
-	ndb_note_from_json(json, strlen(json), &note);
+	ndb_note_from_json(json, strlen(json), &note, buffer, sizeof(buffer));
 
 	const char *content = ndb_note_content(note);
 	unsigned char *id = ndb_note_id(note);
