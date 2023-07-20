@@ -1,5 +1,7 @@
 
 #include "nostrdb.h"
+#include "jsmn.h"
+#include "hex.h"
 #include <stdlib.h>
 
 int ndb_builder_new(struct ndb_builder *builder, int *bufsize) {
@@ -10,7 +12,7 @@ int ndb_builder_new(struct ndb_builder *builder, int *bufsize) {
 	if (bufsize)
 		builder->size = *bufsize;
 
-	int str_indices_size = sizeof(uint32_t) * (2<<14);
+	int str_indices_size = builder->size / 32;
 	unsigned char *bytes = malloc(builder->size + str_indices_size);
 	if (!bytes) return 0;
 
@@ -52,8 +54,7 @@ struct ndb_note *ndb_builder_note(struct ndb_builder *builder) {
 	return builder->note;
 }
 
-int ndb_builder_make_string(struct ndb_builder *builder, const char *str, union packed_str *pstr) {
-	int len = strlen(str);
+int ndb_builder_make_string(struct ndb_builder *builder, const char *str, int len, union packed_str *pstr) {
 	uint32_t loc;
 
 	if (len == 0) {
@@ -95,8 +96,82 @@ int ndb_builder_make_string(struct ndb_builder *builder, const char *str, union 
 	return 1;
 }
 
-int ndb_builder_set_content(struct ndb_builder *builder, const char *content) {
-	return ndb_builder_make_string(builder, content, &builder->note->content);
+int ndb_builder_set_content(struct ndb_builder *builder, const char *content, int len) {
+	return ndb_builder_make_string(builder, content, len, &builder->note->content);
+}
+
+
+static inline int jsoneq(const char *json, jsmntok_t *tok, int tok_len, const char *s) {
+	if (tok->type == JSMN_STRING && (int)strlen(s) == tok_len &&
+	    memcmp(json + tok->start, s, tok_len) == 0) {
+		return 1;
+	}
+	return 0;
+}
+
+int ndb_note_from_json(const char *json, int len, struct ndb_note **note) {
+	int i, r;
+	struct ndb_builder builder;
+	jsmn_parser p;
+	jsmntok_t toks[4096], *tok = NULL;
+	unsigned char buf[64];
+	jsmn_init(&p);
+	int tok_len;
+	const char *start;
+
+	ndb_builder_new(&builder, &len);
+
+	r = jsmn_parse(&p, json, len, toks, sizeof(toks)/sizeof(toks[0]));
+
+	if (r < 0) return 0;
+	if (r < 1 || toks[0].type != JSMN_OBJECT) return 0;
+
+	for (i = 1; i < r; i++) {
+		tok = &toks[i];
+		tok_len = tok->end - tok->start;
+		start = json + tok->start;
+		if (tok_len == 0 || i + 1 >= r)
+			continue;
+
+		if (start[0] == 'p' && jsoneq(json, tok, tok_len, "pubkey")) {
+			// pubkey
+			tok = &toks[i+1]; tok_len = tok->end - tok->start;
+			hex_decode(json + tok->start, tok_len, buf, sizeof(buf));
+			ndb_builder_set_pubkey(&builder, buf);
+		} else if (tok_len == 2 && start[0] == 'i' && start[1] == 'd') {
+			// id
+			tok = &toks[i+1]; tok_len = tok->end - tok->start;
+			hex_decode(json + tok->start, tok_len, buf, sizeof(buf));
+			// TODO: validate id
+			ndb_builder_set_id(&builder, buf);
+		} else if (tok_len == 3 && start[0] == 's' && start[1] == 'i' && start[2] == 'g') {
+			// sig
+			tok = &toks[i+1]; tok_len = tok->end - tok->start;
+			hex_decode(json + tok->start, tok_len, buf, sizeof(buf));
+			ndb_builder_set_signature(&builder, buf);
+		} else if (start[0] == 'k' && jsoneq(json, tok, tok_len, "kind")) {
+			// kind
+			tok = &toks[i+1]; tok_len = tok->end - tok->start;
+			printf("json_kind %.*s\n", tok_len, json + tok->start);
+		} else if (start[0] == 'c') {
+			if (jsoneq(json, tok, tok_len, "created_at")) {
+				// created_at
+				tok = &toks[i+1]; tok_len = tok->end - tok->start;
+				printf("json_created_at %.*s\n", tok_len, json + tok->start);
+			} else if (jsoneq(json, tok, tok_len, "content")) {
+				// content
+				tok = &toks[i+1]; tok_len = tok->end - tok->start;
+				if (!ndb_builder_set_content(&builder, json + tok->start, tok_len))
+				printf("json_content %.*s\n", tok_len, json + tok->start);
+			}
+		} else if (start[0] == 't' && jsoneq(json, tok, tok_len, "tags")) {
+			// tags
+			tok = &toks[i+1]; tok_len = tok->end - tok->start;
+			printf("json_tags %.*s\n", tok_len, json + tok->start);
+		}
+	}
+
+	return ndb_builder_finalize(&builder, note);
 }
 
 void ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey) {
@@ -133,7 +208,7 @@ int ndb_builder_add_tag(struct ndb_builder *builder, const char **strs, uint16_t
 
 	for (i = 0; i < num_strs; i++) {
 		str = strs[i];
-		if (!ndb_builder_make_string(builder, str, &pstr))
+		if (!ndb_builder_make_string(builder, str, strlen(str), &pstr))
 			return 0;
 		if (!cursor_push_u32(&builder->note_cur, pstr.offset))
 			return 0;
