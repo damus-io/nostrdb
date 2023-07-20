@@ -6,7 +6,7 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
-int main(int argc, const char *argv[]) {
+static void test_basic_event() {
 	struct ndb_builder builder, *b = &builder;
 	struct ndb_note *note;
 	int len, ok;
@@ -63,6 +63,24 @@ int main(int argc, const char *argv[]) {
 
 	ok = ndb_tags_iterate_next(it);
 	assert(!ok);
+}
 
-	fwrite(note, len, 1, stdout);
+static void test_empty_tags() {
+	struct ndb_builder builder, *b = &builder;
+	struct ndb_iterator iter, *it = &iter;
+	struct ndb_note *note;
+	int ok, len;
+
+	ndb_builder_new(b, 0);
+	len = ndb_builder_finalize(b, &note);
+
+	assert(note->tags.count == 0);
+
+	ok = ndb_tags_iterate_start(note, it);
+	assert(!ok);
+}
+
+int main(int argc, const char *argv[]) {
+	test_basic_event();
+	test_empty_tags();
 }
