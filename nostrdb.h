@@ -79,72 +79,75 @@ int ndb_builder_new_tag(struct ndb_builder *builder);
 int ndb_builder_push_tag_str(struct ndb_builder *builder, const char *str, int len);
 // BYE BUILDER
 
-static inline int
-ndb_str_is_packed(union packed_str str) {
+static inline int ndb_str_is_packed(union packed_str str)
+{
 	return (str.offset >> 31) & 0x1;
 }
 
-static inline const char *
-ndb_note_str(struct ndb_note *note, union packed_str *str) {
+static inline const char * ndb_note_str(struct ndb_note *note,
+					union packed_str *str)
+{
 	if (ndb_str_is_packed(*str))
 		return str->packed.str;
 
 	return ((const char *)note) + note->strings + str->offset;
 }
 
-static inline const char *
-ndb_tag_str(struct ndb_note *note, struct ndb_tag *tag, int ind) {
+static inline const char * ndb_tag_str(struct ndb_note *note,
+				       struct ndb_tag *tag, int ind)
+{
 	return ndb_note_str(note, &tag->strs[ind]);
 }
 
-static inline const char *
-ndb_iter_tag_str(struct ndb_iterator *iter, int ind) {
+static inline const char * ndb_iter_tag_str(struct ndb_iterator *iter,
+					    int ind)
+{
 	return ndb_tag_str(iter->note, iter->tag, ind);
 }
 
-static inline unsigned char *
-ndb_note_id(struct ndb_note *note) {
+static inline unsigned char * ndb_note_id(struct ndb_note *note)
+{
 	return note->id;
 }
 
-static inline unsigned char *
-ndb_note_pubkey(struct ndb_note *note) {
+static inline unsigned char * ndb_note_pubkey(struct ndb_note *note)
+{
 	return note->pubkey;
 }
 
-static inline unsigned char *
-ndb_note_signature(struct ndb_note *note) {
+static inline unsigned char * ndb_note_signature(struct ndb_note *note)
+{
 	return note->signature;
 }
 
-static inline uint32_t
-ndb_note_created_at(struct ndb_note *note) {
+static inline uint32_t ndb_note_created_at(struct ndb_note *note)
+{
 	return note->created_at;
 }
 
-static inline const char *
-ndb_note_content(struct ndb_note *note) {
+static inline const char * ndb_note_content(struct ndb_note *note)
+{
 	return ndb_note_str(note, &note->content);
 }
 
-static inline struct ndb_note *
-ndb_note_from_bytes(unsigned char *bytes) {
+static inline struct ndb_note * ndb_note_from_bytes(unsigned char *bytes)
+{
 	struct ndb_note *note = (struct ndb_note *)bytes;
 	if (note->version != 1)
 		return 0;
 	return note;
 }
 
-static inline union packed_str
-ndb_offset_str(uint32_t offset) {
+static inline union packed_str ndb_offset_str(uint32_t offset)
+{
 	// ensure accidents like -1 don't corrupt our packed_str
 	union packed_str str;
 	str.offset = offset & 0x7FFFFFFF;
 	return str;
 }
 
-static inline union packed_str
-ndb_char_to_packed_str(char c) {
+static inline union packed_str ndb_char_to_packed_str(char c)
+{
 	union packed_str str;
 	str.packed.flag = 0xFF;
 	str.packed.str[0] = c;
@@ -152,8 +155,8 @@ ndb_char_to_packed_str(char c) {
 	return str;
 }
 
-static inline union packed_str
-ndb_chars_to_packed_str(char c1, char c2) {
+static inline union packed_str ndb_chars_to_packed_str(char c1, char c2)
+{
 	union packed_str str;
 	str.packed.flag = 0xFF;
 	str.packed.str[0] = c1;
@@ -162,8 +165,9 @@ ndb_chars_to_packed_str(char c1, char c2) {
 	return str;
 }
 
-static inline const char *
-ndb_note_tag_index(struct ndb_note *note, struct ndb_tag *tag, int index) {
+static inline const char * ndb_note_tag_index(struct ndb_note *note,
+					      struct ndb_tag *tag, int index)
+{
 	if (index >= tag->count) {
 		return 0;
 	}
@@ -171,8 +175,9 @@ ndb_note_tag_index(struct ndb_note *note, struct ndb_tag *tag, int index) {
 	return ndb_note_str(note, &tag->strs[index]);
 }
 
-static inline int
-ndb_tags_iterate_start(struct ndb_note *note, struct ndb_iterator *iter) {
+static inline int ndb_tags_iterate_start(struct ndb_note *note,
+					 struct ndb_iterator *iter)
+{
 	iter->note = note;
 	iter->tag = note->tags.tag;
 	iter->index = 0;
@@ -180,8 +185,8 @@ ndb_tags_iterate_start(struct ndb_note *note, struct ndb_iterator *iter) {
 	return note->tags.count != 0 && iter->tag->count != 0;
 }
 
-static inline int
-ndb_tags_iterate_next(struct ndb_iterator *iter) {
+static inline int ndb_tags_iterate_next(struct ndb_iterator *iter)
+{
 	struct ndb_tags *tags = &iter->note->tags;
 
 	if (++iter->index < tags->count) {
