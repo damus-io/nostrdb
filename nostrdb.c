@@ -213,30 +213,29 @@ ndb_builder_process_json_tags(struct ndb_json_parser *p, jsmntok_t *array) {
 		return 1;
 
 	for (int i = 0; i < array->size; i++) {
-		if (!ndb_builder_tag_from_json_array(p, &tag[i+1]))
+        if (!ndb_builder_tag_from_json_array(p, &tag[i+1]))
 			return 0;
-		tag += array->size;
+        tag += tag[i+1].size;
 	}
 
 	return 1;
 }
 
 
-int
-ndb_note_from_json(const char *json, int len, struct ndb_note **note,
-		   unsigned char *buf, int bufsize)
+int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
+		       unsigned char *buf, int bufsize)
 {
 	jsmntok_t *tok = NULL;
 	unsigned char hexbuf[64];
 
-	int i, tok_len;
+	int i, tok_len, res;
 	const char *start;
 	struct ndb_json_parser parser;
 
 	ndb_json_parser_init(&parser, json, len, buf, bufsize);
-
-	if (ndb_json_parser_parse(&parser) < 0)
-		return 0;
+	res = ndb_json_parser_parse(&parser);
+	if (res < 0)
+		return res;
 
 	if (parser.num_tokens < 1 || parser.toks[0].type != JSMN_OBJECT)
 		return 0;
