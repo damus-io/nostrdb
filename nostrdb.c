@@ -14,13 +14,14 @@ struct ndb_json_parser {
 	int num_tokens;
 };
 
-static inline int
-cursor_push_tag(struct cursor *cur, struct ndb_tag *tag) {
+static inline int cursor_push_tag(struct cursor *cur, struct ndb_tag *tag)
+{
 	return cursor_push_u16(cur, tag->count);
 }
 
-int
-ndb_builder_new(struct ndb_builder *builder, unsigned char *buf, int bufsize) {
+int ndb_builder_new(struct ndb_builder *builder, unsigned char *buf,
+		    int bufsize)
+{
 	struct ndb_note *note;
 	struct cursor mem;
 	int half, size, str_indices_size;
@@ -55,8 +56,10 @@ ndb_builder_new(struct ndb_builder *builder, unsigned char *buf, int bufsize) {
 	return 1;
 }
 
-static inline int
-ndb_json_parser_init(struct ndb_json_parser *p, const char *json, int json_len, unsigned char *buf, int bufsize) {
+static inline int ndb_json_parser_init(struct ndb_json_parser *p,
+				       const char *json, int json_len,
+				       unsigned char *buf, int bufsize)
+{
 	int half = bufsize / 2;
 
 	unsigned char *tok_start = buf + half;
@@ -84,8 +87,8 @@ ndb_json_parser_init(struct ndb_json_parser *p, const char *json, int json_len, 
 	return 1;
 }
 
-static inline int
-ndb_json_parser_parse(struct ndb_json_parser *p) {
+static inline int ndb_json_parser_parse(struct ndb_json_parser *p)
+{
 	int cap = ((unsigned char *)p->toks_end - (unsigned char*)p->toks)/sizeof(*p->toks);
 	p->num_tokens =
 		jsmn_parse(&p->json_parser, p->json, p->json_len, p->toks, cap);
@@ -93,8 +96,8 @@ ndb_json_parser_parse(struct ndb_json_parser *p) {
 	return p->num_tokens;
 }
 
-int
-ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note) {
+int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note)
+{
 	int strings_len = builder->strings.p - builder->strings.start;
 	unsigned char *end = builder->note_cur.p + strings_len;
 	int total_size = end - builder->note_cur.start;
@@ -113,13 +116,14 @@ ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note) {
 	return total_size;
 }
 
-struct ndb_note *
-ndb_builder_note(struct ndb_builder *builder) {
+struct ndb_note * ndb_builder_note(struct ndb_builder *builder)
+{
 	return builder->note;
 }
 
-int
-ndb_builder_make_string(struct ndb_builder *builder, const char *str, int len, union packed_str *pstr) {
+int ndb_builder_make_string(struct ndb_builder *builder, const char *str,
+			    int len, union packed_str *pstr)
+{
 	uint32_t loc;
 
 	if (len == 0) {
@@ -161,14 +165,16 @@ ndb_builder_make_string(struct ndb_builder *builder, const char *str, int len, u
 	return 1;
 }
 
-int
-ndb_builder_set_content(struct ndb_builder *builder, const char *content, int len) {
+int ndb_builder_set_content(struct ndb_builder *builder, const char *content,
+			    int len)
+{
 	return ndb_builder_make_string(builder, content, len, &builder->note->content);
 }
 
 
-static inline int
-jsoneq(const char *json, jsmntok_t *tok, int tok_len, const char *s) {
+static inline int jsoneq(const char *json, jsmntok_t *tok, int tok_len,
+			 const char *s)
+{
 	if (tok->type == JSMN_STRING && (int)strlen(s) == tok_len &&
 	    memcmp(json + tok->start, s, tok_len) == 0) {
 		return 1;
@@ -176,13 +182,15 @@ jsoneq(const char *json, jsmntok_t *tok, int tok_len, const char *s) {
 	return 0;
 }
 
-static inline int toksize(jsmntok_t *tok) {
+static inline int toksize(jsmntok_t *tok)
+{
 	return tok->end - tok->start;
 }
 
 // Push a json array into an ndb tag ["p", "abcd..."] -> struct ndb_tag
-static inline int
-ndb_builder_tag_from_json_array(struct ndb_json_parser *p, jsmntok_t *array) {
+static inline int ndb_builder_tag_from_json_array(struct ndb_json_parser *p,
+						  jsmntok_t *array)
+{
 	jsmntok_t *str_tok;
 	const char *str;
 
@@ -205,8 +213,9 @@ ndb_builder_tag_from_json_array(struct ndb_json_parser *p, jsmntok_t *array) {
 
 // Push json tags into ndb data
 //   [["t", "hashtag"], ["p", "abcde..."]] -> struct ndb_tags
-static inline int
-ndb_builder_process_json_tags(struct ndb_json_parser *p, jsmntok_t *array) {
+static inline int ndb_builder_process_json_tags(struct ndb_json_parser *p,
+						jsmntok_t *array)
+{
 	jsmntok_t *tag = array;
 
 	if (array->size == 0)
@@ -290,28 +299,29 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 	return ndb_builder_finalize(&parser.builder, note);
 }
 
-void
-ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey) {
+void ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey)
+{
 	memcpy(builder->note->pubkey, pubkey, 32);
 }
 
-void
-ndb_builder_set_id(struct ndb_builder *builder, unsigned char *id) {
+void ndb_builder_set_id(struct ndb_builder *builder, unsigned char *id)
+{
 	memcpy(builder->note->id, id, 32);
 }
 
-void
-ndb_builder_set_signature(struct ndb_builder *builder, unsigned char *signature) {
+void ndb_builder_set_signature(struct ndb_builder *builder,
+			       unsigned char *signature)
+{
 	memcpy(builder->note->signature, signature, 64);
 }
 
-void
-ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind) {
+void ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind)
+{
 	builder->note->kind = kind;
 }
 
-int
-ndb_builder_new_tag(struct ndb_builder *builder) {
+int ndb_builder_new_tag(struct ndb_builder *builder)
+{
 	builder->note->tags.count++;
 	struct ndb_tag tag = {0};
 	builder->current_tag = (struct ndb_tag *)builder->note_cur.p;
@@ -321,8 +331,9 @@ ndb_builder_new_tag(struct ndb_builder *builder) {
 /// Push an element to the current tag
 /// 
 /// Basic idea is to call ndb_builder_new_tag
-inline int
-ndb_builder_push_tag_str(struct ndb_builder *builder, const char *str, int len) {
+inline int ndb_builder_push_tag_str(struct ndb_builder *builder,
+				    const char *str, int len)
+{
 	union packed_str pstr;
 	if (!ndb_builder_make_string(builder, str, len, &pstr))
 		return 0;
