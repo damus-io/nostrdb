@@ -99,6 +99,17 @@ static inline const char * ndb_tag_str(struct ndb_note *note,
 	return ndb_note_str(note, &tag->strs[ind]);
 }
 
+static inline int ndb_tag_matches_char(struct ndb_note *note,
+				       struct ndb_tag *tag, int ind, char c)
+{
+	const char *str = ndb_tag_str(note, tag, ind);
+	if (str[0] == '\0')
+		return 0;
+	else if (str[0] == c)
+		return 1;
+	return 0;
+}
+
 static inline const char * ndb_iter_tag_str(struct ndb_iterator *iter,
 					    int ind)
 {
