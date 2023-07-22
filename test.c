@@ -121,6 +121,7 @@ static void test_parse_contact_list()
 	"\"wss://nostr-pub.wellorder.net\":{\"write\":true,\"read\":true}}";
 
 	assert(!strcmp(expected_content, ndb_note_content(note)));
+	assert(ndb_note_created_at(note) == 1689904312);
 
 	write_file("test_contacts_ndb_note", (unsigned char *)note, size);
 	printf("wrote test_contacts_ndb_note (raw ndb_note)\n");

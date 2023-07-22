@@ -4,6 +4,7 @@
 #include "hex.h"
 #include "cursor.h"
 #include <stdlib.h>
+#include <limits.h>
 
 struct ndb_json_parser {
 	const char *json;
@@ -370,6 +371,37 @@ static inline int ndb_builder_process_json_tags(struct ndb_json_parser *p,
 	return 1;
 }
 
+static int parse_unsigned_int(const char *start, int len, unsigned int *num)
+{
+	unsigned int number = 0;
+	const char *p = start, *end = start + len;
+	int digits = 0;
+
+	while (p < end) {
+		char c = *p;
+
+		if (c < '0' || c > '9')
+			break;
+
+		// Check for overflow
+		char digit = c - '0';
+		if (number > (UINT_MAX - digit) / 10)
+			return 0; // Overflow detected
+
+		number = number * 10 + digit;
+
+		p++;
+		digits++;
+	}
+
+	if (digits == 0)
+		return 0;
+
+	*num = number;
+	return 1;
+}
+
+
 int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 		       unsigned char *buf, int bufsize)
 {
@@ -421,7 +453,12 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 			if (jsoneq(json, tok, tok_len, "created_at")) {
 				// created_at
 				tok = &parser.toks[i+1];
-				//printf("json_created_at %.*s\n", toksize(tok), json + tok->start);
+				start = json + tok->start;
+				if (tok->type != JSMN_PRIMITIVE || tok_len <= 0)
+					return 0;
+				if (!parse_unsigned_int(start, toksize(tok),
+							&parser.builder.note->created_at))
+					return 0;
 			} else if (jsoneq(json, tok, tok_len, "content")) {
 				// content
 				tok = &parser.toks[i+1];
