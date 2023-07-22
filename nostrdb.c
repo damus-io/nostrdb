@@ -121,22 +121,12 @@ struct ndb_note * ndb_builder_note(struct ndb_builder *builder)
 	return builder->note;
 }
 
-int ndb_builder_make_string(struct ndb_builder *builder, const char *str,
-			    int len, union packed_str *pstr)
+/// find an existing string via str_indices. these indices only exist in the
+/// builder phase just for this purpose.
+static inline int ndb_builder_find_str(struct ndb_builder *builder,
+				       const char *str, int len,
+				       union packed_str *pstr)
 {
-	uint32_t loc;
-
-	if (len == 0) {
-		*pstr = ndb_char_to_packed_str(0);
-		return 1;
-	} else if (len == 1) {
-		*pstr = ndb_char_to_packed_str(str[0]);
-		return 1;
-	} else if (len == 2) {
-		*pstr = ndb_chars_to_packed_str(str[0], str[1]);
-		return 1;
-	}
-
 	// find existing matching string to avoid duplicate strings
 	int indices = cursor_count(&builder->str_indices, sizeof(uint32_t));
 	for (int i = 0; i < indices; i++) {
@@ -150,12 +140,21 @@ int ndb_builder_make_string(struct ndb_builder *builder, const char *str,
 		}
 	}
 
+	return 0;
+}
+
+static int ndb_builder_push_str(struct ndb_builder *builder, const char *str,
+				int len, union packed_str *pstr)
+{
+	uint32_t loc;
+
 	// no string found, push a new one
 	loc = builder->strings.p - builder->strings.start;
 	if (!(cursor_push(&builder->strings, (unsigned char*)str, len) &&
 	      cursor_push_byte(&builder->strings, '\0'))) {
 		return 0;
 	}
+
 	*pstr = ndb_offset_str(loc);
 
 	// record in builder indices. ignore return value, if we can't cache it
@@ -165,10 +164,37 @@ int ndb_builder_make_string(struct ndb_builder *builder, const char *str,
 	return 1;
 }
 
+static int ndb_builder_push_unpacked_str(struct ndb_builder *builder,
+					 const char *str, int len,
+					 union packed_str *pstr)
+{
+	if (ndb_builder_find_str(builder, str, len, pstr))
+		return 1;
+
+	return ndb_builder_push_str(builder, str, len, pstr);
+}
+
+int ndb_builder_make_str(struct ndb_builder *builder, const char *str, int len,
+			 union packed_str *pstr)
+{
+	if (len == 0) {
+		*pstr = ndb_char_to_packed_str(0);
+		return 1;
+	} else if (len == 1) {
+		*pstr = ndb_char_to_packed_str(str[0]);
+		return 1;
+	} else if (len == 2) {
+		*pstr = ndb_chars_to_packed_str(str[0], str[1]);
+		return 1;
+	}
+
+	return ndb_builder_push_unpacked_str(builder, str, len, pstr);
+}
+
 int ndb_builder_set_content(struct ndb_builder *builder, const char *content,
 			    int len)
 {
-	return ndb_builder_make_string(builder, content, len, &builder->note->content);
+	return ndb_builder_make_str(builder, content, len, &builder->note->content);
 }
 
 
@@ -438,7 +464,7 @@ inline int ndb_builder_push_tag_str(struct ndb_builder *builder,
 				    const char *str, int len)
 {
 	union packed_str pstr;
-	if (!ndb_builder_make_string(builder, str, len, &pstr))
+	if (!ndb_builder_make_str(builder, str, len, &pstr))
 		return 0;
 	return ndb_builder_finalize_tag(builder, pstr);
 }
