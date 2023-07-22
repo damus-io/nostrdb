@@ -222,14 +222,13 @@ static inline int ndb_builder_process_json_tags(struct ndb_json_parser *p,
 		return 1;
 
 	for (int i = 0; i < array->size; i++) {
-        if (!ndb_builder_tag_from_json_array(p, &tag[i+1]))
+		if (!ndb_builder_tag_from_json_array(p, &tag[i+1]))
 			return 0;
-        tag += tag[i+1].size;
+		tag += tag[i+1].size;
 	}
 
 	return 1;
 }
-
 
 int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 		       unsigned char *buf, int bufsize)
