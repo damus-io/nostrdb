@@ -136,6 +136,11 @@ static inline uint32_t ndb_note_created_at(struct ndb_note *note)
 	return note->created_at;
 }
 
+static inline uint32_t ndb_note_kind(struct ndb_note *note)
+{
+	return note->kind;
+}
+
 static inline const char * ndb_note_content(struct ndb_note *note)
 {
 	return ndb_note_str(note, &note->content);
