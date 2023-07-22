@@ -40,6 +40,7 @@ struct ndb_note {
 
 	uint32_t created_at;
 	uint32_t kind;
+	uint32_t content_length;
 	union packed_str content;
 	uint32_t strings;
 	uint32_t json;
@@ -83,6 +84,7 @@ static inline int ndb_str_is_packed(union packed_str str)
 {
 	return (str.offset >> 31) & 0x1;
 }
+
 
 static inline const char * ndb_note_str(struct ndb_note *note,
 					union packed_str *str)
@@ -144,6 +146,11 @@ static inline uint32_t ndb_note_kind(struct ndb_note *note)
 static inline const char * ndb_note_content(struct ndb_note *note)
 {
 	return ndb_note_str(note, &note->content);
+}
+
+static inline uint32_t ndb_note_content_length(struct ndb_note *note)
+{
+	return note->content_length;
 }
 
 static inline struct ndb_note * ndb_note_from_bytes(unsigned char *bytes)

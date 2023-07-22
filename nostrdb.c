@@ -207,6 +207,7 @@ int ndb_builder_make_str(struct ndb_builder *builder, const char *str, int len,
 int ndb_builder_set_content(struct ndb_builder *builder, const char *content,
 			    int len)
 {
+	builder->note->content_length = len;
 	return ndb_builder_make_str(builder, content, len, &builder->note->content);
 }
 
@@ -238,12 +239,14 @@ static int ndb_builder_finalize_tag(struct ndb_builder *builder,
 /// Unescape and push json strings
 static int ndb_builder_make_json_str(struct ndb_builder *builder,
 				     const char *str, int len,
-				     union packed_str *pstr)
+				     union packed_str *pstr,
+				     int *written)
 {
 	// let's not care about de-duping these. we should just unescape
 	// in-place directly into the strings table. 
 
 	const char *p, *end, *start;
+	unsigned char *builder_start;
 
 	// always try compact strings first
 	if (ndb_builder_try_compact_str(builder, str, len, pstr))
@@ -253,6 +256,7 @@ static int ndb_builder_make_json_str(struct ndb_builder *builder,
 	start = str; // Initialize start to the beginning of the string
 
 	*pstr = ndb_offset_str(builder->strings.p - builder->strings.start);
+	builder_start = builder->strings.p;
 
 	for (p = str; p < end; p++) {
 		if (*p == '\\' && p+1 < end) {
@@ -313,6 +317,9 @@ static int ndb_builder_make_json_str(struct ndb_builder *builder,
 		return 0;
 	}
 
+	if (written)
+		*written = builder->strings.p - builder_start;
+
 	// TODO: dedupe these!?
 	return cursor_push_byte(&builder->strings, '\0');
 }
@@ -321,7 +328,7 @@ static int ndb_builder_push_json_tag(struct ndb_builder *builder,
 				     const char *str, int len)
 {
 	union packed_str pstr;
-	if (!ndb_builder_make_json_str(builder, str, len, &pstr))
+	if (!ndb_builder_make_json_str(builder, str, len, &pstr, NULL))
 		return 0;
 	return ndb_builder_finalize_tag(builder, pstr);
 }
@@ -468,11 +475,15 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 				// content
 				tok = &parser.toks[i+1];
 				union packed_str pstr;
+				tok_len = toksize(tok);
+				int written;
 				if (!ndb_builder_make_json_str(&parser.builder,
 							json + tok->start,
-							toksize(tok), &pstr)) {
+							tok_len, &pstr,
+							&written)) {
 					return 0;
 				}
+				parser.builder.note->content_length = written;
 				parser.builder.note->content = pstr;
 			}
 		} else if (start[0] == 't' && jsoneq(json, tok, tok_len, "tags")) {
