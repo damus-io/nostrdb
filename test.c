@@ -31,9 +31,7 @@ static void test_basic_event() {
 
 	memset(note->padding, 3, sizeof(note->padding));
 
-	const char *content = "hello, world!";
-
-	ok = ndb_builder_set_content(b, content, strlen(content)); assert(ok);
+	ok = ndb_builder_set_content(b, hex_pk, strlen(hex_pk)); assert(ok);
 	ndb_builder_set_id(b, id); assert(ok);
 	ndb_builder_set_pubkey(b, pubkey); assert(ok);
 	ndb_builder_set_signature(b, sig); assert(ok);
@@ -50,6 +48,8 @@ static void test_basic_event() {
 	ok = ndb_builder_finalize(b, &note);
 	assert(ok);
 
+	// content should never be packed id
+	assert(note->content.packed.flag != NDB_PACKED_ID);
 	assert(note->tags.count == 2);
 
 	// test iterator
@@ -58,19 +58,21 @@ static void test_basic_event() {
 	ok = ndb_tags_iterate_start(note, it);
 	assert(ok);
 	assert(it->tag->count == 2);
-	const char *p   = ndb_iter_tag_str(it, 0);
-	const char *hpk = ndb_iter_tag_str(it, 1);
-	assert(hpk);
-	assert(!ndb_str_is_packed(it->tag->strs[1]));
-	assert(!strcmp(hpk, hex_pk));
+	const char *p      = ndb_iter_tag_str(it, 0).str;
+	struct ndb_str hpk = ndb_iter_tag_str(it, 1);
+
+	hex_decode(hex_pk, 64, id, 32);
+
+	assert(hpk.flag == NDB_PACKED_ID);
+	assert(memcmp(hpk.id, id, 32) == 0);
 	assert(!strcmp(p, "p"));
 
 	ok = ndb_tags_iterate_next(it);
 	assert(ok);
 	assert(it->tag->count == 3);
-	assert(!strcmp(ndb_iter_tag_str(it, 0), "word"));
-	assert(!strcmp(ndb_iter_tag_str(it, 1), "words"));
-	assert(!strcmp(ndb_iter_tag_str(it, 2), "w"));
+	assert(!strcmp(ndb_iter_tag_str(it, 0).str, "word"));
+	assert(!strcmp(ndb_iter_tag_str(it, 1).str, "words"));
+	assert(!strcmp(ndb_iter_tag_str(it, 2).str, "w"));
 
 	ok = ndb_tags_iterate_next(it);
 	assert(!ok);
@@ -108,7 +110,7 @@ static void test_parse_contact_list()
 	size = ndb_note_from_json((const char*)json, written, &note, buf, alloc_size);
 	printf("ndb_note_from_json size %d\n", size);
 	assert(size > 0);
-	assert(size == 59062);
+	assert(size == 34062);
 
 	const char* expected_content = 
 	"{\"wss://nos.lol\":{\"write\":true,\"read\":true},"
@@ -137,7 +139,7 @@ static void test_parse_contact_list()
 }
 
 static void test_parse_json() {
-	char hex_id[65] = {0};
+	char hex_id[32] = {0};
 	unsigned char buffer[1024];
 	struct ndb_note *note;
 #define HEX_ID "5004a081e397c6da9dc2f2d6b3134006a9d0e8c1b46689d9fe150bb2f21a204d"
@@ -152,24 +154,24 @@ static void test_parse_json() {
 	const char *content = ndb_note_content(note);
 	unsigned char *id = ndb_note_id(note);
 
-	hex_encode(id, 32, hex_id, sizeof(hex_id));
+	hex_decode(HEX_ID, 64, hex_id, sizeof(hex_id));
 
 	assert(!strcmp(content, "共通語"));
-	assert(!strcmp(HEX_ID, hex_id));
+	assert(!memcmp(id, hex_id, 32));
 
 	assert(note->tags.count == 2);
 
 	struct ndb_iterator iter, *it = &iter;
 	ok = ndb_tags_iterate_start(note, it); assert(ok);
 	assert(it->tag->count == 2);
-	assert(!strcmp(ndb_iter_tag_str(it, 0), "p"));
-	assert(!strcmp(ndb_iter_tag_str(it, 1), HEX_ID));
+	assert(!strcmp(ndb_iter_tag_str(it, 0).str, "p"));
+	assert(!memcmp(ndb_iter_tag_str(it, 1).id, hex_id, 32));
 
 	ok = ndb_tags_iterate_next(it); assert(ok);
 	assert(it->tag->count == 3);
-	assert(!strcmp(ndb_iter_tag_str(it, 0), "word"));
-	assert(!strcmp(ndb_iter_tag_str(it, 1), "words"));
-	assert(!strcmp(ndb_iter_tag_str(it, 2), "w"));
+	assert(!strcmp(ndb_iter_tag_str(it, 0).str, "word"));
+	assert(!strcmp(ndb_iter_tag_str(it, 1).str, "words"));
+	assert(!strcmp(ndb_iter_tag_str(it, 2).str, "w"));
 }
 
 int main(int argc, const char *argv[]) {
