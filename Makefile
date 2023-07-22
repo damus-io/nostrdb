@@ -10,9 +10,11 @@ clean:
 tags:
 	ctags *.c *.h
 
+benchmark: bench
+	./bench
+
 bench: bench.c $(DEPS)
 	$(CC) $(CFLAGS) bench.c nostrdb.c -o $@
-	./bench
 
 test: test.c $(DEPS)
 	$(CC) $(CFLAGS) test.c nostrdb.c -o $@

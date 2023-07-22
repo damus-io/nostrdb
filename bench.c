@@ -33,7 +33,7 @@ static int bench_parser(int times, const char *json, int len)
 int main(int argc, char *argv[], char **env)
 {
 	static const int alloc_size = 2 << 18;
-	int times = 10000, len;
+	int times = 10000, len = 0;
 	unsigned char buf[alloc_size];
 
 	if (!read_file("contacts.json", buf, alloc_size, &len))

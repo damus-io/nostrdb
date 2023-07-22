@@ -97,7 +97,7 @@ static void test_empty_tags() {
 
 static void test_parse_contact_list()
 {
-	int size, written;
+	int size, written = 0;
 	static const int alloc_size = 2 << 18;
 	unsigned char *json = malloc(alloc_size);
 	unsigned char *buf = malloc(alloc_size);
