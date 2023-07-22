@@ -110,8 +110,20 @@ static void test_parse_contact_list()
 	assert(size > 0);
 	assert(size == 59058);
 
-	printf("contacts content '%s'\n", ndb_note_content(note));
+	const char* expected_content = 
+	"{\"wss://nos.lol\":{\"write\":true,\"read\":true},"
+	"\"wss://relay.damus.io\":{\"write\":true,\"read\":true},"
+	"\"ws://monad.jb55.com:8080\":{\"write\":true,\"read\":true},"
+	"\"wss://nostr.wine\":{\"write\":true,\"read\":true},"
+	"\"wss://welcome.nostr.wine\":{\"write\":true,\"read\":true},"
+	"\"wss://eden.nostr.land\":{\"write\":true,\"read\":true},"
+	"\"wss://relay.mostr.pub\":{\"write\":true,\"read\":true},"
+	"\"wss://nostr-pub.wellorder.net\":{\"write\":true,\"read\":true}}";
+
+	assert(!strcmp(expected_content, ndb_note_content(note)));
+
 	write_file("test_contacts_ndb_note", (unsigned char *)note, size);
+	printf("wrote test_contacts_ndb_note (raw ndb_note)\n");
 
 	free(json);
 	free(buf);
