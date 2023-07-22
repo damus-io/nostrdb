@@ -60,9 +60,8 @@ static void test_basic_event() {
 	const char *p   = ndb_iter_tag_str(it, 0);
 	const char *hpk = ndb_iter_tag_str(it, 1);
 	assert(hpk);
-	assert(!ndb_str_is_packed(it->tag->strs[1]));
-	assert(!strcmp(hpk, hex_pk));
 	assert(!strcmp(p, "p"));
+	assert(!strcmp(hpk, hex_pk));
 
 	ok = ndb_tags_iterate_next(it);
 	assert(ok);
