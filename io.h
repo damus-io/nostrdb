@@ -1,4 +1,6 @@
 
+#include <stdio.h>
+
 static int read_fd(FILE *fd, unsigned char *buf, int buflen, int *written)
 {
 	unsigned char *p = buf;

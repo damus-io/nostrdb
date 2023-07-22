@@ -416,12 +416,12 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 		} else if (start[0] == 'k' && jsoneq(json, tok, tok_len, "kind")) {
 			// kind
 			tok = &parser.toks[i+1];
-			printf("json_kind %.*s\n", toksize(tok), json + tok->start);
+			//printf("json_kind %.*s\n", toksize(tok), json + tok->start);
 		} else if (start[0] == 'c') {
 			if (jsoneq(json, tok, tok_len, "created_at")) {
 				// created_at
 				tok = &parser.toks[i+1];
-				printf("json_created_at %.*s\n", toksize(tok), json + tok->start);
+				//printf("json_created_at %.*s\n", toksize(tok), json + tok->start);
 			} else if (jsoneq(json, tok, tok_len, "content")) {
 				// content
 				tok = &parser.toks[i+1];
