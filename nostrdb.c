@@ -206,15 +206,22 @@ static int ndb_builder_push_json_str(struct ndb_builder *builder,
 	
 	// TODO: we still want single-char packed strings
 
-
-	const char *p, *end;
+	const char *p, *end, *start;
 
 	end = str + len;
+	start = str; // Initialize start to the beginning of the string
 
 	*pstr = ndb_offset_str(builder->strings.p - builder->strings.start);
 
 	for (p = str; p < end; p++) {
 		if (*p == '\\' && p+1 < end) {
+			// Push the chunk of unescaped characters before this escape sequence
+			if (start < p && !cursor_push(&builder->strings,
+						(unsigned char *)start,
+						p - start)) {
+				return 0;
+			}
+
 			switch (*(p+1)) {
 			case 't':
 				if (!cursor_push_byte(&builder->strings, '\t'))
@@ -244,23 +251,25 @@ static int ndb_builder_push_json_str(struct ndb_builder *builder,
 				if (!cursor_push_byte(&builder->strings, '"'))
 					return 0;
 				break;
-			// Optionally handle Unicode escape sequences (\uXXXX) if needed.
 			case 'u':
 				// these aren't handled yet
 				return 0;
 			default:
-				// Possibly handle an error here or just push the backslash and the character.
 				if (!cursor_push_byte(&builder->strings, *p) ||
 				    !cursor_push_byte(&builder->strings, *(p+1)))
 					return 0;
 				break;
 			}
 
-			p++;
-		} else {
-			if (!cursor_push_byte(&builder->strings, *p))
-				return 0;
+			p++; // Skip the character following the backslash
+			start = p + 1; // Update the start pointer to the next character
 		}
+	}
+
+	// Handle the last chunk after the last escape sequence (or if there are no escape sequences at all)
+	if (start < p && !cursor_push(&builder->strings, (unsigned char *)start,
+				      p - start)) {
+		return 0;
 	}
 
 	return cursor_push_byte(&builder->strings, '\0');
