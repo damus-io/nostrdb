@@ -5,7 +5,7 @@ check: test
 	./test
 
 clean:
-	rm test
+	rm -f test bench
 
 tags:
 	ctags *.c *.h
