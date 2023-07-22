@@ -187,9 +187,97 @@ static inline int toksize(jsmntok_t *tok)
 	return tok->end - tok->start;
 }
 
+static int ndb_builder_finalize_tag(struct ndb_builder *builder,
+				    union packed_str offset)
+{
+	if (!cursor_push_u32(&builder->note_cur, offset.offset))
+		return 0;
+	builder->current_tag->count++;
+	return 1;
+}
+
+/// Unescape and push json strings
+static int ndb_builder_push_json_str(struct ndb_builder *builder,
+				     const char *str, int len,
+				     union packed_str *pstr)
+{
+	// let's not care about de-duping these. we should just unescape
+	// in-place directly into the strings table. 
+	
+	// TODO: we still want single-char packed strings
+
+
+	const char *p, *end;
+
+	end = str + len;
+
+	*pstr = ndb_offset_str(builder->strings.p - builder->strings.start);
+
+	for (p = str; p < end; p++) {
+		if (*p == '\\' && p+1 < end) {
+			switch (*(p+1)) {
+			case 't':
+				if (!cursor_push_byte(&builder->strings, '\t'))
+					return 0;
+				break;
+			case 'n':
+				if (!cursor_push_byte(&builder->strings, '\n'))
+					return 0;
+				break;
+			case 'r':
+				if (!cursor_push_byte(&builder->strings, '\r'))
+					return 0;
+				break;
+			case 'b':
+				if (!cursor_push_byte(&builder->strings, '\b'))
+					return 0;
+				break;
+			case 'f':
+				if (!cursor_push_byte(&builder->strings, '\f'))
+					return 0;
+				break;
+			case '\\':
+				if (!cursor_push_byte(&builder->strings, '\\'))
+					return 0;
+				break;
+			case '"':
+				if (!cursor_push_byte(&builder->strings, '"'))
+					return 0;
+				break;
+			// Optionally handle Unicode escape sequences (\uXXXX) if needed.
+			case 'u':
+				// these aren't handled yet
+				return 0;
+			default:
+				// Possibly handle an error here or just push the backslash and the character.
+				if (!cursor_push_byte(&builder->strings, *p) ||
+				    !cursor_push_byte(&builder->strings, *(p+1)))
+					return 0;
+				break;
+			}
+
+			p++;
+		} else {
+			if (!cursor_push_byte(&builder->strings, *p))
+				return 0;
+		}
+	}
+
+	return cursor_push_byte(&builder->strings, '\0');
+}
+
+static int ndb_builder_push_json_tag(struct ndb_builder *builder,
+				     const char *str, int len)
+{
+	union packed_str pstr;
+	if (!ndb_builder_push_json_str(builder, str, len, &pstr))
+		return 0;
+	return ndb_builder_finalize_tag(builder, pstr);
+}
+
 // Push a json array into an ndb tag ["p", "abcd..."] -> struct ndb_tag
-static inline int ndb_builder_tag_from_json_array(struct ndb_json_parser *p,
-						  jsmntok_t *array)
+static int ndb_builder_tag_from_json_array(struct ndb_json_parser *p,
+					   jsmntok_t *array)
 {
 	jsmntok_t *str_tok;
 	const char *str;
@@ -204,8 +292,10 @@ static inline int ndb_builder_tag_from_json_array(struct ndb_json_parser *p,
 		str_tok = &array[i+1];
 		str = p->json + str_tok->start;
 
-		if (!ndb_builder_push_tag_str(&p->builder, str, toksize(str_tok)))
+		if (!ndb_builder_push_json_tag(&p->builder, str,
+					       toksize(str_tok))) {
 			return 0;
+		}
 	}
 
 	return 1;
@@ -285,8 +375,13 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 			} else if (jsoneq(json, tok, tok_len, "content")) {
 				// content
 				tok = &parser.toks[i+1];
-				if (!ndb_builder_set_content(&parser.builder, json + tok->start, toksize(tok)))
+				union packed_str pstr;
+				if (!ndb_builder_push_json_str(&parser.builder,
+							json + tok->start,
+							toksize(tok), &pstr)) {
 					return 0;
+				}
+				parser.builder.note->content = pstr;
 			}
 		} else if (start[0] == 't' && jsoneq(json, tok, tok_len, "tags")) {
 			tok = &parser.toks[i+1];
@@ -336,8 +431,5 @@ inline int ndb_builder_push_tag_str(struct ndb_builder *builder,
 	union packed_str pstr;
 	if (!ndb_builder_make_string(builder, str, len, &pstr))
 		return 0;
-	if (!cursor_push_u32(&builder->note_cur, pstr.offset))
-		return 0;
-	builder->current_tag->count++;
-	return 1;
+	return ndb_builder_finalize_tag(builder, pstr);
 }
