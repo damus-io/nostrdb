@@ -56,6 +56,26 @@ int ndb_builder_new(struct ndb_builder *builder, unsigned char *buf,
 	return 1;
 }
 
+/// Check for small strings to pack
+static inline int ndb_builder_try_compact_str(struct ndb_builder *builder,
+					      const char *str, int len,
+					      union packed_str *pstr)
+{
+	if (len == 0) {
+		*pstr = ndb_char_to_packed_str(0);
+		return 1;
+	} else if (len == 1) {
+		*pstr = ndb_char_to_packed_str(str[0]);
+		return 1;
+	} else if (len == 2) {
+		*pstr = ndb_chars_to_packed_str(str[0], str[1]);
+		return 1;
+	}
+
+	return 0;
+}
+
+
 static inline int ndb_json_parser_init(struct ndb_json_parser *p,
 				       const char *json, int json_len,
 				       unsigned char *buf, int bufsize)
@@ -177,16 +197,8 @@ static int ndb_builder_push_unpacked_str(struct ndb_builder *builder,
 int ndb_builder_make_str(struct ndb_builder *builder, const char *str, int len,
 			 union packed_str *pstr)
 {
-	if (len == 0) {
-		*pstr = ndb_char_to_packed_str(0);
+	if (ndb_builder_try_compact_str(builder, str, len, pstr))
 		return 1;
-	} else if (len == 1) {
-		*pstr = ndb_char_to_packed_str(str[0]);
-		return 1;
-	} else if (len == 2) {
-		*pstr = ndb_chars_to_packed_str(str[0], str[1]);
-		return 1;
-	}
 
 	return ndb_builder_push_unpacked_str(builder, str, len, pstr);
 }
