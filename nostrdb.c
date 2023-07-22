@@ -241,10 +241,12 @@ static int ndb_builder_make_json_str(struct ndb_builder *builder,
 {
 	// let's not care about de-duping these. we should just unescape
 	// in-place directly into the strings table. 
-	
-	// TODO: we still want single-char packed strings
 
 	const char *p, *end, *start;
+
+	// always try compact strings first
+	if (ndb_builder_try_compact_str(builder, str, len, pstr))
+		return 1;
 
 	end = str + len;
 	start = str; // Initialize start to the beginning of the string
@@ -310,6 +312,7 @@ static int ndb_builder_make_json_str(struct ndb_builder *builder,
 		return 0;
 	}
 
+	// TODO: dedupe these!?
 	return cursor_push_byte(&builder->strings, '\0');
 }
 
