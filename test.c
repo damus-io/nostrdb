@@ -1,6 +1,7 @@
 
 #include "nostrdb.h"
 #include "hex.h"
+#include "io.h"
 
 #include <stdio.h>
 #include <assert.h>
@@ -93,6 +94,23 @@ static void test_empty_tags() {
 	assert(!ok);
 }
 
+static void test_parse_contact_list()
+{
+	int size, written;
+	static const int alloc_size = 2 << 18;
+	unsigned char *json = malloc(alloc_size);
+	unsigned char *buf = malloc(alloc_size);
+	struct ndb_note *note;
+
+	read_file("contacts.json", json, alloc_size, &written);
+
+	size = ndb_note_from_json((const char*)json, written, &note, buf, alloc_size);
+	printf("ndb_note_from_json size %d\n", size);
+	assert(size > 0);
+
+	free(json);
+	free(buf);
+}
 
 static void test_parse_json() {
 	char hex_id[65] = {0};
@@ -134,4 +152,5 @@ int main(int argc, const char *argv[]) {
 	test_basic_event();
 	test_empty_tags();
 	test_parse_json();
+	test_parse_contact_list();
 }
