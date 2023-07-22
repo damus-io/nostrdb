@@ -143,7 +143,7 @@ int ndb_builder_make_string(struct ndb_builder *builder, const char *str,
 		uint32_t index = ((uint32_t*)builder->str_indices.start)[i];
 		const char *some_str = (const char*)builder->strings.start + index;
 
-		if (!strcmp(some_str, str)) {
+		if (!strncmp(some_str, str, len)) {
 			// found an existing matching str, use that index
 			*pstr = ndb_offset_str(index);
 			return 1;
