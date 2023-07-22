@@ -235,7 +235,7 @@ static int ndb_builder_finalize_tag(struct ndb_builder *builder,
 }
 
 /// Unescape and push json strings
-static int ndb_builder_push_json_str(struct ndb_builder *builder,
+static int ndb_builder_make_json_str(struct ndb_builder *builder,
 				     const char *str, int len,
 				     union packed_str *pstr)
 {
@@ -317,7 +317,7 @@ static int ndb_builder_push_json_tag(struct ndb_builder *builder,
 				     const char *str, int len)
 {
 	union packed_str pstr;
-	if (!ndb_builder_push_json_str(builder, str, len, &pstr))
+	if (!ndb_builder_make_json_str(builder, str, len, &pstr))
 		return 0;
 	return ndb_builder_finalize_tag(builder, pstr);
 }
@@ -423,7 +423,7 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 				// content
 				tok = &parser.toks[i+1];
 				union packed_str pstr;
-				if (!ndb_builder_push_json_str(&parser.builder,
+				if (!ndb_builder_make_json_str(&parser.builder,
 							json + tok->start,
 							toksize(tok), &pstr)) {
 					return 0;
