@@ -4,7 +4,6 @@
 #include "hex.h"
 #include "cursor.h"
 #include <stdlib.h>
-#include <assert.h>
 
 struct ndb_json_parser {
 	const char *json;
@@ -17,7 +16,7 @@ struct ndb_json_parser {
 
 static inline int cursor_push_tag(struct cursor *cur, struct ndb_tag *tag)
 {
-	return cursor_push_u32(cur, tag->count);
+	return cursor_push_u16(cur, tag->count);
 }
 
 int ndb_builder_new(struct ndb_builder *builder, unsigned char *buf,
@@ -123,19 +122,30 @@ struct ndb_note * ndb_builder_note(struct ndb_builder *builder)
 }
 
 int ndb_builder_make_string(struct ndb_builder *builder, const char *str,
-			    int len, uint16_t *pstr)
+			    int len, union packed_str *pstr)
 {
-	uint16_t loc;
+	uint32_t loc;
+
+	if (len == 0) {
+		*pstr = ndb_char_to_packed_str(0);
+		return 1;
+	} else if (len == 1) {
+		*pstr = ndb_char_to_packed_str(str[0]);
+		return 1;
+	} else if (len == 2) {
+		*pstr = ndb_chars_to_packed_str(str[0], str[1]);
+		return 1;
+	}
 
 	// find existing matching string to avoid duplicate strings
-	int indices = cursor_count(&builder->str_indices, sizeof(uint16_t));
+	int indices = cursor_count(&builder->str_indices, sizeof(uint32_t));
 	for (int i = 0; i < indices; i++) {
-		uint16_t index = ((uint16_t*)builder->str_indices.start)[i];
-		const char *some_str = ((const char*)builder->strings.start) + index;
+		uint32_t index = ((uint32_t*)builder->str_indices.start)[i];
+		const char *some_str = (const char*)builder->strings.start + index;
 
 		if (!strcmp(some_str, str)) {
 			// found an existing matching str, use that index
-			*pstr = index;
+			*pstr = ndb_offset_str(index);
 			return 1;
 		}
 	}
@@ -146,11 +156,11 @@ int ndb_builder_make_string(struct ndb_builder *builder, const char *str,
 	      cursor_push_byte(&builder->strings, '\0'))) {
 		return 0;
 	}
-	*pstr = loc;
+	*pstr = ndb_offset_str(loc);
 
 	// record in builder indices. ignore return value, if we can't cache it
 	// then whatever
-	cursor_push_u16(&builder->str_indices, loc);
+	cursor_push_u32(&builder->str_indices, loc);
 
 	return 1;
 }
@@ -212,9 +222,9 @@ static inline int ndb_builder_process_json_tags(struct ndb_json_parser *p,
 		return 1;
 
 	for (int i = 0; i < array->size; i++) {
-		if (!ndb_builder_tag_from_json_array(p, &tag[i+1]))
+        if (!ndb_builder_tag_from_json_array(p, &tag[i+1]))
 			return 0;
-		tag += tag[i+1].size;
+        tag += tag[i+1].size;
 	}
 
 	return 1;
@@ -324,10 +334,10 @@ int ndb_builder_new_tag(struct ndb_builder *builder)
 inline int ndb_builder_push_tag_str(struct ndb_builder *builder,
 				    const char *str, int len)
 {
-	uint16_t str_ptr;
-	if (!ndb_builder_make_string(builder, str, len, &str_ptr))
+	union packed_str pstr;
+	if (!ndb_builder_make_string(builder, str, len, &pstr))
 		return 0;
-	if (!cursor_push_u16(&builder->note_cur, str_ptr))
+	if (!cursor_push_u32(&builder->note_cur, pstr.offset))
 		return 0;
 	builder->current_tag->count++;
 	return 1;
