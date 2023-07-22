@@ -16,18 +16,28 @@ static int read_fd(FILE *fd, unsigned char *buf, int buflen, int *written)
 	return 1;
 }
 
+static int write_file(const char *filename, unsigned char *buf, int buflen)
+{
+	FILE *file = NULL;
+	int ok;
+
+	file = fopen(filename, "w");
+	if (file == NULL)
+		return 0;
+
+	ok = fwrite(buf, buflen, 1, file);
+	fclose(file);
+	return ok;
+}
+
 static int read_file(const char *filename, unsigned char *buf, int buflen, int *written)
 {
 	FILE *file = NULL;
 	int ok;
 
 	file = fopen(filename, "r");
-	if (file == NULL) {
-		*written = strlen(filename)+1;
-		memcpy(buf, filename, *written);
-		buf[*written-1] = '\n';
+	if (file == NULL)
 		return 1;
-	}
 
 	ok = read_fd(file, buf, buflen, written);
 	fclose(file);

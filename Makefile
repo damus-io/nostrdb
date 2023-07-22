@@ -1,4 +1,4 @@
-CFLAGS = -Wall -Wno-unused-function -Werror -O1 -g
+CFLAGS = -Wall -Wno-unused-function -Werror -O2 -g
 
 check: test
 	./test

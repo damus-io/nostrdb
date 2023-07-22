@@ -5,3 +5,4 @@ test
 .envrc
 shell.nix
 *.dSYM
+test_contacts_ndb_note
