@@ -199,18 +199,22 @@ static inline union ndb_packed_str ndb_chars_to_packed_str(char c1, char c2)
 	return str;
 }
 
-static inline int ndb_tags_iterate_start(struct ndb_note *note,
-					 struct ndb_iterator *iter)
+static inline void ndb_tags_iterate_start(struct ndb_note *note,
+					  struct ndb_iterator *iter)
 {
 	iter->note = note;
-	iter->tag = note->tags.tag;
-	iter->index = 0;
-
-	return note->tags.count != 0 && iter->tag->count != 0;
+	iter->tag = NULL;
+	iter->index = -1;
 }
 
 static inline int ndb_tags_iterate_next(struct ndb_iterator *iter)
 {
+	if (iter->tag == NULL || iter->index == -1) {
+		iter->tag = iter->note->tags.tag;
+		iter->index = 0;
+		return iter->note->tags.count != 0;
+	}
+
 	struct ndb_tags *tags = &iter->note->tags;
 
 	if (++iter->index < tags->count) {

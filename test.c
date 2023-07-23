@@ -55,8 +55,10 @@ static void test_basic_event() {
 	// test iterator
 	struct ndb_iterator iter, *it = &iter;
 	
-	ok = ndb_tags_iterate_start(note, it);
+	ndb_tags_iterate_start(note, it);
+	ok = ndb_tags_iterate_next(it);
 	assert(ok);
+
 	assert(it->tag->count == 2);
 	const char *p      = ndb_iter_tag_str(it, 0).str;
 	struct ndb_str hpk = ndb_iter_tag_str(it, 1);
@@ -93,8 +95,22 @@ static void test_empty_tags() {
 
 	assert(note->tags.count == 0);
 
-	ok = ndb_tags_iterate_start(note, it);
+	ndb_tags_iterate_start(note, it);
+	ok = ndb_tags_iterate_next(it);
 	assert(!ok);
+}
+
+static void print_tag(struct ndb_note *note, struct ndb_tag *tag) {
+	for (int i = 0; i < tag->count; i++) {
+		union ndb_packed_str *elem = &tag->strs[i];
+		struct ndb_str str = ndb_note_str(note, elem);
+		if (str.flag == NDB_PACKED_ID) {
+			printf("<id> ");
+		} else {
+			printf("%s ", str.str);
+		}
+	}
+	printf("\n");
 }
 
 static void test_parse_contact_list()
@@ -132,6 +148,39 @@ static void test_parse_contact_list()
 			strlen(expected_content));
 	assert(ndb_note_content_length(note) == strlen(expected_content));
 
+	struct ndb_iterator iter, *it = &iter;
+	ndb_tags_iterate_start(note, it);
+
+	int tags = 0;
+	int total_elems = 0;
+
+	while (ndb_tags_iterate_next(it)) {
+		total_elems += it->tag->count;
+		//printf("tag %d: ", tags);
+		if (tags == 0 || tags == 1 || tags == 2)
+			assert(it->tag->count == 3);
+
+		if (tags == 6)
+			assert(it->tag->count == 2);
+
+		if (tags == 7)
+			assert(!strcmp(ndb_note_str(note, &it->tag->strs[2]).str,
+						"wss://nostr-pub.wellorder.net"));
+
+		if (tags == 786) {
+			static unsigned char h[] = { 0x74, 0xfa, 0xe6, 0x66, 0x4c, 0x9e, 0x79, 0x98, 0x0c, 0x6a, 0xc1, 0x1c, 0x57, 0x75, 0xed, 0x30, 0x93, 0x2b, 0xe9, 0x26, 0xf5, 0xc4, 0x5b, 0xe8, 0xd6, 0x55, 0xe0, 0x0e, 0x35, 0xec, 0xa2, 0x88 };
+			assert(!memcmp(ndb_note_str(note, &it->tag->strs[1]).id, h, 32));
+		}
+
+		//print_tag(it->note, it->tag);
+
+		tags += 1;
+	}
+
+	assert(tags == 786);
+	//printf("total_elems %d\n", total_elems);
+	assert(total_elems == 1580);
+
 	write_file("test_contacts_ndb_note", (unsigned char *)note, size);
 	printf("wrote test_contacts_ndb_note (raw ndb_note)\n");
 
@@ -163,7 +212,8 @@ static void test_parse_json() {
 	assert(note->tags.count == 2);
 
 	struct ndb_iterator iter, *it = &iter;
-	ok = ndb_tags_iterate_start(note, it); assert(ok);
+	ndb_tags_iterate_start(note, it); assert(ok);
+	ok = ndb_tags_iterate_next(it); assert(ok);
 	assert(it->tag->count == 2);
 	assert(!strcmp(ndb_iter_tag_str(it, 0).str, "p"));
 	assert(!memcmp(ndb_iter_tag_str(it, 1).id, hex_id, 32));
