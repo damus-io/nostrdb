@@ -110,7 +110,7 @@ static void test_parse_contact_list()
 	size = ndb_note_from_json((const char*)json, written, &note, buf, alloc_size);
 	printf("ndb_note_from_json size %d\n", size);
 	assert(size > 0);
-	assert(size == 34062);
+	assert(size == 34058);
 
 	const char* expected_content = 
 	"{\"wss://nos.lol\":{\"write\":true,\"read\":true},"
@@ -125,6 +125,7 @@ static void test_parse_contact_list()
 	assert(!strcmp(expected_content, ndb_note_content(note)));
 	assert(ndb_note_created_at(note) == 1689904312);
 	assert(ndb_note_kind(note) == 3);
+	assert(note->tags.count == 786);
 	//printf("note content length %d\n", ndb_note_content_length(note));
 	printf("ndb_content_len %d, expected_len %ld\n",
 			ndb_note_content_length(note),
