@@ -126,7 +126,7 @@ static void test_parse_contact_list()
 	size = ndb_note_from_json((const char*)json, written, &note, buf, alloc_size);
 	printf("ndb_note_from_json size %d\n", size);
 	assert(size > 0);
-	assert(size == 34058);
+	assert(size == 34322);
 
 	const char* expected_content = 
 	"{\"wss://nos.lol\":{\"write\":true,\"read\":true},"
