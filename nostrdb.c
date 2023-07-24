@@ -20,8 +20,8 @@ static inline int cursor_push_tag(struct cursor *cur, struct ndb_tag *tag)
 	return cursor_push_u16(cur, tag->count);
 }
 
-int ndb_builder_new(struct ndb_builder *builder, unsigned char *buf,
-		    int bufsize)
+int ndb_builder_init(struct ndb_builder *builder, unsigned char *buf,
+		     int bufsize)
 {
 	struct ndb_note *note;
 	struct cursor mem;
@@ -82,7 +82,7 @@ static inline int ndb_json_parser_init(struct ndb_json_parser *p,
 	// the more important stuff gets a larger chunk and then it spirals
 	// downward into smaller chunks. Thanks for coming to my TED talk.
 
-	if (!ndb_builder_new(&p->builder, buf, half))
+	if (!ndb_builder_init(&p->builder, buf, half))
 		return 0;
 
 	jsmn_init(&p->json_parser);

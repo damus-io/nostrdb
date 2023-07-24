@@ -79,7 +79,7 @@ struct ndb_iterator {
 
 // HI BUILDER
 int ndb_note_from_json(const char *json, int len, struct ndb_note **, unsigned char *buf, int buflen);
-int ndb_builder_new(struct ndb_builder *builder, unsigned char *buf, int bufsize);
+int ndb_builder_init(struct ndb_builder *builder, unsigned char *buf, int bufsize);
 int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note);
 int ndb_builder_set_content(struct ndb_builder *builder, const char *content, int len);
 void ndb_builder_set_signature(struct ndb_builder *builder, unsigned char *signature);

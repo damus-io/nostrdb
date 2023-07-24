@@ -25,7 +25,7 @@ static void test_basic_event() {
 
 	const char *hex_pk = "5d9b81b2d4d5609c5565286fc3b511dc6b9a1b3d7d1174310c624d61d1f82bb9";
 
-	ok = ndb_builder_new(b, buf, sizeof(buf));
+	ok = ndb_builder_init(b, buf, sizeof(buf));
 	assert(ok);
 	note = builder.note;
 
@@ -87,7 +87,7 @@ static void test_empty_tags() {
 	int ok;
 	unsigned char buf[1024];
 
-	ok = ndb_builder_new(b, buf, sizeof(buf));
+	ok = ndb_builder_init(b, buf, sizeof(buf));
 	assert(ok);
 
 	ok = ndb_builder_finalize(b, &note);
