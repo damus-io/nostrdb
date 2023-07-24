@@ -548,6 +548,11 @@ void ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind)
 	builder->note->kind = kind;
 }
 
+void ndb_builder_set_created_at(struct ndb_builder *builder, uint32_t created_at)
+{
+	builder->note->created_at = created_at;
+}
+
 int ndb_builder_new_tag(struct ndb_builder *builder)
 {
 	builder->note->tags.count++;

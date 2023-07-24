@@ -82,6 +82,7 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **, unsigned c
 int ndb_builder_init(struct ndb_builder *builder, unsigned char *buf, int bufsize);
 int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note);
 int ndb_builder_set_content(struct ndb_builder *builder, const char *content, int len);
+void ndb_builder_set_created_at(struct ndb_builder *builder, uint32_t created_at);
 void ndb_builder_set_signature(struct ndb_builder *builder, unsigned char *signature);
 void ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey);
 void ndb_builder_set_id(struct ndb_builder *builder, unsigned char *id);
