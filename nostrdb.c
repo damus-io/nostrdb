@@ -52,6 +52,7 @@ int ndb_builder_init(struct ndb_builder *builder, unsigned char *buf,
 	memset(note, 0, sizeof(*note));
 	builder->note_cur.p += sizeof(*note);
 
+	note->strings = builder->strings.start - buf;
 	note->version = 1;
 
 	return 1;
