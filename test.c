@@ -225,9 +225,25 @@ static void test_parse_json() {
 	assert(!strcmp(ndb_iter_tag_str(it, 2).str, "w"));
 }
 
+static void test_strings_work_before_finalization() {
+	struct ndb_builder builder, *b = &builder;
+	struct ndb_note *note;
+	int ok;
+	unsigned char buf[1024];
+
+	ok = ndb_builder_init(b, buf, sizeof(buf)); assert(ok);
+	ndb_builder_set_content(b, "hello", 5);
+
+	assert(!strcmp(ndb_note_str(b->note, &b->note->content).str, "hello"));
+	assert(ndb_builder_finalize(b, &note));
+
+	assert(!strcmp(ndb_note_str(b->note, &b->note->content).str, "hello"));
+}
+
 int main(int argc, const char *argv[]) {
 	test_basic_event();
 	test_empty_tags();
 	test_parse_json();
 	test_parse_contact_list();
+	test_strings_work_before_finalization();
 }
