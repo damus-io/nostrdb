@@ -7,3 +7,5 @@ shell.nix
 *.dSYM
 test_contacts_ndb_note
 bench
+configurator
+config.h
