@@ -116,6 +116,7 @@ static void print_tag(struct ndb_note *note, struct ndb_tag *tag) {
 static void test_parse_contact_list()
 {
 	int size, written = 0;
+	unsigned char id[32];
 	static const int alloc_size = 2 << 18;
 	unsigned char *json = malloc(alloc_size);
 	unsigned char *buf = malloc(alloc_size);
@@ -127,6 +128,11 @@ static void test_parse_contact_list()
 	printf("ndb_note_from_json size %d\n", size);
 	assert(size > 0);
 	assert(size == 34322);
+
+	memcpy(id, note->id, 32);
+	memset(note->id, 0, 32);
+	assert(ndb_calculate_note_id(note, json, alloc_size));
+	assert(!memcmp(note->id, id, 32));
 
 	const char* expected_content = 
 	"{\"wss://nos.lol\":{\"write\":true,\"read\":true},"

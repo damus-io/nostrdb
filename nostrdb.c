@@ -3,6 +3,7 @@
 #include "jsmn.h"
 #include "hex.h"
 #include "cursor.h"
+#include "sha256.h"
 #include <stdlib.h>
 #include <limits.h>
 
@@ -117,6 +118,166 @@ static int cursor_push_unescaped_char(struct cursor *cur, char c1, char c2)
 		return cursor_push_byte(cur, c1) && cursor_push_byte(cur, c2);
 	}
 }
+
+static int cursor_push_escaped_char(struct cursor *cur, char c)
+{
+        switch (c) {
+        case '"':  return cursor_push_str(cur, "\\\"");
+        case '\\': return cursor_push_str(cur, "\\\\");
+        case '\b': return cursor_push_str(cur, "\\b");
+        case '\f': return cursor_push_str(cur, "\\f");
+        case '\n': return cursor_push_str(cur, "\\n");
+        case '\r': return cursor_push_str(cur, "\\r");
+        case '\t': return cursor_push_str(cur, "\\t");
+        // TODO: \u hex hex hex hex
+        }
+        return cursor_push_byte(cur, c);
+}
+
+static int cursor_push_hex_str(struct cursor *cur, unsigned char *buf, int len)
+{
+	int i;
+
+	if (len % 2 != 0)
+		return 0;
+
+        if (!cursor_push_byte(cur, '"'))
+                return 0;
+
+	for (i = 0; i < len; i++) {
+		unsigned int c = ((const unsigned char *)buf)[i];
+		if (!cursor_push_byte(cur, hexchar(c >> 4)))
+			return 0;
+		if (!cursor_push_byte(cur, hexchar(c & 0xF)))
+			return 0;
+	}
+
+        if (!cursor_push_byte(cur, '"'))
+                return 0;
+
+	return 1;
+}
+
+static int cursor_push_jsonstr(struct cursor *cur, const char *str)
+{
+	int i;
+        int len;
+
+	len = strlen(str);
+
+        if (!cursor_push_byte(cur, '"'))
+                return 0;
+
+        for (i = 0; i < len; i++) {
+                if (!cursor_push_escaped_char(cur, str[i]))
+                        return 0;
+        }
+
+        if (!cursor_push_byte(cur, '"'))
+                return 0;
+
+        return 1;
+}
+
+
+static inline int cursor_push_json_tag_str(struct cursor *cur, struct ndb_str str)
+{
+	if (str.flag == NDB_PACKED_ID)
+		return cursor_push_hex_str(cur, str.id, 32);
+
+	return cursor_push_jsonstr(cur, str.str);
+}
+
+static int cursor_push_json_tag(struct cursor *cur, struct ndb_note *note,
+				struct ndb_tag *tag)
+{
+        int i;
+
+        if (!cursor_push_byte(cur, '['))
+                return 0;
+
+        for (i = 0; i < tag->count; i++) {
+                if (!cursor_push_json_tag_str(cur, ndb_note_str(note, &tag->strs[i])))
+                        return 0;
+                if (i != tag->count-1 && !cursor_push_byte(cur, ','))
+			return 0;
+        }
+
+        return cursor_push_byte(cur, ']');
+}
+
+static int cursor_push_json_tags(struct cursor *cur, struct ndb_note *note)
+{
+	int i;
+	struct ndb_iterator iter, *it = &iter;
+	ndb_tags_iterate_start(note, it);
+
+        if (!cursor_push_byte(cur, '['))
+                return 0;
+
+	i = 0;
+	while (ndb_tags_iterate_next(it)) {
+		if (!cursor_push_json_tag(cur, note, it->tag))
+			return 0;
+                if (i != note->tags.count-1 && !cursor_push_str(cur, ","))
+			return 0;
+		i++;
+	}
+
+        if (!cursor_push_byte(cur, ']'))
+                return 0;
+
+	return 1;
+}
+
+static int ndb_event_commitment(struct ndb_note *ev, unsigned char *buf, int buflen)
+{
+	char timebuf[16] = {0};
+	char kindbuf[16] = {0};
+	char pubkey[65];
+	struct cursor cur;
+	int ok;
+
+	if (!hex_encode(ev->pubkey, sizeof(ev->pubkey), pubkey, 32))
+		return 0;
+
+	make_cursor(buf, buf + buflen, &cur);
+
+	snprintf(timebuf, sizeof(timebuf), "%d", ev->created_at);
+	snprintf(kindbuf, sizeof(kindbuf), "%d", ev->kind);
+
+	ok =
+		cursor_push_str(&cur, "[0,\"") &&
+		cursor_push_str(&cur, pubkey) &&
+		cursor_push_str(&cur, "\",") &&
+		cursor_push_str(&cur, timebuf) &&
+		cursor_push_str(&cur, ",") &&
+		cursor_push_str(&cur, kindbuf) &&
+		cursor_push_str(&cur, ",") &&
+		cursor_push_json_tags(&cur, ev) &&
+		cursor_push_str(&cur, ",") &&
+		cursor_push_jsonstr(&cur, ndb_note_str(ev, &ev->content).str) &&
+		cursor_push_str(&cur, "]");
+
+	if (!ok)
+		return 0;
+
+	return cur.p - cur.start;
+}
+
+int ndb_calculate_note_id(struct ndb_note *note, unsigned char *buf, int buflen) {
+	int len;
+
+	if (!(len = ndb_event_commitment(note, buf, buflen)))
+		return 0;
+
+	//fprintf(stderr, "%.*s\n", len, buf);
+
+	sha256((struct sha256*)note->id, buf, len);
+
+	return 1;
+}
+
 
 int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note)
 {
