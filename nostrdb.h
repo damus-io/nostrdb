@@ -12,7 +12,6 @@ struct ndb_str {
 	};
 };
 
-struct secp256k1_context;
 struct ndb_keypair;
 
 // these must be byte-aligned, they are directly accessing the serialized data
@@ -83,9 +82,9 @@ struct ndb_iterator {
 
 // HELPERS
 int ndb_calculate_id(struct ndb_note *note, unsigned char *buf, int buflen);
-int ndb_sign_id(void *secp_ctx, struct ndb_keypair *keypair, unsigned char id[32], unsigned char sig[64]);
-int ndb_create_keypair(void *secp_ctx, struct ndb_keypair *key);
-int ndb_decode_key(void *secp_ctx, const char *secstr, struct ndb_keypair *keypair);
+int ndb_sign_id(struct ndb_keypair *keypair, unsigned char id[32], unsigned char sig[64]);
+int ndb_create_keypair(struct ndb_keypair *key);
+int ndb_decode_key(const char *secstr, struct ndb_keypair *keypair);
 
 // BUILDER
 int ndb_note_from_json(const char *json, int len, struct ndb_note **, unsigned char *buf, int buflen);

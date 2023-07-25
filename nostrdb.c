@@ -288,41 +288,47 @@ int ndb_calculate_id(struct ndb_note *note, unsigned char *buf, int buflen) {
 	return 1;
 }
 
-int ndb_sign_id(void *secp_ctx, struct ndb_keypair *keypair,
-		unsigned char id[32], unsigned char sig[64])
+int ndb_sign_id(struct ndb_keypair *keypair, unsigned char id[32],
+		unsigned char sig[64])
 {
 	unsigned char aux[32];
 
 	if (!fill_random(aux, sizeof(aux)))
 		return 0;
 
-	return secp256k1_schnorrsig_sign32(secp_ctx, sig, id, &keypair->pair, aux);
+	secp256k1_context *ctx =
+		secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+
+	return secp256k1_schnorrsig_sign32(ctx, sig, id, &keypair->pair, aux);
 }
 
-int ndb_create_keypair(void *secp_ctx, struct ndb_keypair *key)
+int ndb_create_keypair(struct ndb_keypair *key)
 {
 	secp256k1_xonly_pubkey pubkey;
 
+	secp256k1_context *ctx =
+		secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+
 	/* Try to create a keypair with a valid context, it should only
 	 * fail if the secret key is zero or out of range. */
-	if (!secp256k1_keypair_create(secp_ctx, &key->pair, key->secret))
+	if (!secp256k1_keypair_create(ctx, &key->pair, key->secret))
 		return 0;
 
-	if (!secp256k1_keypair_xonly_pub(secp_ctx, &pubkey, NULL, &key->pair))
+	if (!secp256k1_keypair_xonly_pub(ctx, &pubkey, NULL, &key->pair))
 		return 0;
 
 	/* Serialize the public key. Should always return 1 for a valid public key. */
-	return secp256k1_xonly_pubkey_serialize(secp_ctx, key->pubkey, &pubkey);
+	return secp256k1_xonly_pubkey_serialize(ctx, key->pubkey, &pubkey);
 }
 
-int ndb_decode_key(void *ctx, const char *secstr, struct ndb_keypair *keypair)
+int ndb_decode_key(const char *secstr, struct ndb_keypair *keypair)
 {
 	if (!hex_decode(secstr, strlen(secstr), keypair->secret, 32)) {
 		fprintf(stderr, "could not hex decode secret key\n");
 		return 0;
 	}
 
-	return ndb_create_keypair(ctx, keypair);
+	return ndb_create_keypair(keypair);
 }
 
 int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note,
@@ -352,10 +358,7 @@ int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note,
 		if (!ndb_calculate_id(*note, start, end - start))
 			return 0;
 
-		secp256k1_context *ctx =
-			secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
-
-		if (!ndb_sign_id(ctx, keypair, (*note)->id, (*note)->sig))
+		if (!ndb_sign_id(keypair, (*note)->id, (*note)->sig))
 			return 0;
 	}
 
