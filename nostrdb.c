@@ -100,6 +100,24 @@ static inline int ndb_json_parser_parse(struct ndb_json_parser *p)
 	return p->num_tokens;
 }
 
+static int cursor_push_unescaped_char(struct cursor *cur, char c1, char c2)
+{
+	switch (c2) {
+	case 't':  return cursor_push_byte(cur, '\t');
+	case 'n':  return cursor_push_byte(cur, '\n');
+	case 'r':  return cursor_push_byte(cur, '\r');
+	case 'b':  return cursor_push_byte(cur, '\b');
+	case 'f':  return cursor_push_byte(cur, '\f');
+	case '\\': return cursor_push_byte(cur, '\\');
+	case '"':  return cursor_push_byte(cur, '"');
+	case 'u':
+		// these aren't handled yet
+		return 0;
+	default:
+		return cursor_push_byte(cur, c1) && cursor_push_byte(cur, c2);
+	}
+}
+
 int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note)
 {
 	int strings_len = builder->strings.p - builder->strings.start;
@@ -298,44 +316,8 @@ static int ndb_builder_make_json_str(struct ndb_builder *builder,
 				return 0;
 			}
 
-			switch (*(p+1)) {
-			case 't':
-				if (!cursor_push_byte(&builder->strings, '\t'))
-					return 0;
-				break;
-			case 'n':
-				if (!cursor_push_byte(&builder->strings, '\n'))
-					return 0;
-				break;
-			case 'r':
-				if (!cursor_push_byte(&builder->strings, '\r'))
-					return 0;
-				break;
-			case 'b':
-				if (!cursor_push_byte(&builder->strings, '\b'))
-					return 0;
-				break;
-			case 'f':
-				if (!cursor_push_byte(&builder->strings, '\f'))
-					return 0;
-				break;
-			case '\\':
-				if (!cursor_push_byte(&builder->strings, '\\'))
-					return 0;
-				break;
-			case '"':
-				if (!cursor_push_byte(&builder->strings, '"'))
-					return 0;
-				break;
-			case 'u':
-				// these aren't handled yet
+			if (!cursor_push_unescaped_char(&builder->strings, *p, *(p+1)))
 				return 0;
-			default:
-				if (!cursor_push_byte(&builder->strings, *p) ||
-				    !cursor_push_byte(&builder->strings, *(p+1)))
-					return 0;
-				break;
-			}
 
 			p++; // Skip the character following the backslash
 			start = p + 1; // Update the start pointer to the next character
