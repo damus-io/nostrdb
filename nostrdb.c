@@ -8,6 +8,16 @@
 #include <stdlib.h>
 #include <limits.h>
 
+#include "secp256k1.h"
+#include "secp256k1_ecdh.h"
+#include "secp256k1_schnorrsig.h"
+
+struct ndb_keypair {
+	unsigned char pubkey[32];
+	unsigned char secret[32];
+	secp256k1_keypair pair;
+};
+
 struct ndb_json_parser {
 	const char *json;
 	int json_len;
@@ -278,7 +288,7 @@ int ndb_calculate_id(struct ndb_note *note, unsigned char *buf, int buflen) {
 	return 1;
 }
 
-int ndb_sign_id(secp256k1_context *ctx, struct ndb_keypair *keypair,
+int ndb_sign_id(void *secp_ctx, struct ndb_keypair *keypair,
 		unsigned char id[32], unsigned char sig[64])
 {
 	unsigned char aux[32];
@@ -286,27 +296,26 @@ int ndb_sign_id(secp256k1_context *ctx, struct ndb_keypair *keypair,
 	if (!fill_random(aux, sizeof(aux)))
 		return 0;
 
-	return secp256k1_schnorrsig_sign32(ctx, sig, id, &keypair->pair, aux);
+	return secp256k1_schnorrsig_sign32(secp_ctx, sig, id, &keypair->pair, aux);
 }
 
-int ndb_create_keypair(secp256k1_context *ctx, struct ndb_keypair *key)
+int ndb_create_keypair(void *secp_ctx, struct ndb_keypair *key)
 {
 	secp256k1_xonly_pubkey pubkey;
 
 	/* Try to create a keypair with a valid context, it should only
 	 * fail if the secret key is zero or out of range. */
-	if (!secp256k1_keypair_create(ctx, &key->pair, key->secret))
+	if (!secp256k1_keypair_create(secp_ctx, &key->pair, key->secret))
 		return 0;
 
-	if (!secp256k1_keypair_xonly_pub(ctx, &pubkey, NULL, &key->pair))
+	if (!secp256k1_keypair_xonly_pub(secp_ctx, &pubkey, NULL, &key->pair))
 		return 0;
 
 	/* Serialize the public key. Should always return 1 for a valid public key. */
-	return secp256k1_xonly_pubkey_serialize(ctx, key->pubkey, &pubkey);
+	return secp256k1_xonly_pubkey_serialize(secp_ctx, key->pubkey, &pubkey);
 }
 
-int ndb_decode_key(secp256k1_context *ctx, const char *secstr,
-		   struct ndb_keypair *keypair)
+int ndb_decode_key(void *ctx, const char *secstr, struct ndb_keypair *keypair)
 {
 	if (!hex_decode(secstr, strlen(secstr), keypair->secret, 32)) {
 		fprintf(stderr, "could not hex decode secret key\n");

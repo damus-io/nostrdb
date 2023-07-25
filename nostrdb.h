@@ -4,10 +4,6 @@
 #include <inttypes.h>
 #include "cursor.h"
 
-#include "secp256k1.h"
-#include "secp256k1_ecdh.h"
-#include "secp256k1_schnorrsig.h"
-
 struct ndb_str {
 	unsigned char flag;
 	union {
@@ -16,12 +12,8 @@ struct ndb_str {
 	};
 };
 
-struct ndb_keypair {
-	unsigned char pubkey[32];
-	unsigned char secret[32];
-	secp256k1_keypair pair;
-};
-
+struct secp256k1_context;
+struct ndb_keypair;
 
 // these must be byte-aligned, they are directly accessing the serialized data
 // representation
@@ -91,9 +83,9 @@ struct ndb_iterator {
 
 // HELPERS
 int ndb_calculate_id(struct ndb_note *note, unsigned char *buf, int buflen);
-int ndb_sign_id(secp256k1_context *ctx, struct ndb_keypair *keypair, unsigned char id[32], unsigned char sig[64]);
-int ndb_create_keypair(secp256k1_context *ctx, struct ndb_keypair *key);
-int ndb_decode_key(secp256k1_context *ctx, const char *secstr, struct ndb_keypair *keypair);
+int ndb_sign_id(void *secp_ctx, struct ndb_keypair *keypair, unsigned char id[32], unsigned char sig[64]);
+int ndb_create_keypair(void *secp_ctx, struct ndb_keypair *key);
+int ndb_decode_key(void *secp_ctx, const char *secstr, struct ndb_keypair *keypair);
 
 // BUILDER
 int ndb_note_from_json(const char *json, int len, struct ndb_note **, unsigned char *buf, int buflen);
