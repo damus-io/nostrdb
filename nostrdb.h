@@ -12,7 +12,11 @@ struct ndb_str {
 	};
 };
 
-struct ndb_keypair;
+struct ndb_keypair {
+	unsigned char pubkey[32];
+	unsigned char secret[32];
+	unsigned char pair[96];
+};
 
 // these must be byte-aligned, they are directly accessing the serialized data
 // representation

@@ -12,12 +12,6 @@
 #include "secp256k1_ecdh.h"
 #include "secp256k1_schnorrsig.h"
 
-struct ndb_keypair {
-	unsigned char pubkey[32];
-	unsigned char secret[32];
-	secp256k1_keypair pair;
-};
-
 struct ndb_json_parser {
 	const char *json;
 	int json_len;
@@ -292,6 +286,7 @@ int ndb_sign_id(struct ndb_keypair *keypair, unsigned char id[32],
 		unsigned char sig[64])
 {
 	unsigned char aux[32];
+	secp256k1_keypair *pair = (secp256k1_keypair*) keypair->pair;
 
 	if (!fill_random(aux, sizeof(aux)))
 		return 0;
@@ -299,26 +294,27 @@ int ndb_sign_id(struct ndb_keypair *keypair, unsigned char id[32],
 	secp256k1_context *ctx =
 		secp256k1_context_create(SECP256K1_CONTEXT_NONE);
 
-	return secp256k1_schnorrsig_sign32(ctx, sig, id, &keypair->pair, aux);
+	return secp256k1_schnorrsig_sign32(ctx, sig, id, pair, aux);
 }
 
-int ndb_create_keypair(struct ndb_keypair *key)
+int ndb_create_keypair(struct ndb_keypair *kp)
 {
+	secp256k1_keypair *keypair = (secp256k1_keypair*)kp->pair;
 	secp256k1_xonly_pubkey pubkey;
 
 	secp256k1_context *ctx =
-		secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+		secp256k1_context_create(SECP256K1_CONTEXT_NONE);;
 
 	/* Try to create a keypair with a valid context, it should only
 	 * fail if the secret key is zero or out of range. */
-	if (!secp256k1_keypair_create(ctx, &key->pair, key->secret))
+	if (!secp256k1_keypair_create(ctx, keypair, kp->secret))
 		return 0;
 
-	if (!secp256k1_keypair_xonly_pub(ctx, &pubkey, NULL, &key->pair))
+	if (!secp256k1_keypair_xonly_pub(ctx, &pubkey, NULL, keypair))
 		return 0;
 
 	/* Serialize the public key. Should always return 1 for a valid public key. */
-	return secp256k1_xonly_pubkey_serialize(ctx, key->pubkey, &pubkey);
+	return secp256k1_xonly_pubkey_serialize(ctx, kp->pubkey, &pubkey);
 }
 
 int ndb_decode_key(const char *secstr, struct ndb_keypair *keypair)
