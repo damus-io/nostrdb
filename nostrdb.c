@@ -3,6 +3,7 @@
 #include "jsmn.h"
 #include "hex.h"
 #include "cursor.h"
+#include "random.h"
 #include "sha256.h"
 #include <stdlib.h>
 #include <limits.h>
@@ -25,7 +26,6 @@ int ndb_builder_init(struct ndb_builder *builder, unsigned char *buf,
 		     int bufsize)
 {
 	struct ndb_note *note;
-	struct cursor mem;
 	int half, size, str_indices_size;
 
 	// come on bruh
@@ -39,14 +39,14 @@ int ndb_builder_init(struct ndb_builder *builder, unsigned char *buf,
 	//debug("size %d half %d str_indices %d\n", size, half, str_indices_size);
 
 	// make a safe cursor of our available memory
-	make_cursor(buf, buf + bufsize, &mem);
+	make_cursor(buf, buf + bufsize, &builder->mem);
 
 	note = builder->note = (struct ndb_note *)buf;
 
 	// take slices of the memory into subcursors
-	if (!(cursor_slice(&mem, &builder->note_cur, half) &&
-	      cursor_slice(&mem, &builder->strings, half) &&
-	      cursor_slice(&mem, &builder->str_indices, str_indices_size))) {
+	if (!(cursor_slice(&builder->mem, &builder->note_cur, half) &&
+	      cursor_slice(&builder->mem, &builder->strings, half) &&
+	      cursor_slice(&builder->mem, &builder->str_indices, str_indices_size))) {
 		return 0;
 	}
 
@@ -265,7 +265,7 @@ static int ndb_event_commitment(struct ndb_note *ev, unsigned char *buf, int buf
 	return cur.p - cur.start;
 }
 
-int ndb_calculate_note_id(struct ndb_note *note, unsigned char *buf, int buflen) {
+int ndb_calculate_id(struct ndb_note *note, unsigned char *buf, int buflen) {
 	int len;
 
 	if (!(len = ndb_event_commitment(note, buf, buflen)))
@@ -278,12 +278,50 @@ int ndb_calculate_note_id(struct ndb_note *note, unsigned char *buf, int buflen)
 	return 1;
 }
 
+int ndb_sign_id(secp256k1_context *ctx, struct ndb_keypair *keypair,
+		unsigned char id[32], unsigned char sig[64])
+{
+	unsigned char aux[32];
 
-int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note)
+	if (!fill_random(aux, sizeof(aux)))
+		return 0;
+
+	return secp256k1_schnorrsig_sign32(ctx, sig, id, &keypair->pair, aux);
+}
+
+int ndb_create_keypair(secp256k1_context *ctx, struct ndb_keypair *key)
+{
+	secp256k1_xonly_pubkey pubkey;
+
+	/* Try to create a keypair with a valid context, it should only
+	 * fail if the secret key is zero or out of range. */
+	if (!secp256k1_keypair_create(ctx, &key->pair, key->secret))
+		return 0;
+
+	if (!secp256k1_keypair_xonly_pub(ctx, &pubkey, NULL, &key->pair))
+		return 0;
+
+	/* Serialize the public key. Should always return 1 for a valid public key. */
+	return secp256k1_xonly_pubkey_serialize(ctx, key->pubkey, &pubkey);
+}
+
+int ndb_decode_key(secp256k1_context *ctx, const char *secstr,
+		   struct ndb_keypair *keypair)
+{
+	if (!hex_decode(secstr, strlen(secstr), keypair->secret, 32)) {
+		fprintf(stderr, "could not hex decode secret key\n");
+		return 0;
+	}
+
+	return ndb_create_keypair(ctx, keypair);
+}
+
+int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note,
+			 struct ndb_keypair *keypair)
 {
 	int strings_len = builder->strings.p - builder->strings.start;
-	unsigned char *end = builder->note_cur.p + strings_len;
-	int total_size = end - builder->note_cur.start;
+	unsigned char *note_end = builder->note_cur.p + strings_len;
+	int total_size = note_end - builder->note_cur.start;
 
 	// move the strings buffer next to the end of our ndb_note
 	memmove(builder->note_cur.p, builder->strings.start, strings_len);
@@ -295,6 +333,22 @@ int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note)
 	//builder->note->size = total_size;
 
 	*note = builder->note;
+
+	// generate id and sign if we're building this manually
+	if (keypair) {
+		// use the remaining memory for building our id buffer
+		unsigned char *end   = builder->mem.end;
+		unsigned char *start = (unsigned char*)(*note) + total_size;
+
+		if (!ndb_calculate_id(*note, start, end - start))
+			return 0;
+
+		secp256k1_context *ctx =
+			secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+
+		if (!ndb_sign_id(ctx, keypair, (*note)->id, (*note)->sig))
+			return 0;
+	}
 
 	return total_size;
 }
@@ -626,7 +680,7 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 			// sig
 			tok = &parser.toks[i+1];
 			hex_decode(json + tok->start, toksize(tok), hexbuf, sizeof(hexbuf));
-			ndb_builder_set_signature(&parser.builder, hexbuf);
+			ndb_builder_set_sig(&parser.builder, hexbuf);
 		} else if (start[0] == 'k' && jsoneq(json, tok, tok_len, "kind")) {
 			// kind
 			tok = &parser.toks[i+1];
@@ -668,7 +722,7 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 		}
 	}
 
-	return ndb_builder_finalize(&parser.builder, note);
+	return ndb_builder_finalize(&parser.builder, note, NULL);
 }
 
 void ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey)
@@ -681,10 +735,9 @@ void ndb_builder_set_id(struct ndb_builder *builder, unsigned char *id)
 	memcpy(builder->note->id, id, 32);
 }
 
-void ndb_builder_set_signature(struct ndb_builder *builder,
-			       unsigned char *signature)
+void ndb_builder_set_sig(struct ndb_builder *builder, unsigned char *sig)
 {
-	memcpy(builder->note->signature, signature, 64);
+	memcpy(builder->note->sig, sig, 64);
 }
 
 void ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind)

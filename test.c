@@ -34,7 +34,7 @@ static void test_basic_event() {
 	ok = ndb_builder_set_content(b, hex_pk, strlen(hex_pk)); assert(ok);
 	ndb_builder_set_id(b, id); assert(ok);
 	ndb_builder_set_pubkey(b, pubkey); assert(ok);
-	ndb_builder_set_signature(b, sig); assert(ok);
+	ndb_builder_set_sig(b, sig); assert(ok);
 
 	ok = ndb_builder_new_tag(b); assert(ok);
 	ok = ndb_builder_push_tag_str(b, "p", 1); assert(ok);
@@ -45,7 +45,7 @@ static void test_basic_event() {
 	ok = ndb_builder_push_tag_str(b, "words", 5); assert(ok);
 	ok = ndb_builder_push_tag_str(b, "w", 1); assert(ok);
 
-	ok = ndb_builder_finalize(b, &note);
+	ok = ndb_builder_finalize(b, &note, NULL);
 	assert(ok);
 
 	// content should never be packed id
@@ -90,7 +90,7 @@ static void test_empty_tags() {
 	ok = ndb_builder_init(b, buf, sizeof(buf));
 	assert(ok);
 
-	ok = ndb_builder_finalize(b, &note);
+	ok = ndb_builder_finalize(b, &note, NULL);
 	assert(ok);
 
 	assert(note->tags.count == 0);
@@ -131,7 +131,7 @@ static void test_parse_contact_list()
 
 	memcpy(id, note->id, 32);
 	memset(note->id, 0, 32);
-	assert(ndb_calculate_note_id(note, json, alloc_size));
+	assert(ndb_calculate_id(note, json, alloc_size));
 	assert(!memcmp(note->id, id, 32));
 
 	const char* expected_content = 
@@ -241,7 +241,7 @@ static void test_strings_work_before_finalization() {
 	ndb_builder_set_content(b, "hello", 5);
 
 	assert(!strcmp(ndb_note_str(b->note, &b->note->content).str, "hello"));
-	assert(ndb_builder_finalize(b, &note));
+	assert(ndb_builder_finalize(b, &note, NULL));
 
 	assert(!strcmp(ndb_note_str(b->note, &b->note->content).str, "hello"));
 }
