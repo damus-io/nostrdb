@@ -246,10 +246,34 @@ static void test_strings_work_before_finalization() {
 	assert(!strcmp(ndb_note_str(b->note, &b->note->content).str, "hello"));
 }
 
+// test to-client event
+static void test_tce() {
+
+#define HEX_ID "5004a081e397c6da9dc2f2d6b3134006a9d0e8c1b46689d9fe150bb2f21a204d"
+#define HEX_PK "b169f596968917a1abeb4234d3cf3aa9baee2112e58998d17c6db416ad33fe40"
+#define JSON "{\"id\": \"" HEX_ID "\",\"pubkey\": \"" HEX_PK "\",\"created_at\": 1689836342,\"kind\": 1,\"tags\": [[\"p\",\"" HEX_ID "\"], [\"word\", \"words\", \"w\"]],\"content\": \"共通語\",\"sig\": \"e4d528651311d567f461d7be916c37cbf2b4d530e672f29f15f353291ed6df60c665928e67d2f18861c5ca88\"}"
+	unsigned char buf[1024];
+	const char json[] = "[\"EVENT\",\"subid123\"," JSON "]";
+	struct ndb_tce tce;
+	int ok;
+
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	assert(ok);
+
+	assert(tce.evtype == NDB_TCE_EVENT);
+	assert(tce.event.subid_len == 8);
+	assert(!memcmp(tce.event.subid, "subid123", 8));
+
+#undef HEX_ID
+#undef HEX_PK
+#undef JSON
+}
+
 int main(int argc, const char *argv[]) {
 	test_basic_event();
 	test_empty_tags();
 	test_parse_json();
 	test_parse_contact_list();
 	test_strings_work_before_finalization();
+	test_tce();
 }

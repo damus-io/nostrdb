@@ -40,7 +40,7 @@ static int hex_decode(const char *str, size_t slen, void *buf, size_t bufsize)
 }
 
 
-static char hexchar(unsigned int val)
+static inline char hexchar(unsigned int val)
 {
 	if (val < 10)
 		return '0' + val;

@@ -4,6 +4,17 @@
 #include <inttypes.h>
 #include "cursor.h"
 
+// To-client event types
+#define NDB_TCE_EVENT  0x1
+#define NDB_TCE_OK     0x2
+#define NDB_TCE_NOTICE 0x3
+#define NDB_TCE_EOSE   0x4
+
+#define NDB_PACKED_STR     0x1
+#define NDB_PACKED_ID      0x2
+
+struct ndb_json_parser;
+
 struct ndb_str {
 	unsigned char flag;
 	union {
@@ -12,9 +23,36 @@ struct ndb_str {
 	};
 };
 
+struct ndb_event {
+	struct ndb_note *note;
+	const char *subid;
+	int subid_len;
+};
+
+struct ndb_command_result {
+	int ok;
+	const char *msg;
+	int msglen;
+	const char *subid;
+	int subid_len;
+};
+
+// To-client event
+struct ndb_tce {
+	int evtype;
+	union {
+		struct ndb_event event;
+		struct ndb_command_result command_result;
+	};
+};
+
 struct ndb_keypair {
 	unsigned char pubkey[32];
 	unsigned char secret[32];
+	
+	// this corresponds to secp256k1's keypair type. it's guaranteed to
+	// be 96 bytes according to their docs. I don't want to depend on
+	// the secp256k1 header here so we just use raw bytes.
 	unsigned char pair[96];
 };
 
@@ -22,9 +60,6 @@ struct ndb_keypair {
 // representation
 #pragma pack(push, 1)
 
-/// We can store byte data in the string table, so 
-#define NDB_PACKED_STR     0x1
-#define NDB_PACKED_ID      0x2
 
 union ndb_packed_str {
 	struct {
@@ -91,6 +126,9 @@ int ndb_create_keypair(struct ndb_keypair *key);
 int ndb_decode_key(const char *secstr, struct ndb_keypair *keypair);
 
 // BUILDER
+
+int ndb_parse_json_note(struct ndb_json_parser *, struct ndb_note **);
+int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce, unsigned char *buf, int bufsize);
 int ndb_note_from_json(const char *json, int len, struct ndb_note **, unsigned char *buf, int buflen);
 int ndb_builder_init(struct ndb_builder *builder, unsigned char *buf, int bufsize);
 int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note, struct ndb_keypair *privkey);
