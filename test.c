@@ -293,6 +293,22 @@ static void test_tce_command_result() {
 	assert(!memcmp(tce.subid, "", 0));
 }
 
+static void test_tce_command_result_empty_msg() {
+	unsigned char buf[1024];
+	const char json[] = "[\"OK\",\"b1d8f68d39c07ce5c5ea10c235100d529b2ed2250140b36a35d940b712dc6eff\",true,\"\"]";
+	struct ndb_tce tce;
+	int ok;
+
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	assert(ok);
+
+	assert(tce.evtype == NDB_TCE_OK);
+	assert(tce.subid_len == 64);
+	assert(tce.command_result.ok == 1);
+	assert(tce.command_result.msglen == 0);
+	assert(!memcmp(tce.subid, "b1d8f68d39c07ce5c5ea10c235100d529b2ed2250140b36a35d940b712dc6eff", 0));
+}
+
 // test to-client event
 static void test_tce() {
 
@@ -325,4 +341,5 @@ int main(int argc, const char *argv[]) {
 	test_tce();
 	test_tce_command_result();
 	test_tce_eose();
+	test_tce_command_result_empty_msg();
 }

@@ -715,6 +715,14 @@ int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce,
 			return 0;
 
 		cr->ok = (json + tok->start)[0] == 't';
+
+		tok = &parser.toks[parser.i++];
+		if (tok->type != JSMN_STRING)
+			return 0;
+
+		tce->command_result.msg = json + tok->start;
+		tce->command_result.msglen = toksize(tok);
+
 		return 1;
 	}
 
