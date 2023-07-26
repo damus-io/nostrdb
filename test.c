@@ -122,7 +122,7 @@ static void test_parse_contact_list()
 	unsigned char *buf = malloc(alloc_size);
 	struct ndb_note *note;
 
-	read_file("contacts.json", json, alloc_size, &written);
+	read_file("testdata/contacts.json", json, alloc_size, &written);
 
 	size = ndb_note_from_json((const char*)json, written, &note, buf, alloc_size);
 	printf("ndb_note_from_json size %d\n", size);
@@ -189,6 +189,24 @@ static void test_parse_contact_list()
 
 	write_file("test_contacts_ndb_note", (unsigned char *)note, size);
 	printf("wrote test_contacts_ndb_note (raw ndb_note)\n");
+
+	free(json);
+	free(buf);
+}
+
+static void test_parse_contact_event()
+{
+	int written;
+	static const int alloc_size = 2 << 18;
+	char *json = malloc(alloc_size);
+	unsigned char *buf = malloc(alloc_size);
+	struct ndb_tce tce;
+
+	assert(read_file("testdata/contacts-event.json", (unsigned char*)json,
+			 alloc_size, &written));
+	assert(ndb_ws_event_from_json(json, written, &tce, buf, alloc_size));
+
+	assert(tce.evtype == NDB_TCE_EVENT);
 
 	free(json);
 	free(buf);
