@@ -655,6 +655,9 @@ int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce,
 	int tok_len, res;
 	struct ndb_json_parser parser;
 
+	tce->subid_len = 0;
+	tce->subid = "";
+
 	ndb_json_parser_init(&parser, json, len, buf, bufsize);
 	if ((res = ndb_json_parser_parse(&parser)) < 0)
 		return res;
@@ -676,10 +679,20 @@ int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce,
 		if (tok->type != JSMN_STRING)
 			return 0;
 
-		ev->subid = json + tok->start;
-		ev->subid_len = toksize(tok);
+		tce->subid = json + tok->start;
+		tce->subid_len = toksize(tok);
 
 		return ndb_parse_json_note(&parser, &ev->note);
+	} else if (tok_len == 4 && !memcmp("EOSE", json + tok->start, 4)) { 
+		tce->evtype = NDB_TCE_EOSE;
+
+		tok = &parser.toks[parser.i++];
+		if (tok->type != JSMN_STRING)
+			return 0;
+
+		tce->subid = json + tok->start;
+		tce->subid_len = toksize(tok);
+		return 1;
 	} else if (tok_len == 2 && !memcmp("OK", json + tok->start, 2)) {
 		if (parser.num_tokens != 5)
 			return 0;
@@ -692,8 +705,8 @@ int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce,
 		if (tok->type != JSMN_STRING)
 			return 0;
 
-		cr->subid = json + tok->start;
-		cr->subid_len = toksize(tok);
+		tce->subid = json + tok->start;
+		tce->subid_len = toksize(tok);
 
 		tok = &parser.toks[parser.i++];
 		if (tok->type != JSMN_PRIMITIVE || toksize(tok) == 0)

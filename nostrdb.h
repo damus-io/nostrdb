@@ -25,21 +25,21 @@ struct ndb_str {
 
 struct ndb_event {
 	struct ndb_note *note;
-	const char *subid;
-	int subid_len;
 };
 
 struct ndb_command_result {
 	int ok;
 	const char *msg;
 	int msglen;
-	const char *subid;
-	int subid_len;
 };
+
 
 // To-client event
 struct ndb_tce {
 	int evtype;
+	const char *subid;
+	int subid_len;
+
 	union {
 		struct ndb_event event;
 		struct ndb_command_result command_result;

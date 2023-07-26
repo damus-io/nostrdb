@@ -246,6 +246,36 @@ static void test_strings_work_before_finalization() {
 	assert(!strcmp(ndb_note_str(b->note, &b->note->content).str, "hello"));
 }
 
+static void test_tce_eose() {
+	unsigned char buf[1024];
+	const char json[] = "[\"EOSE\",\"s\"]";
+	struct ndb_tce tce;
+	int ok;
+
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	assert(ok);
+
+	assert(tce.evtype == NDB_TCE_EOSE);
+	assert(tce.command_result.ok == 1);
+	assert(tce.subid_len == 1);
+	assert(!memcmp(tce.subid, "s", 1));
+}
+
+static void test_tce_command_result() {
+	unsigned char buf[1024];
+	const char json[] = "[\"OK\",\"\",true,\"blocked: ok\"]";
+	struct ndb_tce tce;
+	int ok;
+
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	assert(ok);
+
+	assert(tce.evtype == NDB_TCE_OK);
+	assert(tce.subid_len == 0);
+	assert(tce.command_result.ok == 1);
+	assert(!memcmp(tce.subid, "", 0));
+}
+
 // test to-client event
 static void test_tce() {
 
@@ -261,8 +291,8 @@ static void test_tce() {
 	assert(ok);
 
 	assert(tce.evtype == NDB_TCE_EVENT);
-	assert(tce.event.subid_len == 8);
-	assert(!memcmp(tce.event.subid, "subid123", 8));
+	assert(tce.subid_len == 8);
+	assert(!memcmp(tce.subid, "subid123", 8));
 
 #undef HEX_ID
 #undef HEX_PK
@@ -276,4 +306,6 @@ int main(int argc, const char *argv[]) {
 	test_parse_contact_list();
 	test_strings_work_before_finalization();
 	test_tce();
+	test_tce_command_result();
+	test_tce_eose();
 }
