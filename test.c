@@ -25,7 +25,7 @@ static void test_basic_event() {
 
 	const char *hex_pk = "5d9b81b2d4d5609c5565286fc3b511dc6b9a1b3d7d1174310c624d61d1f82bb9";
 
-	ok = ndb_builder_new(b, buf, sizeof(buf));
+	ok = ndb_builder_init(b, buf, sizeof(buf));
 	assert(ok);
 	note = builder.note;
 
@@ -34,7 +34,7 @@ static void test_basic_event() {
 	ok = ndb_builder_set_content(b, hex_pk, strlen(hex_pk)); assert(ok);
 	ndb_builder_set_id(b, id); assert(ok);
 	ndb_builder_set_pubkey(b, pubkey); assert(ok);
-	ndb_builder_set_signature(b, sig); assert(ok);
+	ndb_builder_set_sig(b, sig); assert(ok);
 
 	ok = ndb_builder_new_tag(b); assert(ok);
 	ok = ndb_builder_push_tag_str(b, "p", 1); assert(ok);
@@ -45,7 +45,7 @@ static void test_basic_event() {
 	ok = ndb_builder_push_tag_str(b, "words", 5); assert(ok);
 	ok = ndb_builder_push_tag_str(b, "w", 1); assert(ok);
 
-	ok = ndb_builder_finalize(b, &note);
+	ok = ndb_builder_finalize(b, &note, NULL);
 	assert(ok);
 
 	// content should never be packed id
@@ -87,10 +87,10 @@ static void test_empty_tags() {
 	int ok;
 	unsigned char buf[1024];
 
-	ok = ndb_builder_new(b, buf, sizeof(buf));
+	ok = ndb_builder_init(b, buf, sizeof(buf));
 	assert(ok);
 
-	ok = ndb_builder_finalize(b, &note);
+	ok = ndb_builder_finalize(b, &note, NULL);
 	assert(ok);
 
 	assert(note->tags.count == 0);
@@ -116,6 +116,7 @@ static void print_tag(struct ndb_note *note, struct ndb_tag *tag) {
 static void test_parse_contact_list()
 {
 	int size, written = 0;
+	unsigned char id[32];
 	static const int alloc_size = 2 << 18;
 	unsigned char *json = malloc(alloc_size);
 	unsigned char *buf = malloc(alloc_size);
@@ -127,6 +128,11 @@ static void test_parse_contact_list()
 	printf("ndb_note_from_json size %d\n", size);
 	assert(size > 0);
 	assert(size == 34322);
+
+	memcpy(id, note->id, 32);
+	memset(note->id, 0, 32);
+	assert(ndb_calculate_id(note, json, alloc_size));
+	assert(!memcmp(note->id, id, 32));
 
 	const char* expected_content = 
 	"{\"wss://nos.lol\":{\"write\":true,\"read\":true},"
@@ -225,9 +231,81 @@ static void test_parse_json() {
 	assert(!strcmp(ndb_iter_tag_str(it, 2).str, "w"));
 }
 
+static void test_strings_work_before_finalization() {
+	struct ndb_builder builder, *b = &builder;
+	struct ndb_note *note;
+	int ok;
+	unsigned char buf[1024];
+
+	ok = ndb_builder_init(b, buf, sizeof(buf)); assert(ok);
+	ndb_builder_set_content(b, "hello", 5);
+
+	assert(!strcmp(ndb_note_str(b->note, &b->note->content).str, "hello"));
+	assert(ndb_builder_finalize(b, &note, NULL));
+
+	assert(!strcmp(ndb_note_str(b->note, &b->note->content).str, "hello"));
+}
+
+static void test_tce_eose() {
+	unsigned char buf[1024];
+	const char json[] = "[\"EOSE\",\"s\"]";
+	struct ndb_tce tce;
+	int ok;
+
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	assert(ok);
+
+	assert(tce.evtype == NDB_TCE_EOSE);
+	assert(tce.command_result.ok == 1);
+	assert(tce.subid_len == 1);
+	assert(!memcmp(tce.subid, "s", 1));
+}
+
+static void test_tce_command_result() {
+	unsigned char buf[1024];
+	const char json[] = "[\"OK\",\"\",true,\"blocked: ok\"]";
+	struct ndb_tce tce;
+	int ok;
+
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	assert(ok);
+
+	assert(tce.evtype == NDB_TCE_OK);
+	assert(tce.subid_len == 0);
+	assert(tce.command_result.ok == 1);
+	assert(!memcmp(tce.subid, "", 0));
+}
+
+// test to-client event
+static void test_tce() {
+
+#define HEX_ID "5004a081e397c6da9dc2f2d6b3134006a9d0e8c1b46689d9fe150bb2f21a204d"
+#define HEX_PK "b169f596968917a1abeb4234d3cf3aa9baee2112e58998d17c6db416ad33fe40"
+#define JSON "{\"id\": \"" HEX_ID "\",\"pubkey\": \"" HEX_PK "\",\"created_at\": 1689836342,\"kind\": 1,\"tags\": [[\"p\",\"" HEX_ID "\"], [\"word\", \"words\", \"w\"]],\"content\": \"共通語\",\"sig\": \"e4d528651311d567f461d7be916c37cbf2b4d530e672f29f15f353291ed6df60c665928e67d2f18861c5ca88\"}"
+	unsigned char buf[1024];
+	const char json[] = "[\"EVENT\",\"subid123\"," JSON "]";
+	struct ndb_tce tce;
+	int ok;
+
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	assert(ok);
+
+	assert(tce.evtype == NDB_TCE_EVENT);
+	assert(tce.subid_len == 8);
+	assert(!memcmp(tce.subid, "subid123", 8));
+
+#undef HEX_ID
+#undef HEX_PK
+#undef JSON
+}
+
 int main(int argc, const char *argv[]) {
 	test_basic_event();
 	test_empty_tags();
 	test_parse_json();
 	test_parse_contact_list();
+	test_strings_work_before_finalization();
+	test_tce();
+	test_tce_command_result();
+	test_tce_eose();
 }
