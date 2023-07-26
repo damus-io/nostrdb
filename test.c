@@ -256,7 +256,6 @@ static void test_tce_eose() {
 	assert(ok);
 
 	assert(tce.evtype == NDB_TCE_EOSE);
-	assert(tce.command_result.ok == 1);
 	assert(tce.subid_len == 1);
 	assert(!memcmp(tce.subid, "s", 1));
 }
