@@ -4,16 +4,18 @@
 #include <inttypes.h>
 #include "cursor.h"
 
-// To-client event types
-#define NDB_TCE_EVENT  0x1
-#define NDB_TCE_OK     0x2
-#define NDB_TCE_NOTICE 0x3
-#define NDB_TCE_EOSE   0x4
-
 #define NDB_PACKED_STR     0x1
 #define NDB_PACKED_ID      0x2
 
 struct ndb_json_parser;
+
+// To-client event types
+enum tce_type {
+	NDB_TCE_EVENT  = 0x1,
+	NDB_TCE_OK     = 0x2,
+	NDB_TCE_NOTICE = 0x3,
+	NDB_TCE_EOSE   = 0x4,
+};
 
 struct ndb_str {
 	unsigned char flag;
@@ -36,7 +38,7 @@ struct ndb_command_result {
 
 // To-client event
 struct ndb_tce {
-	int evtype;
+	enum tce_type evtype;
 	const char *subid;
 	int subid_len;
 

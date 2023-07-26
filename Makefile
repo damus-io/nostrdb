@@ -1,4 +1,5 @@
-CFLAGS = -Wall -Wno-unused-function -Werror -O2 -g
+INCLUDES = deps/secp256k1/include
+CFLAGS = -Wall -Wno-unused-function -Werror -O2 -g -I$(INCLUDES)
 HEADERS = sha256.h nostrdb.h cursor.h hex.h jsmn.h config.h sha256.h random.h
 SRCS = nostrdb.c sha256.c 
 LDS = $(SRCS) $(ARS)

@@ -245,7 +245,7 @@ static int ndb_event_commitment(struct ndb_note *ev, unsigned char *buf, int buf
 	struct cursor cur;
 	int ok;
 
-	if (!hex_encode(ev->pubkey, sizeof(ev->pubkey), pubkey, 32))
+	if (!hex_encode(ev->pubkey, sizeof(ev->pubkey), pubkey, sizeof(pubkey)))
 		return 0;
 
 	make_cursor(buf, buf + buflen, &cur);
@@ -354,7 +354,9 @@ int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note,
 		unsigned char *end   = builder->mem.end;
 		unsigned char *start = (unsigned char*)(*note) + total_size;
 
-		if (!ndb_calculate_id(*note, start, end - start))
+        ndb_builder_set_pubkey(builder, keypair->pubkey);
+
+		if (!ndb_calculate_id(builder->note, start, end - start))
 			return 0;
 
 		if (!ndb_sign_id(keypair, (*note)->id, (*note)->sig))
