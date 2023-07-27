@@ -1,5 +1,6 @@
 # cmake -S . -B build
 # cd build
+# cmake --build . --target configurator
 # cmake --build .
 # Pedro Vicente
 
@@ -13,7 +14,6 @@ project (nostrdb C)
 
 set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
 set(BUILD_SHARED_LIBS OFF)
-set(CMAKE_EXE_LINKER_FLAGS "-static")
 
 include_directories(${CMAKE_SOURCE_DIR}/deps/secp256k1/include)
 add_subdirectory(${CMAKE_SOURCE_DIR}/deps/secp256k1)
