@@ -36,7 +36,7 @@ int main(int argc, char *argv[], char **env)
 	int times = 10000, len = 0;
 	unsigned char buf[alloc_size];
 
-	if (!read_file("contacts.json", buf, alloc_size, &len))
+	if (!read_file("testdata/contacts.json", buf, alloc_size, &len))
 		return 1;
 
 	if (argc >= 2)
