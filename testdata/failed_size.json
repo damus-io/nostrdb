@@ -1,0 +1,96 @@
+[
+  "EVENT",
+  "8ECD4385-3BB9-4E1D-8584-6CE9541A8F80",
+  {
+    "content": "",
+    "created_at": 1690942549,
+    "id": "5086a8f76fe1da7fb56a25d1bebbafd70fca62e36a72c6263f900ff49b8f8604",
+    "kind": 3,
+    "pubkey": "9c87f94bcbe2a837adc28d46c34eeaab8fc2e1cdf94fe19d4b99ae6a5e6acedc",
+    "sig": "27374975879c94658412469cee6db73d538971d21a7b580726a407329a4cafc677fb56b946994cea59c3d9e118fef27e4e61de9d2c46ac0a65df14153ea93cf5",
+    "tags": [
+      [
+        "p",
+        "2edbcea694d164629854a52583458fd6d965b161e3c48b57d3aff01940558884",
+        "wss://purplepag.es"
+      ],
+      [
+        "p",
+        "7e7224cfe0af5aaf9131af8f3e9d34ff615ff91ce2694640f1f1fee5d8febb7d",
+        "wss://purplepag.es"
+      ],
+      [
+        "p",
+        "5df413d4c5e5035ff508fd99b38b21ea9a0ac0b9ecc34f3312aba9aa2add4f5b",
+        "wss://purplepag.es"
+      ],
+      [
+        "p",
+        "f4db5270bd991b17bea1e6d035f45dee392919c29474bbac10342d223c74e0d0",
+        "wss://purplepag.es"
+      ],
+      [
+        "p",
+        "7f5c2b4e48a0e9feca63a46b13cdb82489f4020398d60a2070a968caa818d75d",
+        "wss://purplepag.es"
+      ],
+      [
+        "p",
+        "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
+        "wss://purplepag.es"
+      ],
+      [
+        "p",
+        "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+        "wss://purplepag.es"
+      ],
+      [
+        "p",
+        "6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93",
+        "wss://purplepag.es"
+      ],
+      [
+        "p",
+        "76c71aae3a491f1d9eec47cba17e229cda4113a0bbb6e6ae1776d7643e29cafa",
+        "wss://purplepag.es"
+      ],
+      [
+        "p",
+        "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2",
+        "wss://purplepag.es"
+      ],
+      [
+        "t",
+        "Artificial Intelligence "
+      ],
+      [
+        "t",
+        "grownostr"
+      ],
+      [
+        "t",
+        "Technology"
+      ],
+      [
+        "t",
+        "AI"
+      ],
+      [
+        "t",
+        "nostr"
+      ],
+      [
+        "t",
+        "history"
+      ],
+      [
+        "t",
+        "Bible"
+      ],
+      [
+        "t",
+        "Finance"
+      ]
+    ]
+  }
+]

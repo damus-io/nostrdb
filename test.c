@@ -212,6 +212,25 @@ static void test_parse_contact_event()
 	free(buf);
 }
 
+static void test_content_len()
+{
+	int written;
+	static const int alloc_size = 2 << 18;
+	char *json = malloc(alloc_size);
+	unsigned char *buf = malloc(alloc_size);
+	struct ndb_tce tce;
+
+	assert(read_file("testdata/failed_size.json", (unsigned char*)json,
+			 alloc_size, &written));
+	assert(ndb_ws_event_from_json(json, written, &tce, buf, alloc_size));
+
+	assert(tce.evtype == NDB_TCE_EVENT);
+	assert(ndb_note_content_length(tce.event.note) == 0);
+
+	free(json);
+	free(buf);
+}
+
 static void test_parse_json() {
 	char hex_id[32] = {0};
 	unsigned char buffer[1024];
@@ -342,4 +361,5 @@ int main(int argc, const char *argv[]) {
 	test_tce_command_result();
 	test_tce_eose();
 	test_tce_command_result_empty_msg();
+	test_content_len();
 }
