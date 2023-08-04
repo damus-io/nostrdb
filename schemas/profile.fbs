@@ -1,0 +1,20 @@
+
+table NdbProfile {
+  json:string;
+
+  name:string;
+  website:string;
+  about:string;
+  lud16:string;
+  banner:string;
+  display_name:string;
+  reactions:bool = true;
+  picture:string;
+  nip05:string;
+
+
+  damus_donation:int;
+  damus_donation_v2:int;
+}
+
+root_type NdbProfile;

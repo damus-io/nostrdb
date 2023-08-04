@@ -7,12 +7,20 @@ ARS = libsecp256k1.a
 DEPS = $(SRCS) $(HEADERS) $(ARS)
 PREFIX ?= /usr/local
 SUBMODULES = deps/secp256k1
+C_BINDINGS_PROFILE=bindings/c/profile_builder.h bindings/c/profile_reader.h bindings/c/profile_verifier.h
+C_BINDINGS_COMMON=bindings/c/flatbuffers_common_builder.h bindings/c/flatbuffers_common_reader.h 
+C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE)
+BINDINGS=bindings
+
+all: bench test
+
+bindings: bindings-swift bindings-c
 
 check: test
 	./test
 
 clean:
-	rm -f test bench
+	rm -rf test bench bindings
 
 tags:
 	ctags *.c *.h
@@ -25,6 +33,33 @@ configurator: configurator.c
 
 config.h: configurator
 	./configurator > $@
+
+bindings-c: $(C_BINDINGS)
+
+bindings/%:
+	mkdir -p $@
+
+bindings/c/profile_builder.h: schemas/profile.fbs bindings/c
+	flatcc --builder $<
+	@mv profile_builder.h $@
+
+bindings/c/profile_verifier.h bindings/c/profile_reader.h: schemas/profile.fbs bindings/c
+	flatcc --verifier $<
+	@mv profile_verifier.h profile_reader.h bindings/c
+
+bindings/c/flatbuffers_common_reader.h: bindings/c
+	flatcc --common_reader
+	@mv flatbuffers_common_reader.h $@
+
+bindings/c/flatbuffers_common_builder.h: bindings/c
+	flatcc --common_builder
+	@mv flatbuffers_common_builder.h $@
+
+bindings-swift: bindings/swift/NdbProfile.swift
+
+bindings/swift/NdbProfile.swift: schemas/profile.fbs bindings/swift
+	flatc --swift $<
+	@mv profile_generated.swift $@
 
 deps/secp256k1/.git:
 	@devtools/refresh-submodules.sh $(SUBMODULES)
