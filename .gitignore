@@ -2,9 +2,9 @@ tags
 test
 .buildcmd
 .build-result
-.envrc
 shell.nix
 *.dSYM
+TODO.bak
 test_contacts_ndb_note
 bench
 configurator
