@@ -5,6 +5,7 @@
 #include "cursor.h"
 #include "random.h"
 #include "sha256.h"
+#include "protected_queue.h"
 #include <stdlib.h>
 #include <limits.h>
 
@@ -21,6 +22,51 @@ struct ndb_json_parser {
 	int i;
 	int num_tokens;
 };
+
+struct ndb_ingester {
+	struct prot_queue inbox;
+};
+
+struct ndb {
+	struct ndb_ingester ingester;
+	// lmdb environ handles, etc
+};
+
+int ndb_init(struct ndb **ndb)
+{
+	// Initialize LMDB environment and spin up threads
+	return 0;
+}
+
+// Process a nostr event, ie: ["EVENT", "subid", {"content":"..."}...]
+// 
+// This function returns as soon as possible, first copying the passed
+// json and then queueing it up for processing. Worker threads then take
+// the json and process it.
+//
+// Processing:
+//
+// 1. The event is parsed into ndb_notes and the signature is validated
+// 2. A quick lookup is made on the database to see if we already have
+//    the note id, if we do we don't need to waste time on json parsing
+//    or note validation.
+// 3. Once validation is done we pass it to the writer queue for writing
+//    to LMDB.
+//
+int ndb_process_event(struct ndb *ndb, const char *json, int json_len)
+{
+	// Since we need to return as soon as possible, and we're not
+	// making any assumptions about the lifetime of the string, we
+	// definitely need to copy the json here. In the future once we
+	// have our thread that manages a websocket connection, we can
+	// avoid the copy and just use the buffer we get from that
+	// thread.
+	char *json_copy = strdup(json);
+	if (json_copy == NULL)
+		return 0;
+
+	return 0;
+}
 
 static inline int cursor_push_tag(struct cursor *cur, struct ndb_tag *tag)
 {

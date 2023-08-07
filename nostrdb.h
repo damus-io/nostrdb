@@ -8,6 +8,7 @@
 #define NDB_PACKED_ID      0x2
 
 struct ndb_json_parser;
+struct ndb;
 
 // To-client event types
 enum tce_type {
@@ -127,8 +128,12 @@ int ndb_sign_id(struct ndb_keypair *keypair, unsigned char id[32], unsigned char
 int ndb_create_keypair(struct ndb_keypair *key);
 int ndb_decode_key(const char *secstr, struct ndb_keypair *keypair);
 
-// BUILDER
+// NDB
+int ndb_init(struct ndb **);
+int ndb_process_event(struct ndb *, const char *json, int len);
+int ndb_destroy(struct ndb *);
 
+// BUILDER
 int ndb_parse_json_note(struct ndb_json_parser *, struct ndb_note **);
 int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce, unsigned char *buf, int bufsize);
 int ndb_note_from_json(const char *json, int len, struct ndb_note **, unsigned char *buf, int buflen);
