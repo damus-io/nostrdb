@@ -12,7 +12,9 @@ C_BINDINGS_COMMON=bindings/c/flatbuffers_common_builder.h bindings/c/flatbuffers
 C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE)
 BINDINGS=bindings
 
-all: bench test
+lib: bench test
+
+all: lib bindings
 
 bindings: bindings-swift bindings-c
 
@@ -22,7 +24,7 @@ check: test
 clean:
 	rm -rf test bench bindings
 
-distclean:
+distclean: clean
 	rm -rf deps
 
 tags:
@@ -101,10 +103,14 @@ deps/lmdb/liblmdb.a: deps/lmdb/lmdb.h
 bench: bench.c $(DEPS)
 	$(CC) $(CFLAGS) bench.c $(LDS) -o $@
 
-test: test.c $(DEPS)
+testdata/db/.dir:
+	@mkdir -p testdata/db
+	touch testdata/db/.dir
+
+test: test.c $(DEPS) testdata/db/.dir
 	$(CC) $(CFLAGS) test.c $(LDS) -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS)
 
-.PHONY: tags clean distclean
+.PHONY: tags clean
