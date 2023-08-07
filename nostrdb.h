@@ -129,9 +129,9 @@ int ndb_create_keypair(struct ndb_keypair *key);
 int ndb_decode_key(const char *secstr, struct ndb_keypair *keypair);
 
 // NDB
-int ndb_init(struct ndb **);
+int ndb_init(struct ndb **ndb, size_t mapsize);
 int ndb_process_event(struct ndb *, const char *json, int len);
-int ndb_destroy(struct ndb *);
+void ndb_destroy(struct ndb *);
 
 // BUILDER
 int ndb_parse_json_note(struct ndb_json_parser *, struct ndb_note **);

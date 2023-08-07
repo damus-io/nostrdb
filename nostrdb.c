@@ -5,6 +5,7 @@
 #include "cursor.h"
 #include "random.h"
 #include "sha256.h"
+#include "lmdb.h"
 #include "protected_queue.h"
 #include <stdlib.h>
 #include <limits.h>
@@ -28,14 +29,62 @@ struct ndb_ingester {
 };
 
 struct ndb {
+	MDB_env *env;
 	struct ndb_ingester ingester;
 	// lmdb environ handles, etc
 };
 
-int ndb_init(struct ndb **ndb)
+// A clustered key with an id and a timestamp
+struct ndb_id_ts {
+	unsigned char id[32];
+	uint32_t created;
+};
+
+static void ndb_make_id_ts(unsigned char *id, uint32_t created,
+			   struct ndb_id_ts *ts)
 {
+	memcpy(ts->id, id, 32);
+	ts->created = created;
+}
+
+int ndb_init(struct ndb **ndb, size_t mapsize)
+{
+	struct ndb *db;
+	//MDB_dbi ind_id; // TODO: ind_pk, etc
+	int rc;
+
+	db = *ndb = calloc(1, sizeof(struct ndb));
+	if (*ndb == NULL) {
+		fprintf(stderr, "ndb_init: malloc failed\n");
+		return 0;
+	}
+
+	if ((rc = mdb_env_create(&db->env))) {
+		fprintf(stderr, "mdb_env_create failed, error %d\n", rc);
+		return 0;
+	}
+
+	if ((rc = mdb_env_set_mapsize(db->env, mapsize))) {
+		fprintf(stderr, "mdb_env_set_mapsize failed, error %d\n", rc);
+		return 0;
+	}
+
+	if ((rc = mdb_env_open(db->env, "./testdata/db", 0, 0664))) {
+		fprintf(stderr, "mdb_env_open failed, error %d\n", rc);
+		return 0;
+	}
+
 	// Initialize LMDB environment and spin up threads
-	return 0;
+	return 1;
+}
+
+void ndb_destroy(struct ndb *ndb)
+{
+	if (ndb == NULL)
+		return;
+
+	mdb_env_close(ndb->env);
+	free(ndb);
 }
 
 // Process a nostr event, ie: ["EVENT", "subid", {"content":"..."}...]

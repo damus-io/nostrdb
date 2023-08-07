@@ -9,6 +9,15 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
+static void test_lmdb_put()
+{
+	struct ndb *ndb;
+	
+	// 256MB
+	assert(ndb_init(&ndb, 2 << 28));
+	ndb_destroy(ndb);
+}
+
 static void test_basic_event() {
 	unsigned char buf[512];
 	struct ndb_builder builder, *b = &builder;
@@ -474,6 +483,8 @@ int main(int argc, const char *argv[]) {
 	test_queue_init_pop_push();
 	test_queue_thread_safety();
 	test_queue_boundary_conditions();
+
+	test_lmdb_put();
 
 	printf("All tests passed!\n");       // Print this if all tests pass.
 }
