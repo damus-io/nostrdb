@@ -7,6 +7,14 @@
 #define NDB_PACKED_STR     0x1
 #define NDB_PACKED_ID      0x2
 
+#define DEBUG 1
+
+#ifdef DEBUG
+#define ndb_debug(...) printf(__VA_ARGS__)
+#else
+#define ndb_debug(...) (void)0
+#endif
+
 struct ndb_json_parser;
 struct ndb;
 
@@ -127,6 +135,7 @@ int ndb_calculate_id(struct ndb_note *note, unsigned char *buf, int buflen);
 int ndb_sign_id(struct ndb_keypair *keypair, unsigned char id[32], unsigned char sig[64]);
 int ndb_create_keypair(struct ndb_keypair *key);
 int ndb_decode_key(const char *secstr, struct ndb_keypair *keypair);
+int ndb_note_verify(void *secp_ctx, unsigned char pubkey[32], unsigned char id[32], unsigned char signature[64]);
 
 // NDB
 int ndb_init(struct ndb **ndb, size_t mapsize);
