@@ -26,6 +26,7 @@ static void test_lmdb_put()
 		ndb_process_event(ndb, json, written);
 	}
 
+	free(json);
 	ndb_destroy(ndb);
 }
 
