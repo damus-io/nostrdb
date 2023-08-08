@@ -7,6 +7,7 @@
 #include "sha256.h"
 #include "lmdb.h"
 #include "util.h"
+#include "threadpool.h"
 #include "protected_queue.h"
 #include <stdlib.h>
 #include <limits.h>
