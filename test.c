@@ -6,15 +6,26 @@
 
 #include <stdio.h>
 #include <assert.h>
+#include <unistd.h>
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
 static void test_lmdb_put()
 {
 	struct ndb *ndb;
-	
+	static const int alloc_size = 2 << 18;
+	char *json = malloc(alloc_size);
+	int i, written;
+
 	// 256MB
 	assert(ndb_init(&ndb, 2 << 28));
+
+	read_file("testdata/contacts-event.json", (unsigned char*)json, alloc_size, &written);
+
+	for (i = 0; i < 6000; i++) {
+		ndb_process_event(ndb, json, written);
+	}
+
 	ndb_destroy(ndb);
 }
 

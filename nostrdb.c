@@ -67,7 +67,7 @@ enum ndb_writer_msgtype {
 };
 
 struct ndb_ingester_event {
-	const char *json;
+	char *json;
 	int len;
 };
 
@@ -166,12 +166,12 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 		}
 
 		// there's nothing left to do with the original json, so free it
-		free((void*)ev->json);
+		free(ev->json);
 		return 1;
 	}
 
 cleanup:
-	free((void*)ev->json);
+	free(ev->json);
 	free(buf);
 
 	return 0;
@@ -201,7 +201,8 @@ static void *ndb_writer_thread(void *data)
 			ndb_debug("writer: unexpected quit message\n");
 			goto cleanup;
 		case NDB_WRITER_NOTE:
-			ndb_debug("writing note %ld bytes\n", msg->note.note_len);
+			//ndb_debug("writing note %ld bytes\n", msg->note.note_len);
+			free(msg->note.note);
 		}
 	}
 
@@ -233,7 +234,7 @@ static void *ndb_ingester_thread(void *data)
 		}
 
 		for (i = 0; i < popped; i++) {
-			msg = &msg[i];
+			msg = &msgs[i];
 			switch (msg->type) {
 			case NDB_INGEST_QUIT:
 				// quits are handled before this
@@ -349,7 +350,7 @@ static int ndb_ingester_destroy(struct ndb_ingester *ingester)
 }
 
 static int ndb_ingester_queue_event(struct ndb_ingester *ingester,
-				     const char *json, int len)
+				    char *json, int len)
 {
 	struct ndb_ingester_msg msg;
 	msg.type = NDB_INGEST_EVENT;
