@@ -6,6 +6,7 @@
  *    memory for the queue buffer and ensuring its correct lifespan.
  *
  *         Author:  William Casarin
+ *         Inspired-by: https://github.com/hoytech/hoytech-cpp/blob/master/hoytech/protected_queue.h
  */
 
 #ifndef PROT_QUEUE_H

@@ -15,14 +15,17 @@ static void test_lmdb_put()
 	struct ndb *ndb;
 	static const int alloc_size = 2 << 18;
 	char *json = malloc(alloc_size);
-	int i, written;
+	int i, mapsize, written, ingester_threads;
+
+	mapsize = 1024 * 1024 * 100;
+	ingester_threads = 8;
 
 	// 256MB
-	assert(ndb_init(&ndb, 2 << 28));
+	assert(ndb_init(&ndb, mapsize, ingester_threads));
 
 	read_file("testdata/contacts-event.json", (unsigned char*)json, alloc_size, &written);
 
-	for (i = 0; i < 6000; i++) {
+	for (i = 0; i < 50000; i++) {
 		ndb_process_event(ndb, json, written);
 	}
 

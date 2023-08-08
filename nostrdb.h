@@ -138,7 +138,7 @@ int ndb_decode_key(const char *secstr, struct ndb_keypair *keypair);
 int ndb_note_verify(void *secp_ctx, unsigned char pubkey[32], unsigned char id[32], unsigned char signature[64]);
 
 // NDB
-int ndb_init(struct ndb **ndb, size_t mapsize);
+int ndb_init(struct ndb **ndb, size_t mapsize, int ingester_threads);
 int ndb_process_event(struct ndb *, const char *json, int len);
 void ndb_destroy(struct ndb *);
 
