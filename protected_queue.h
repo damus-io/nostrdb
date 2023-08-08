@@ -83,7 +83,7 @@ static inline size_t prot_queue_capacity(struct prot_queue *q) {
  *
  * Returns 1 if successful, 0 if the queue is full.
  */
-static inline int prot_queue_push(struct prot_queue* q, void *data)
+static int prot_queue_push(struct prot_queue* q, void *data)
 {
 	int cap;
 
@@ -104,6 +104,48 @@ static inline int prot_queue_push(struct prot_queue* q, void *data)
 	pthread_mutex_unlock(&q->mutex);
 
 	return 1;
+}
+
+/*
+ * Push multiple elements onto the queue.
+ * Params:
+ * q      - Pointer to the queue.
+ * data   - Pointer to the data elements to be pushed.
+ * count  - Number of elements to push.
+ *
+ * Returns the number of elements successfully pushed, 0 if the queue is full or if there is not enough contiguous space.
+ */
+static int prot_queue_push_all(struct prot_queue* q, void *data, int count)
+{
+	int cap;
+	int first_copy_count, second_copy_count;
+
+	pthread_mutex_lock(&q->mutex);
+
+	cap = prot_queue_capacity(q);
+	if (q->count + count > cap) {
+		pthread_mutex_unlock(&q->mutex);
+		return 0; // Return failure if the queue is full
+	}
+
+	first_copy_count = min(count, cap - q->tail); // Elements until the end of the buffer
+	second_copy_count = count - first_copy_count; // Remaining elements if wrap around
+
+	memcpy(&q->buf[q->tail * q->elem_size], data, first_copy_count * q->elem_size);
+	q->tail = (q->tail + first_copy_count) % cap;
+
+	if (second_copy_count > 0) {
+		// If there is a wrap around, copy the remaining elements
+		memcpy(&q->buf[q->tail * q->elem_size], (char *)data + first_copy_count * q->elem_size, second_copy_count * q->elem_size);
+		q->tail = (q->tail + second_copy_count) % cap;
+	}
+
+	q->count += count;
+
+	pthread_cond_signal(&q->cond); // Signal a waiting thread
+	pthread_mutex_unlock(&q->mutex);
+
+	return count;
 }
 
 /* 

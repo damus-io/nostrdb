@@ -107,6 +107,13 @@ int ndb_note_verify(void *ctx, unsigned char pubkey[32], unsigned char id[32],
 	return 1;
 }
 
+static inline int ndb_writer_queue_msgs(struct ndb_writer *writer,
+					struct ndb_writer_msg *msgs,
+					int num_msgs)
+{
+	return prot_queue_push_all(&writer->inbox, msgs, num_msgs);
+}
+
 static int ndb_writer_queue_note(struct ndb_writer *writer,
 				 struct ndb_note *note, size_t note_len)
 {
@@ -122,7 +129,8 @@ static int ndb_writer_queue_note(struct ndb_writer *writer,
 
 static int ndb_ingester_process_event(secp256k1_context *ctx,
 				      struct ndb_ingester *ingester,
-				      struct ndb_ingester_event *ev)
+				      struct ndb_ingester_event *ev,
+				      struct ndb_writer_msg *out)
 {
 	struct ndb_tce tce;
 	struct ndb_note *note;
@@ -160,10 +168,9 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 
 		note = realloc(note, note_size);
 
-		if (!ndb_writer_queue_note(ingester->writer, note, note_size)) {
-			fprintf(stderr, "failed to queue note. queue full.\n");
-			goto cleanup;
-		}
+		out->type = NDB_WRITER_NOTE;
+		out->note.note = note;
+		out->note.note_len = note_size;
 
 		// there's nothing left to do with the original json, so free it
 		free(ev->json);
@@ -218,15 +225,18 @@ static void *ndb_ingester_thread(void *data)
 	// 1mb scratch buffer for 
 	struct ndb_ingester *ingester = data;
 	struct ndb_ingester_msg msgs[max_pop], *msg;
-	int i, popped;
+	struct ndb_writer_msg outs[max_pop], *out;
+	int i, to_write, popped;
 	secp256k1_context *ctx;
 	ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
 
 	while (true) {
+		to_write = 0;
 		popped = prot_queue_pop_all(&ingester->inbox, msgs, max_pop);
 		ndb_debug("popped %d items in the ingester thread\n", popped);
 
 		// look for a quit message to quit ASAP
+		// TODO: should I drain the queue first ?
 		for (i = 0; i < popped; i++) {
 			msg = &msgs[i];
 			if (msg->type == NDB_INGEST_QUIT)
@@ -241,10 +251,14 @@ static void *ndb_ingester_thread(void *data)
 				ndb_debug("ingester: unexpected quit message\n");
 				goto cleanup;
 			case NDB_INGEST_EVENT:
+				out = &outs[to_write++];
 				ndb_ingester_process_event(ctx, ingester,
-							   &msg->event);
+							   &msg->event, out);
 			}
 		}
+
+		if (to_write > 0)
+			ndb_writer_queue_msgs(ingester->writer, outs, to_write);
 	}
 
 cleanup:

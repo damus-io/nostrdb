@@ -19,7 +19,7 @@ all: lib bindings
 bindings: bindings-swift bindings-c
 
 check: test
-	./test | uniq -c
+	./test
 
 clean:
 	rm -rf test bench bindings
