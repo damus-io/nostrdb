@@ -230,7 +230,7 @@ static void test_parse_contact_event()
 
 	assert(read_file("testdata/contacts-event.json", (unsigned char*)json,
 			 alloc_size, &written));
-	assert(ndb_ws_event_from_json(json, written, &tce, buf, alloc_size));
+	assert(ndb_ws_event_from_json(json, written, &tce, buf, alloc_size, NULL));
 
 	assert(tce.evtype == NDB_TCE_EVENT);
 
@@ -248,7 +248,7 @@ static void test_content_len()
 
 	assert(read_file("testdata/failed_size.json", (unsigned char*)json,
 			 alloc_size, &written));
-	assert(ndb_ws_event_from_json(json, written, &tce, buf, alloc_size));
+	assert(ndb_ws_event_from_json(json, written, &tce, buf, alloc_size, NULL));
 
 	assert(tce.evtype == NDB_TCE_EVENT);
 	assert(ndb_note_content_length(tce.event.note) == 0);
@@ -315,7 +315,7 @@ static void test_tce_eose() {
 	struct ndb_tce tce;
 	int ok;
 
-	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf), NULL);
 	assert(ok);
 
 	assert(tce.evtype == NDB_TCE_EOSE);
@@ -329,7 +329,7 @@ static void test_tce_command_result() {
 	struct ndb_tce tce;
 	int ok;
 
-	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf), NULL);
 	assert(ok);
 
 	assert(tce.evtype == NDB_TCE_OK);
@@ -344,7 +344,7 @@ static void test_tce_command_result_empty_msg() {
 	struct ndb_tce tce;
 	int ok;
 
-	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf), NULL);
 	assert(ok);
 
 	assert(tce.evtype == NDB_TCE_OK);
@@ -365,7 +365,7 @@ static void test_tce() {
 	struct ndb_tce tce;
 	int ok;
 
-	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf));
+	ok = ndb_ws_event_from_json(json, sizeof(json), &tce, buf, sizeof(buf), NULL);
 	assert(ok);
 
 	assert(tce.evtype == NDB_TCE_EVENT);

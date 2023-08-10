@@ -90,7 +90,7 @@ static inline void threadpool_destroy(struct threadpool *tp)
 	for (uint64_t i = 0; i < tp->num_threads; i++) {
 		t = &tp->pool[i];
 		if (!prot_queue_push(&t->inbox, tp->quit_msg)) {
-			pthread_exit(t->thread_id);
+			pthread_exit(&t->thread_id);
 		} else {
 			pthread_join(t->thread_id, NULL);
 		}

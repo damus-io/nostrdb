@@ -4,7 +4,7 @@
 
 #include <stdlib.h>
 
-static int char_to_hex(unsigned char *val, char c)
+static inline int char_to_hex(unsigned char *val, char c)
 {
 	if (c >= '0' && c <= '9') {
 		*val = c - '0';
@@ -21,7 +21,7 @@ static int char_to_hex(unsigned char *val, char c)
 	return 0;
 }
 
-static int hex_decode(const char *str, size_t slen, void *buf, size_t bufsize)
+static inline int hex_decode(const char *str, size_t slen, void *buf, size_t bufsize)
 {
 	unsigned char v1, v2;
 	unsigned char *p = buf;

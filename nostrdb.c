@@ -23,6 +23,20 @@ static const int THREAD_QUEUE_BATCH = 1024;
 // the maximum size of inbox queues
 static const int DEFAULT_QUEUE_SIZE = 50000;
 
+
+// controls whether to continue or stop the json parser
+enum ndb_idres {
+	NDB_IDRES_CONT,
+	NDB_IDRES_STOP,
+};
+
+// closure data for the id-detecting ingest controller
+struct ndb_ingest_controller
+{
+	MDB_txn *read_txn;
+	struct ndb_lmdb *lmdb;
+};
+
 enum ndb_dbs {
 	NDB_DBI_ID,
 };
@@ -143,6 +157,25 @@ static int ndb_writer_queue_note(struct ndb_writer *writer,
 	return prot_queue_push(&writer->inbox, &msg);
 }
 
+static enum ndb_idres ndb_ingester_json_controller(void *data, const char *hexid)
+{
+	unsigned char id[32];
+	struct ndb_ingest_controller *c = data;
+	int rc;
+
+	hex_decode(hexid, 64, id, sizeof(id));
+
+	// let's see if we already have it
+	MDB_val key, val;
+	key.mv_size = 32;
+	key.mv_data = id;
+	rc = mdb_get(c->read_txn, c->lmdb->dbis[NDB_DBI_ID], &key, &val);
+
+	if (rc == MDB_NOTFOUND)
+		return NDB_IDRES_CONT;
+
+	return NDB_IDRES_STOP;
+}
 
 static int ndb_ingester_process_event(secp256k1_context *ctx,
 				      struct ndb_ingester *ingester,
@@ -153,13 +186,17 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 {
 	struct ndb_tce tce;
 	struct ndb_note *note;
-	struct ndb_lmdb *lmdb;
+	struct ndb_ingest_controller controller;
+	struct ndb_id_cb cb;
 	void *buf;
 	size_t bufsize, note_size;
-	int rc;
 
-	// we will use this to check if we already have it in the DB
-	lmdb = ingester->writer->lmdb;
+	// we will use this to check if we already have it in the DB during
+	// ID parsing
+	controller.read_txn = read_txn;
+	controller.lmdb = ingester->writer->lmdb;
+	cb.fn = ndb_ingester_json_controller;
+	cb.data = &controller;
 
 	// since we're going to be passing this allocated note to a different
 	// thread, we can't use thread-local buffers. just allocate a block
@@ -169,7 +206,12 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 		return 0;
 
 	note_size =
-		ndb_ws_event_from_json(ev->json, ev->len, &tce, buf, bufsize);
+		ndb_ws_event_from_json(ev->json, ev->len, &tce, buf, bufsize, &cb);
+
+	if (note_size == -42) {
+		// we already have this!
+		goto cleanup;
+	}
 
 	switch (tce.evtype) {
 	case NDB_TCE_NOTICE: goto cleanup;
@@ -182,35 +224,24 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 			goto cleanup;
 		}
 
-		// let's see if we already have it
-		MDB_val key, val;
-		key.mv_size = 32;
-		key.mv_data = note->id;
-		rc = mdb_get(read_txn, lmdb->dbis[NDB_DBI_ID], &key, &val);
-
-		if (rc == MDB_NOTFOUND) {
-			// Verify! If it's an invalid note we don't need to
-			// bothter writing it to the database
-			if (!ndb_note_verify(ctx, note->pubkey, note->id, note->sig)) {
-				ndb_debug("signature verification failed\n");
-				goto cleanup;
-			}
-
-			// we didn't find anything. let's send it
-			// to the writer thread
-			note = realloc(note, note_size);
-
-			out->type = NDB_WRITER_NOTE;
-			out->note.note = note;
-			out->note.note_len = note_size;
-
-			// there's nothing left to do with the original json, so free it
-			free(ev->json);
-			return 1;
+		// Verify! If it's an invalid note we don't need to
+		// bothter writing it to the database
+		if (!ndb_note_verify(ctx, note->pubkey, note->id, note->sig)) {
+			ndb_debug("signature verification failed\n");
+			goto cleanup;
 		}
 
-		// we already have it or there's an error, either way
-		// cleanup and return 0
+		// we didn't find anything. let's send it
+		// to the writer thread
+		note = realloc(note, note_size);
+
+		out->type = NDB_WRITER_NOTE;
+		out->note.note = note;
+		out->note.note_len = note_size;
+
+		// there's nothing left to do with the original json, so free it
+		free(ev->json);
+		return 1;
 	}
 
 cleanup:
@@ -409,7 +440,7 @@ static int ndb_writer_destroy(struct ndb_writer *writer)
 	msg.type = NDB_WRITER_QUIT;
 	if (!prot_queue_push(&writer->inbox, &msg)) {
 		// queue is too full to push quit message. just kill it.
-		pthread_exit(writer->thread_id);
+		pthread_exit(&writer->thread_id);
 	} else {
 		pthread_join(writer->thread_id, NULL);
 	}
@@ -641,11 +672,29 @@ static inline int ndb_json_parser_init(struct ndb_json_parser *p,
 	return 1;
 }
 
-static inline int ndb_json_parser_parse(struct ndb_json_parser *p)
+static inline int ndb_json_parser_parse(struct ndb_json_parser *p,
+					struct ndb_id_cb *cb)
 {
+	jsmntok_t *tok;
 	int cap = ((unsigned char *)p->toks_end - (unsigned char*)p->toks)/sizeof(*p->toks);
-	p->num_tokens =
-		jsmn_parse(&p->json_parser, p->json, p->json_len, p->toks, cap);
+	int res =
+		jsmn_parse(&p->json_parser, p->json, p->json_len, p->toks, cap, cb != NULL);
+
+	// got an ID!
+	if (res == -42) {
+		tok = &p->toks[p->json_parser.toknext-1];
+
+		switch (cb->fn(cb->data, p->json + tok->start)) {
+		case NDB_IDRES_CONT:
+			res = jsmn_parse(&p->json_parser, p->json, p->json_len,
+					 p->toks, cap, 0);
+			break;
+		case NDB_IDRES_STOP:
+			return -42;
+		}
+	} else {
+		p->num_tokens = res;
+	}
 
 	p->i = 0;
 
@@ -1197,7 +1246,8 @@ static int parse_unsigned_int(const char *start, int len, unsigned int *num)
 }
 
 int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce,
-			   unsigned char *buf, int bufsize)
+			   unsigned char *buf, int bufsize,
+			   struct ndb_id_cb *cb)
 {
 	jsmntok_t *tok = NULL;
 	int tok_len, res;
@@ -1207,7 +1257,7 @@ int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce,
 	tce->subid = "";
 
 	ndb_json_parser_init(&parser, json, len, buf, bufsize);
-	if ((res = ndb_json_parser_parse(&parser)) < 0)
+	if ((res = ndb_json_parser_parse(&parser, cb)) < 0)
 		return res;
 
 	if (parser.num_tokens < 3 || parser.toks[0].type != JSMN_ARRAY)
@@ -1364,7 +1414,7 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 	int res;
 
 	ndb_json_parser_init(&parser, json, len, buf, bufsize);
-	if ((res = ndb_json_parser_parse(&parser)) < 0)
+	if ((res = ndb_json_parser_parse(&parser, NULL)) < 0)
 		return res;
 
 	if (parser.num_tokens < 1)

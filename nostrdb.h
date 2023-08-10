@@ -26,6 +26,15 @@ enum tce_type {
 	NDB_TCE_EOSE   = 0x4,
 };
 
+// function pointer for controlling what to do after we parse an id
+typedef enum ndb_idres (*ndb_id_fn)(void *, const char *);
+
+// id callback + closure data
+struct ndb_id_cb {
+	ndb_id_fn fn;
+	void *data;
+};
+
 struct ndb_str {
 	unsigned char flag;
 	union {
@@ -144,7 +153,7 @@ void ndb_destroy(struct ndb *);
 
 // BUILDER
 int ndb_parse_json_note(struct ndb_json_parser *, struct ndb_note **);
-int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce, unsigned char *buf, int bufsize);
+int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce, unsigned char *buf, int bufsize, struct ndb_id_cb *);
 int ndb_note_from_json(const char *json, int len, struct ndb_note **, unsigned char *buf, int buflen);
 int ndb_builder_init(struct ndb_builder *builder, unsigned char *buf, int bufsize);
 int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note, struct ndb_keypair *privkey);
