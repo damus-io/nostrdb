@@ -30,6 +30,7 @@ static void test_lmdb_put()
 	}
 
 	free(json);
+
 	ndb_destroy(ndb);
 }
 
