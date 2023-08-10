@@ -3,7 +3,6 @@
 #ifndef FAST_MEMCHR_H
 #define FAST_MEMCHR_H
 
-#include <arm_neon.h>
 #include <string.h>
 
 #ifdef __ARM_NEON
@@ -13,6 +12,7 @@
 #endif
 
 #ifdef __ARM_NEON
+#include <arm_neon.h>
 static const char *neon_strchr(const char *str, char c, size_t length) {
 	const char* end = str + length;
 
