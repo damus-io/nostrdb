@@ -23,6 +23,11 @@ static const int THREAD_QUEUE_BATCH = 1024;
 // the maximum size of inbox queues
 static const int DEFAULT_QUEUE_SIZE = 50000;
 
+enum ndb_dbs {
+	NDB_DBI_ID,
+};
+#define NDB_DBIS 1
+
 struct ndb_json_parser {
 	const char *json;
 	int json_len;
