@@ -25,6 +25,16 @@ static const int THREAD_QUEUE_BATCH = 1024;
 static const int DEFAULT_QUEUE_SIZE = 50000;
 
 
+#define NDB_PARSED_ID           (1 << 0)
+#define NDB_PARSED_PUBKEY       (1 << 1)
+#define NDB_PARSED_SIG          (1 << 2)
+#define NDB_PARSED_CREATED_AT   (1 << 3)
+#define NDB_PARSED_KIND         (1 << 4)
+#define NDB_PARSED_CONTENT      (1 << 5)
+#define NDB_PARSED_TAGS         (1 << 6)
+#define NDB_PARSED_ALL          (NDB_PARSED_ID|NDB_PARSED_PUBKEY|NDB_PARSED_SIG|NDB_PARSED_CREATED_AT|NDB_PARSED_KIND|NDB_PARSED_CONTENT|NDB_PARSED_TAGS)
+
+
 // controls whether to continue or stop the json parser
 enum ndb_idres {
 	NDB_IDRES_CONT,
@@ -1332,7 +1342,9 @@ int ndb_parse_json_note(struct ndb_json_parser *parser, struct ndb_note **note)
 	unsigned char hexbuf[64];
 	const char *json = parser->json;
 	const char *start;
-	int i, tok_len;
+	int i, tok_len, parsed;
+
+	parsed = 0;
 
 	if (parser->toks[parser->i].type != JSMN_OBJECT)
 		return 0;
@@ -1352,17 +1364,19 @@ int ndb_parse_json_note(struct ndb_json_parser *parser, struct ndb_note **note)
 			// pubkey
 			tok = &parser->toks[i+1];
 			hex_decode(json + tok->start, toksize(tok), hexbuf, sizeof(hexbuf));
+			parsed |= NDB_PARSED_PUBKEY;
 			ndb_builder_set_pubkey(&parser->builder, hexbuf);
 		} else if (tok_len == 2 && start[0] == 'i' && start[1] == 'd') {
 			// id
 			tok = &parser->toks[i+1];
 			hex_decode(json + tok->start, toksize(tok), hexbuf, sizeof(hexbuf));
-			// TODO: validate id
+			parsed |= NDB_PARSED_ID;
 			ndb_builder_set_id(&parser->builder, hexbuf);
 		} else if (tok_len == 3 && start[0] == 's' && start[1] == 'i' && start[2] == 'g') {
 			// sig
 			tok = &parser->toks[i+1];
 			hex_decode(json + tok->start, toksize(tok), hexbuf, sizeof(hexbuf));
+			parsed |= NDB_PARSED_SIG;
 			ndb_builder_set_sig(&parser->builder, hexbuf);
 		} else if (start[0] == 'k' && jsoneq(json, tok, tok_len, "kind")) {
 			// kind
@@ -1373,6 +1387,7 @@ int ndb_parse_json_note(struct ndb_json_parser *parser, struct ndb_note **note)
 			if (!parse_unsigned_int(start, toksize(tok),
 						&parser->builder.note->kind))
 					return 0;
+			parsed |= NDB_PARSED_KIND;
 		} else if (start[0] == 'c') {
 			if (jsoneq(json, tok, tok_len, "created_at")) {
 				// created_at
@@ -1383,6 +1398,7 @@ int ndb_parse_json_note(struct ndb_json_parser *parser, struct ndb_note **note)
 				if (!parse_unsigned_int(start, toksize(tok),
 							&parser->builder.note->created_at))
 					return 0;
+				parsed |= NDB_PARSED_CREATED_AT;
 			} else if (jsoneq(json, tok, tok_len, "content")) {
 				// content
 				tok = &parser->toks[i+1];
@@ -1393,17 +1409,24 @@ int ndb_parse_json_note(struct ndb_json_parser *parser, struct ndb_note **note)
 							json + tok->start,
 							tok_len, &pstr,
 							&written, pack_ids)) {
+					ndb_debug("ndb_builder_make_json_str failed\n");
 					return 0;
 				}
 				parser->builder.note->content_length = written;
 				parser->builder.note->content = pstr;
+				parsed |= NDB_PARSED_CONTENT;
 			}
 		} else if (start[0] == 't' && jsoneq(json, tok, tok_len, "tags")) {
 			tok = &parser->toks[i+1];
 			ndb_builder_process_json_tags(parser, tok);
 			i += tok->size;
+			parsed |= NDB_PARSED_TAGS;
 		}
 	}
+
+	//ndb_debug("parsed %d = %d, &->%d", parsed, NDB_PARSED_ALL, parsed & NDB_PARSED_ALL);
+	if (parsed != NDB_PARSED_ALL)
+		return 0;
 
 	return ndb_builder_finalize(&parser->builder, note, NULL);
 }
