@@ -177,14 +177,6 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 	case NDB_TCE_OK:     goto cleanup;
 	case NDB_TCE_EVENT:
 		note = tce.event.note;
-
-		// Verify! If it's an invalid note we don't need to bothter
-		// writing it to the database
-		if (!ndb_note_verify(ctx, note->pubkey, note->id, note->sig)) {
-			ndb_debug("signature verification failed\n");
-			goto cleanup;
-		}
-
 		if (note != buf) {
 			ndb_debug("note buffer not equal to malloc'd buffer\n");
 			goto cleanup;
@@ -197,6 +189,13 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 		rc = mdb_get(read_txn, lmdb->dbis[NDB_DBI_ID], &key, &val);
 
 		if (rc == MDB_NOTFOUND) {
+			// Verify! If it's an invalid note we don't need to
+			// bothter writing it to the database
+			if (!ndb_note_verify(ctx, note->pubkey, note->id, note->sig)) {
+				ndb_debug("signature verification failed\n");
+				goto cleanup;
+			}
+
 			// we didn't find anything. let's send it
 			// to the writer thread
 			note = realloc(note, note_size);
