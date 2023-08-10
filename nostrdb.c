@@ -625,7 +625,9 @@ int ndb_process_events(struct ndb *ndb, const char *ldjson, int json_len)
 	start = ldjson;
 	end = start + json_len;
 	very_end = ldjson + json_len;
+#if DEBUG
 	int processed = 0;
+#endif
 
 	while ((end = fast_strchr(start, '\n', very_end - start))) {
 		//printf("processing '%.*s'\n", (int)(end-start), start);
@@ -634,7 +636,9 @@ int ndb_process_events(struct ndb *ndb, const char *ldjson, int json_len)
 			return 0;
 		}
 		start = end + 1;
+#if DEBUG
 		processed++;
+#endif
 	}
 
 	ndb_debug("ndb_process_events: processed %d events\n", processed);
