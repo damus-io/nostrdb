@@ -14,24 +14,21 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
   public init(_ bb: ByteBuffer, o: Int32) { _accessor = Table(bb: bb, position: o) }
 
   private enum VTOFFSET: VOffset {
-    case json = 4
-    case name = 6
-    case website = 8
-    case about = 10
-    case lud16 = 12
-    case banner = 14
-    case displayName = 16
-    case reactions = 18
-    case picture = 20
-    case nip05 = 22
-    case damusDonation = 24
-    case damusDonationV2 = 26
+    case name = 4
+    case website = 6
+    case about = 8
+    case lud16 = 10
+    case banner = 12
+    case displayName = 14
+    case reactions = 16
+    case picture = 18
+    case nip05 = 20
+    case damusDonation = 22
+    case damusDonationV2 = 24
     var v: Int32 { Int32(self.rawValue) }
     var p: VOffset { self.rawValue }
   }
 
-  public var json: String? { let o = _accessor.offset(VTOFFSET.json.v); return o == 0 ? nil : _accessor.string(at: o) }
-  public var jsonSegmentArray: [UInt8]? { return _accessor.getVector(at: VTOFFSET.json.v) }
   public var name: String? { let o = _accessor.offset(VTOFFSET.name.v); return o == 0 ? nil : _accessor.string(at: o) }
   public var nameSegmentArray: [UInt8]? { return _accessor.getVector(at: VTOFFSET.name.v) }
   public var website: String? { let o = _accessor.offset(VTOFFSET.website.v); return o == 0 ? nil : _accessor.string(at: o) }
@@ -51,8 +48,7 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
   public var nip05SegmentArray: [UInt8]? { return _accessor.getVector(at: VTOFFSET.nip05.v) }
   public var damusDonation: Int32 { let o = _accessor.offset(VTOFFSET.damusDonation.v); return o == 0 ? 0 : _accessor.readBuffer(of: Int32.self, at: o) }
   public var damusDonationV2: Int32 { let o = _accessor.offset(VTOFFSET.damusDonationV2.v); return o == 0 ? 0 : _accessor.readBuffer(of: Int32.self, at: o) }
-  public static func startNdbProfile(_ fbb: inout FlatBufferBuilder) -> UOffset { fbb.startTable(with: 12) }
-  public static func add(json: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: json, at: VTOFFSET.json.p) }
+  public static func startNdbProfile(_ fbb: inout FlatBufferBuilder) -> UOffset { fbb.startTable(with: 11) }
   public static func add(name: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: name, at: VTOFFSET.name.p) }
   public static func add(website: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: website, at: VTOFFSET.website.p) }
   public static func add(about: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: about, at: VTOFFSET.about.p) }
@@ -68,7 +64,6 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
   public static func endNdbProfile(_ fbb: inout FlatBufferBuilder, start: UOffset) -> Offset { let end = Offset(offset: fbb.endTable(at: start)); return end }
   public static func createNdbProfile(
     _ fbb: inout FlatBufferBuilder,
-    jsonOffset json: Offset = Offset(),
     nameOffset name: Offset = Offset(),
     websiteOffset website: Offset = Offset(),
     aboutOffset about: Offset = Offset(),
@@ -82,7 +77,6 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
     damusDonationV2: Int32 = 0
   ) -> Offset {
     let __start = NdbProfile.startNdbProfile(&fbb)
-    NdbProfile.add(json: json, &fbb)
     NdbProfile.add(name: name, &fbb)
     NdbProfile.add(website: website, &fbb)
     NdbProfile.add(about: about, &fbb)
@@ -99,7 +93,6 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
 
   public static func verify<T>(_ verifier: inout Verifier, at position: Int, of type: T.Type) throws where T: Verifiable {
     var _v = try verifier.visitTable(at: position)
-    try _v.visit(field: VTOFFSET.json.p, fieldName: "json", required: false, type: ForwardOffset<String>.self)
     try _v.visit(field: VTOFFSET.name.p, fieldName: "name", required: false, type: ForwardOffset<String>.self)
     try _v.visit(field: VTOFFSET.website.p, fieldName: "website", required: false, type: ForwardOffset<String>.self)
     try _v.visit(field: VTOFFSET.about.p, fieldName: "about", required: false, type: ForwardOffset<String>.self)

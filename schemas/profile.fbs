@@ -1,7 +1,5 @@
 
 table NdbProfile {
-  json:string;
-
   name:string;
   website:string;
   about:string;
@@ -11,7 +9,6 @@ table NdbProfile {
   reactions:bool = true;
   picture:string;
   nip05:string;
-
 
   damus_donation:int;
   damus_donation_v2:int;
