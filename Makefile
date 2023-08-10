@@ -19,6 +19,7 @@ all: lib bindings
 bindings: bindings-swift bindings-c
 
 check: test
+	rm -rf testdata/db/*.mdb
 	./test
 
 clean:
