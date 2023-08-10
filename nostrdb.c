@@ -38,6 +38,12 @@ struct ndb_json_parser {
 	int num_tokens;
 };
 
+// useful to pass to threads on its own
+struct ndb_lmdb {
+	MDB_env *env;
+	MDB_dbi dbis[NDB_DBIS];
+};
+
 struct ndb_writer {
 	void *queue_buf;
 	int queue_buflen;
