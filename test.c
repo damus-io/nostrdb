@@ -10,29 +10,6 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
-static void test_lmdb_put()
-{
-	struct ndb *ndb;
-	static const int alloc_size = 2 << 18;
-	char *json = malloc(alloc_size);
-	int i, mapsize, written, ingester_threads;
-
-	mapsize = 1024 * 1024 * 100;
-	ingester_threads = 8;
-
-	// 256MB
-	assert(ndb_init(&ndb, mapsize, ingester_threads));
-
-	read_file("testdata/contacts-event.json", (unsigned char*)json, alloc_size, &written);
-
-	for (i = 0; i < 50000; i++) {
-		ndb_process_event(ndb, json, written);
-	}
-
-	free(json);
-
-	ndb_destroy(ndb);
-}
 
 static void test_basic_event() {
 	unsigned char buf[512];
@@ -500,7 +477,6 @@ int main(int argc, const char *argv[]) {
 	test_queue_thread_safety();
 	test_queue_boundary_conditions();
 
-	test_lmdb_put();
 
 	printf("All tests passed!\n");       // Print this if all tests pass.
 }
