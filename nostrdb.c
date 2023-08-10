@@ -213,16 +213,24 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 	// thread, we can't use thread-local buffers. just allocate a block
         bufsize = max(ev->len * 8.0, 4096);
 	buf = malloc(bufsize);
-	if (!buf)
+	if (!buf) {
+		ndb_debug("couldn't malloc buf\n");
 		return 0;
+	}
 
 	note_size =
 		ndb_ws_event_from_json(ev->json, ev->len, &tce, buf, bufsize, &cb);
 
 	if (note_size == -42) {
 		// we already have this!
+		//ndb_debug("already have id??\n");
+		goto cleanup;
+	} else if (note_size == 0) {
+		ndb_debug("failed to parse '%.*s'\n", ev->len, ev->json);
 		goto cleanup;
 	}
+
+	//ndb_debug("parsed evtype:%d '%.*s'\n", tce.evtype, ev->len, ev->json);
 
 	switch (tce.evtype) {
 	case NDB_TCE_NOTICE: goto cleanup;
@@ -274,7 +282,7 @@ static void *ndb_writer_thread(void *data)
 	while (!done) {
 		txn = NULL;
 		popped = prot_queue_pop_all(&writer->inbox, msgs, THREAD_QUEUE_BATCH);
-		ndb_debug("popped %d items in the writer thread\n", popped);
+		ndb_debug("writer popped %d items\n", popped);
 
 		any_note = 0;
 		for (i = 0 ; i < popped; i++) {
@@ -353,7 +361,7 @@ static void *ndb_ingester_thread(void *data)
 		any_event = 0;
 
 		popped = prot_queue_pop_all(&thread->inbox, msgs, THREAD_QUEUE_BATCH);
-		ndb_debug("popped %d items in the ingester thread\n", popped);
+		ndb_debug("ingester popped %d items\n", popped);
 
 		for (i = 0; i < popped; i++) {
 			msg = &msgs[i];
@@ -386,8 +394,12 @@ static void *ndb_ingester_thread(void *data)
 		if (any_event)
 			mdb_txn_abort(read_txn);
 
-		if (to_write > 0)
-			ndb_writer_queue_msgs(ingester->writer, outs, to_write);
+		if (to_write > 0) {
+			//ndb_debug("pushing %d events to write queue\n", to_write); 
+			if (!ndb_writer_queue_msgs(ingester->writer, outs, to_write)) {
+				ndb_debug("failed pushing %d events to write queue\n", to_write); 
+			}
+		}
 	}
 
 	ndb_debug("quitting ingester thread\n");
@@ -1272,8 +1284,19 @@ int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce,
 	if ((res = ndb_json_parser_parse(&parser, cb)) < 0)
 		return res;
 
-	if (parser.num_tokens < 3 || parser.toks[0].type != JSMN_ARRAY)
+	if (parser.num_tokens < 3 || parser.toks[0].type != JSMN_ARRAY) {
+		/*
+		tok = &parser.toks[parser.json_parser.toknext-1];
+		ndb_debug("failing at not enough takens (%d) or != JSMN_ARRAY @ '%.*s', '%.*s'\n",
+				parser.num_tokens, 10, json + parser.json_parser.pos,
+				toksize(tok), json + tok->start);
+		tok = &parser.toks[parser.json_parser.toknext-2];
+		ndb_debug("failing at not enough takens (%d) or != JSMN_ARRAY @ '%.*s', '%.*s'\n",
+				parser.num_tokens, 10, json + parser.json_parser.pos,
+				toksize(tok), json + tok->start);
+				*/
 		return 0;
+	}
 
 	parser.i = 1;
 	tok = &parser.toks[parser.i++];
