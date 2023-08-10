@@ -416,11 +416,11 @@ void ndb_destroy(struct ndb *ndb)
 	if (ndb == NULL)
 		return;
 
-	mdb_env_close(ndb->env);
-
 	// ingester depends on writer and must be destroyed first
 	ndb_ingester_destroy(&ndb->ingester);
 	ndb_writer_destroy(&ndb->writer);
+
+	mdb_env_close(ndb->lmdb.env);
 
 	free(ndb);
 }
