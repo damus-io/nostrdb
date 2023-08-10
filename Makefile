@@ -4,6 +4,7 @@ SRCS = nostrdb.c sha256.c
 LDS = $(SRCS) $(ARS)
 ARS = deps/lmdb/liblmdb.a deps/secp256k1/.libs/libsecp256k1.a
 LMDB_VER=0.9.31
+FLATCC_VER=0.6.1
 DEPS = $(SRCS) $(HEADERS) $(ARS)
 PREFIX ?= /usr/local
 SUBMODULES = deps/secp256k1
@@ -72,6 +73,14 @@ deps/.dir:
 
 deps/LMDB_$(LMDB_VER).tar.gz: deps/.dir
 	curl -L https://github.com/LMDB/lmdb/archive/refs/tags/LMDB_$(LMDB_VER).tar.gz -o $@
+
+deps/flatcc_$(FLATCC_VER).tar.gz: deps/.dir
+	curl -L https://github.com/dvidelabs/flatcc/archive/refs/tags/v0.6.1.tar.gz -o $@
+
+deps/flatcc/include/flatcc/flatcc.h: deps/flatcc_$(FLATCC_VER).tar.gz deps/.dir
+	tar xf $<
+	rm -rf deps/flatcc
+	mv flatcc-$(FLATCC_VER) deps/flatcc
 
 deps/lmdb/lmdb.h: deps/LMDB_$(LMDB_VER).tar.gz deps/.dir
 	tar xf $<
