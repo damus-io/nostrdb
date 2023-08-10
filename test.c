@@ -11,6 +11,29 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
+static void test_load_profiles()
+{
+	static const int alloc_size = 1024 * 1024;
+	char *json = malloc(alloc_size);
+	unsigned char *buf = malloc(alloc_size);
+	struct ndb *ndb;
+	size_t mapsize;
+	int written, ingester_threads;
+
+	mapsize = 1024 * 1024 * 100;
+	ingester_threads = 1;
+	assert(ndb_init(&ndb, mapsize, ingester_threads));
+
+	read_file("testdata/profiles.json", (unsigned char*)json, alloc_size, &written);
+
+	assert(ndb_process_events(ndb, json, written));
+
+	ndb_destroy(ndb);
+
+	free(json);
+	free(buf);
+}
+
 
 static void test_basic_event() {
 	unsigned char buf[512];
@@ -511,5 +534,11 @@ int main(int argc, const char *argv[]) {
 	// memchr stuff
 	test_fast_strchr();
 
+	// profiles
+	test_load_profiles();
+
 	printf("All tests passed!\n");       // Print this if all tests pass.
 }
+
+
+

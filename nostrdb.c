@@ -616,7 +616,29 @@ int ndb_process_event(struct ndb *ndb, const char *json, int json_len)
 	if (json_copy == NULL)
 		return 0;
 
-	ndb_ingester_queue_event(&ndb->ingester, json_copy, json_len);
+	return ndb_ingester_queue_event(&ndb->ingester, json_copy, json_len);
+}
+
+int ndb_process_events(struct ndb *ndb, const char *ldjson, int json_len)
+{
+	const char *start, *end, *very_end;
+	start = ldjson;
+	end = start + json_len;
+	very_end = ldjson + json_len;
+	int processed = 0;
+
+	while ((end = fast_strchr(start, '\n', very_end - start))) {
+		//printf("processing '%.*s'\n", (int)(end-start), start);
+		if (!ndb_process_event(ndb, start, end - start)) {
+			ndb_debug("ndb_process_event failed\n");
+			return 0;
+		}
+		start = end + 1;
+		processed++;
+	}
+
+	ndb_debug("ndb_process_events: processed %d events\n", processed);
+
 	return 1;
 }
 
