@@ -377,6 +377,7 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
         token = &tokens[parser->toknext-1];
         if (idkey == 1 && (token->end - token->start) == 64) {
           //printf("jsmn: found id '%.*s'\n", token->end - token->start, js + token->start);
+          parser->pos++;
           return -42;
         } else if (idkey == 0 && (token->end - token->start) == 2 &&
                    (js + token->start)[0] == 'i' &&

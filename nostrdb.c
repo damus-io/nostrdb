@@ -703,13 +703,14 @@ static inline int ndb_json_parser_parse(struct ndb_json_parser *p,
 		case NDB_IDRES_STOP:
 			return -42;
 		}
-	} else {
-		p->num_tokens = res;
+	} else if (res == 0) {
+		return 0;
 	}
 
+	p->num_tokens = res;
 	p->i = 0;
 
-	return p->num_tokens;
+	return 1;
 }
 
 static int cursor_push_unescaped_char(struct cursor *cur, char c1, char c2)
