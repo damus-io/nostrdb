@@ -23,7 +23,7 @@ check: test
 	./test
 
 clean:
-	rm -rf test bench bindings
+	rm -rf test bench
 
 benches: bench bench-ingest
 
