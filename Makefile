@@ -1,14 +1,14 @@
-CFLAGS = -Wall -Wno-unused-function -Werror -O2 -g -Ideps/secp256k1/include -Ideps/lmdb
+CFLAGS = -Wall -Wno-unused-function -Werror -O2 -g -Ideps/secp256k1/include -Ideps/lmdb -Ideps/flatcc/include
 HEADERS = sha256.h nostrdb.h cursor.h hex.h jsmn.h config.h sha256.h random.h memchr.h
 SRCS = nostrdb.c sha256.c 
 LDS = $(SRCS) $(ARS)
+DEPS = $(SRCS) $(HEADERS) $(ARS)
 ARS = deps/lmdb/liblmdb.a deps/secp256k1/.libs/libsecp256k1.a
 LMDB_VER=0.9.31
 FLATCC_VER=0.6.1
-DEPS = $(SRCS) $(HEADERS) $(ARS)
 PREFIX ?= /usr/local
 SUBMODULES = deps/secp256k1
-C_BINDINGS_PROFILE=bindings/c/profile_builder.h bindings/c/profile_reader.h bindings/c/profile_verifier.h
+C_BINDINGS_PROFILE=bindings/c/profile_builder.h bindings/c/profile_reader.h bindings/c/profile_verifier.h bindings/c/profile_json_parser.h
 C_BINDINGS_COMMON=bindings/c/flatbuffers_common_builder.h bindings/c/flatbuffers_common_reader.h 
 C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE)
 BINDINGS=bindings
@@ -43,7 +43,7 @@ config.h: configurator
 bindings-c: $(C_BINDINGS)
 
 bindings/%:
-	mkdir -p $@
+	@mkdir -p $@
 
 bindings/c/profile_builder.h: schemas/profile.fbs bindings/c
 	flatcc --builder $<
@@ -60,6 +60,10 @@ bindings/c/flatbuffers_common_reader.h: bindings/c
 bindings/c/flatbuffers_common_builder.h: bindings/c
 	flatcc --common_builder
 	@mv flatbuffers_common_builder.h $@
+
+bindings/c/profile_json_parser.h: schemas/profile.fbs bindings/c
+	flatcc --json-parser $<
+	@mv profile_json_parser.h bindings/c
 
 bindings-swift: bindings/swift/NdbProfile.swift
 
@@ -81,6 +85,7 @@ deps/flatcc/include/flatcc/flatcc.h: deps/flatcc_$(FLATCC_VER).tar.gz deps/.dir
 	tar xf $<
 	rm -rf deps/flatcc
 	mv flatcc-$(FLATCC_VER) deps/flatcc
+	touch $@
 
 deps/lmdb/lmdb.h: deps/LMDB_$(LMDB_VER).tar.gz deps/.dir
 	tar xf $<
