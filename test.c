@@ -3,6 +3,7 @@
 #include "hex.h"
 #include "io.h"
 #include "protected_queue.h"
+#include "memchr.h"
 
 #include <stdio.h>
 #include <assert.h>
@@ -460,6 +461,36 @@ static void test_queue_boundary_conditions() {
     assert(old_count == q.count);
 }
 
+static void test_fast_strchr()
+{
+	// Test 1: Basic test
+	const char *testStr1 = "Hello, World!";
+	assert(fast_strchr(testStr1, 'W', strlen(testStr1)) == testStr1 + 7);
+
+	// Test 2: Character not present in the string
+	assert(fast_strchr(testStr1, 'X', strlen(testStr1)) == NULL);
+
+	// Test 3: Multiple occurrences of the character
+	const char *testStr2 = "Multiple occurrences.";
+	assert(fast_strchr(testStr2, 'u', strlen(testStr2)) == testStr2 + 1);
+
+	// Test 4: Check with an empty string
+	const char *testStr3 = "";
+	assert(fast_strchr(testStr3, 'a', strlen(testStr3)) == NULL);
+
+	// Test 5: Check with a one-character string
+	const char *testStr4 = "a";
+	assert(fast_strchr(testStr4, 'a', strlen(testStr4)) == testStr4);
+
+	// Test 6: Check the last character in the string
+	const char *testStr5 = "Last character check";
+	assert(fast_strchr(testStr5, 'k', strlen(testStr5)) == testStr5 + 19);
+
+	// Test 7: Large string test (>16 bytes)
+	char *testStr6 = "This is a test for large strings with more than 16 bytes.";
+	assert(fast_strchr(testStr6, 'm', strlen(testStr6)) == testStr6 + 38);
+}
+
 int main(int argc, const char *argv[]) {
 	test_basic_event();
 	test_empty_tags();
@@ -477,6 +508,8 @@ int main(int argc, const char *argv[]) {
 	test_queue_thread_safety();
 	test_queue_boundary_conditions();
 
+	// memchr stuff
+	test_fast_strchr();
 
 	printf("All tests passed!\n");       // Print this if all tests pass.
 }

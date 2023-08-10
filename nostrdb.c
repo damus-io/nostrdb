@@ -9,6 +9,7 @@
 #include "util.h"
 #include "threadpool.h"
 #include "protected_queue.h"
+#include "memchr.h"
 #include <stdlib.h>
 #include <limits.h>
 #include <assert.h>
