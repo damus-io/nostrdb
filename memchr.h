@@ -33,25 +33,13 @@ static const char *neon_strchr(const char *str, char c, size_t length) {
 		uint64_t result0 =
 			vgetq_lane_u64(vreinterpretq_u64_u8(comparison), 0);
 
-		if (result0) {
-			/*
-			printf("Got Result0: %016llx @ str'%s', bits %d\n",
-			       result0, str, __builtin_ctzll(result0)/8);
-			       */
+		if (result0)
 			return str + __builtin_ctzll(result0)/8;
-		}
 	
 		// Check second 64 bits
 		uint64_t result1 = vgetq_lane_u64(vreinterpretq_u64_u8(comparison), 1);
-		if (result1) {
-			/*
-			int bits = __builtin_ctzll(result1);
-			int bit_index = bits / 8;
-			printf("Got Result1: %016llx @ str'%s', str+8='%s', str+8+bind='%s' bits=%d bit_index=%d\n",
-			       result1, str, str + 8, str + 8 + bit_index, bits, bit_index);
-			       */
+		if (result1)
 			return str + 8 + __builtin_ctzll(result1)/8;
-		}
 
 		str += 16;
 	}
