@@ -42,28 +42,24 @@ config.h: configurator
 
 bindings-c: $(C_BINDINGS)
 
-bindings/%:
-	@mkdir -p $@
+bindings/%/.dir:
+	mkdir -p $(shell dirname $@)
+	touch $@
 
-bindings/c/profile_builder.h: schemas/profile.fbs bindings/c
-	flatcc --builder $<
-	@mv profile_builder.h $@
+bindings/c/%_builder.h: schemas/%.fbs bindings/c/.dir
+	flatcc --builder $< -o bindings/c
 
-bindings/c/profile_verifier.h bindings/c/profile_reader.h: schemas/profile.fbs bindings/c
-	flatcc --verifier $<
-	@mv profile_verifier.h profile_reader.h bindings/c
+bindings/c/%_verifier.h bindings/c/%_reader.h: schemas/%.fbs bindings/c/.dir
+	flatcc --verifier -o bindings/c $<
 
-bindings/c/flatbuffers_common_reader.h: bindings/c
-	flatcc --common_reader
-	@mv flatbuffers_common_reader.h $@
+bindings/c/flatbuffers_common_reader.h: bindings/c/.dir
+	flatcc --common_reader -o bindings/c
 
-bindings/c/flatbuffers_common_builder.h: bindings/c
-	flatcc --common_builder
-	@mv flatbuffers_common_builder.h $@
+bindings/c/flatbuffers_common_builder.h: bindings/c/.dir
+	flatcc --common_builder -o bindings/c
 
-bindings/c/profile_json_parser.h: schemas/profile.fbs bindings/c
-	flatcc --json-parser $<
-	@mv profile_json_parser.h bindings/c
+bindings/c/%_json_parser.h: schemas/%.fbs bindings/c/.dir
+	flatcc --json-parser $< -o bindings/c
 
 bindings-swift: bindings/swift/NdbProfile.swift
 
