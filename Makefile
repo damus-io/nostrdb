@@ -9,8 +9,9 @@ FLATCC_VER=0.6.1
 PREFIX ?= /usr/local
 SUBMODULES = deps/secp256k1
 C_BINDINGS_PROFILE=bindings/c/profile_builder.h bindings/c/profile_reader.h bindings/c/profile_verifier.h bindings/c/profile_json_parser.h
-C_BINDINGS_COMMON=bindings/c/flatbuffers_common_builder.h bindings/c/flatbuffers_common_reader.h 
-C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE)
+C_BINDINGS_META=bindings/c/meta_builder.h bindings/c/meta_reader.h bindings/c/meta_verifier.h bindings/c/meta_json_parser.h
+C_BINDINGS_COMMON=bindings/c/flatbuffers_common_builder.h bindings/c/flatbuffers_common_reader.h
+C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE) $(C_BINDINGS_META)
 BINDINGS=bindings
 
 lib: benches test
@@ -66,6 +67,10 @@ bindings-swift: bindings/swift/NdbProfile.swift
 bindings/swift/NdbProfile.swift: schemas/profile.fbs bindings/swift
 	flatc --swift $<
 	@mv profile_generated.swift $@
+
+bindings/swift/NdbMeta.swift: schemas/meta.fbs bindings/swift
+	flatc --swift $<
+	@mv meta_generated.swift $@
 
 deps/.dir:
 	@mkdir -p deps

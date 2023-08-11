@@ -1,0 +1,6 @@
+
+table NdbEventMeta {
+  received_at:int;
+}
+
+root_type NdbEventMeta;
