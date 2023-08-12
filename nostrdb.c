@@ -93,10 +93,67 @@ struct ndb {
 };
 
 // A clustered key with an id and a timestamp
-struct ndb_id_ts {
+struct ndb_tsid {
 	unsigned char id[32];
-	uint32_t created;
+	uint64_t timestamp;
 };
+
+/** From LMDB: Compare two items lexically */
+static int mdb_cmp_memn(const MDB_val *a, const MDB_val *b) {
+	int diff;
+	ssize_t len_diff;
+	unsigned int len;
+
+	len = a->mv_size;
+	len_diff = (ssize_t) a->mv_size - (ssize_t) b->mv_size;
+	if (len_diff > 0) {
+		len = b->mv_size;
+		len_diff = 1;
+	}
+
+	diff = memcmp(a->mv_data, b->mv_data, len);
+	return diff ? diff : len_diff<0 ? -1 : len_diff;
+}
+
+static int ndb_tsid_compare(const MDB_val *a, const MDB_val *b)
+{
+	struct ndb_tsid *tsa, *tsb;
+	MDB_val a2 = *a, b2 = *b;
+	a2.mv_size = sizeof(tsa->id);
+	b2.mv_size = sizeof(tsb->id);
+
+	int cmp = mdb_cmp_memn(&a2, &b2);
+	if (cmp) return cmp;
+
+	tsa = a->mv_data;
+	tsb = b->mv_data;
+
+	if (tsa->timestamp < tsb->timestamp)
+		return -1;
+	else if (tsa->timestamp > tsb->timestamp)
+		return 1;
+	return 0;
+}
+
+static inline void ndb_tsid_low(struct ndb_tsid *key, unsigned char *id)
+{
+	memcpy(key->id, id, 32);
+	key->timestamp = 0;
+}
+
+static inline void ndb_tsid_init(struct ndb_tsid *key, unsigned char *id,
+				 uint64_t timestamp)
+{
+	memcpy(key->id, id, 32);
+	key->timestamp = 0;
+}
+
+// useful for range-searching for the latest key with a clustered created_at timen
+static inline void ndb_tsid_high(struct ndb_tsid *key, unsigned char *id)
+{
+	memcpy(key->id, id, 32);
+	key->timestamp = 0xFFFFFFFF;
+}
 
 enum ndb_ingester_msgtype {
 	NDB_INGEST_EVENT, // write json to the ingester queue for processing 
@@ -492,13 +549,6 @@ static int ndb_ingester_queue_event(struct ndb_ingester *ingester,
 	msg.event.len = len;
 
 	return threadpool_dispatch(&ingester->tp, &msg);
-}
-
-static void ndb_make_id_ts(unsigned char *id, uint32_t created,
-			   struct ndb_id_ts *ts)
-{
-	memcpy(ts->id, id, 32);
-	ts->created = created;
 }
 
 static int ndb_init_lmdb(struct ndb_lmdb *lmdb, size_t mapsize)
