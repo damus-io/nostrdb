@@ -122,7 +122,13 @@ bench: bench.c $(DEPS)
 bench-ingest: bench-ingest.c $(DEPS)
 	$(CC) $(CFLAGS) bench-ingest.c $(LDS) -o $@
 
-bench-ingest-many: bench-ingest-many.c $(DEPS)
+testdata/many-events.json.zst:
+	curl https://cdn.jb55.com/s/many-events.json.zst -o $@
+
+testdata/many-events.json: testdata/many-events.json.zst
+	zstd -d $<
+
+bench-ingest-many: bench-ingest-many.c $(DEPS) testdata/many-events.json
 	$(CC) $(CFLAGS) $< $(LDS) -o $@
 
 testdata/db/.dir:
