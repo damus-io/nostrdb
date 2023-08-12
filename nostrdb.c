@@ -238,35 +238,76 @@ static int ndb_writer_queue_note(struct ndb_writer *writer,
 	return prot_queue_push(&writer->inbox, &msg);
 }
 
-static uint64_t ndb_get_note_by_id(MDB_txn *txn, struct ndb_lmdb *lmdb,
-				   unsigned char *id)
+// get some value based on a clustered id key
+int ndb_get_tsid(MDB_txn *txn, struct ndb_lmdb *lmdb, enum ndb_dbs db,
+		 unsigned char *id, MDB_val *val)
 {
-	MDB_val key, data;
+	MDB_val k, v;
 	MDB_cursor *cur;
 	struct ndb_tsid tsid;
+	int success = 0;
 
 	ndb_tsid_high(&tsid, id);
-	key.mv_data = &tsid;
-	key.mv_size = sizeof(tsid);
+	k.mv_data = &tsid;
+	k.mv_size = sizeof(tsid);
 
-	mdb_cursor_open(txn, lmdb->dbs[NDB_DB_NOTE_ID], &cur);
+	mdb_cursor_open(txn, lmdb->dbs[db], &cur);
 
 	// Position cursor at the next key greater than or equal to the specified key
-	if (mdb_cursor_get(cur, &key, &data, MDB_SET_RANGE)) {
-		mdb_cursor_close(cur);
-		return 0;
+	if (mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE)) {
+		// Failed :(. It could be the last element?
+		if (mdb_cursor_get(cur, &k, &v, MDB_LAST))
+			goto cleanup;
+	} else {
+		// if set range worked and our key exists, it should be
+		// the one right before this one
+		if (mdb_cursor_get(cur, &k, &v, MDB_PREV))
+			goto cleanup;
 	}
 
-	if (mdb_cursor_get(cur, &key, &data, MDB_PREV)) {
-		mdb_cursor_close(cur);
-		return 0;
+	if (memcmp(k.mv_data, id, 32) == 0) {
+		*val = v;
+		success = 1;
 	}
 
+cleanup:
 	mdb_cursor_close(cur);
-	if (memcmp(key.mv_data, id, 32) == 0)
-		return *((uint64_t*)data.mv_data);
+	return success;
+}
 
-	return 0;
+struct ndb_note *ndb_get_note_by_id(struct ndb *ndb, unsigned char *id)
+{
+	MDB_val k, v;
+	MDB_txn *txn;
+
+	if (mdb_txn_begin(ndb->lmdb.env, 0, 0, &txn)) {
+		ndb_debug("ndb_get_note_by_id: mdb_txn_begin failed\n");
+		return NULL;
+	}
+
+	if (!ndb_get_tsid(txn, &ndb->lmdb, NDB_DB_NOTE_ID, id, &k)) {
+		ndb_debug("ndb_get_note_by_id: ndb_get_tsid failed\n");
+		return NULL;
+	}
+
+	if (mdb_get(txn, ndb->lmdb.dbs[NDB_DB_NOTE], &k, &v)) {
+		ndb_debug("ndb_get_note_by_id: mdb_get note failed\n");
+		return NULL;
+	}
+
+	mdb_txn_abort(txn);
+
+	return (struct ndb_note *)v.mv_data;
+}
+
+static int ndb_has_note(MDB_txn *txn, struct ndb_lmdb *lmdb, unsigned char *id)
+{
+	MDB_val val;
+
+	if (!ndb_get_tsid(txn, lmdb, NDB_DB_NOTE_ID, id, &val))
+		return 0;
+
+	return 1;
 }
 
 static enum ndb_idres ndb_ingester_json_controller(void *data, const char *hexid)
@@ -282,7 +323,7 @@ static enum ndb_idres ndb_ingester_json_controller(void *data, const char *hexid
 	key.mv_size = 32;
 	key.mv_data = id;
 
-	if (!ndb_get_note_by_id(c->read_txn, c->lmdb, id))
+	if (!ndb_has_note(c->read_txn, c->lmdb, id))
 		return NDB_IDRES_CONT;
 
 	return NDB_IDRES_STOP;
@@ -314,6 +355,7 @@ static int ndb_process_profile_note(struct ndb_note *note, void **profile,
 	*profile = flatcc_builder_finalize_aligned_buffer(&builder, profile_len);
 	return 1;
 }
+
 
 static int ndb_ingester_process_event(secp256k1_context *ctx,
 				      struct ndb_ingester *ingester,

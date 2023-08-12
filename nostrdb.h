@@ -151,6 +151,8 @@ int ndb_note_verify(void *secp_ctx, unsigned char pubkey[32], unsigned char id[3
 int ndb_init(struct ndb **ndb, size_t mapsize, int ingester_threads);
 int ndb_process_event(struct ndb *, const char *json, int len);
 int ndb_process_events(struct ndb *, const char *ldjson, int len);
+int ndb_get_profile(struct ndb *, unsigned char pubkey[32], void **out);
+struct ndb_note *ndb_get_note_by_id(struct ndb *, unsigned char *id);
 void ndb_destroy(struct ndb *);
 
 // BUILDER

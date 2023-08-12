@@ -30,6 +30,19 @@ static void test_load_profiles()
 
 	ndb_destroy(ndb);
 
+	assert(ndb_init(&ndb, mapsize, ingester_threads));
+	unsigned char id[32] = {
+	  0x22, 0x05, 0x0b, 0x6d, 0x97, 0xbb, 0x9d, 0xa0, 0x9e, 0x90, 0xed, 0x0c,
+	  0x6d, 0xd9, 0x5e, 0xed, 0x1d, 0x42, 0x3e, 0x27, 0xd5, 0xcb, 0xa5, 0x94,
+	  0xd2, 0xb4, 0xd1, 0x3a, 0x55, 0x43, 0x09, 0x07 };
+	const char *expected_content = "{\"website\":\"selenejin.com\",\"lud06\":\"\",\"nip05\":\"selenejin@BitcoinNostr.com\",\"picture\":\"https://nostr.build/i/3549697beda0fe1f4ae621f359c639373d92b7c8d5c62582b656c5843138c9ed.jpg\",\"display_name\":\"Selene Jin\",\"about\":\"INTJ | Founding Designer @Blockstream\",\"name\":\"SeleneJin\"}";
+
+	struct ndb_note *note = ndb_get_note_by_id(ndb, id);
+	assert(note != NULL);
+	assert(!strcmp(ndb_note_content(note), expected_content));
+
+	ndb_destroy(ndb);
+
 	free(json);
 	free(buf);
 }
