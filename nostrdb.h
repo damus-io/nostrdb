@@ -98,6 +98,7 @@ struct ndb_tag {
 };
 
 struct ndb_tags {
+	uint16_t padding;
 	uint16_t count;
 	struct ndb_tag tag[0];
 };
