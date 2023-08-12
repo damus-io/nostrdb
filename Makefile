@@ -2,7 +2,7 @@ CFLAGS = -Wall -Wno-unused-function -Werror -O2 -g -Ideps/secp256k1/include -Ide
 HEADERS = sha256.h nostrdb.h cursor.h hex.h jsmn.h config.h sha256.h random.h memchr.h
 FLATCC_SRCS=deps/flatcc/src/runtime/json_parser.c deps/flatcc/src/runtime/builder.c deps/flatcc/src/runtime/emitter.c deps/flatcc/src/runtime/refmap.c
 SRCS = nostrdb.c sha256.c $(FLATCC_SRCS)
-LDS = $(ARS) $(SRCS) 
+LDS = $(SRCS) $(ARS) 
 DEPS = $(SRCS) $(HEADERS) $(ARS)
 ARS = deps/lmdb/liblmdb.a deps/secp256k1/.libs/libsecp256k1.a 
 LMDB_VER=0.9.31
@@ -83,7 +83,7 @@ deps/LMDB_$(LMDB_VER).tar.gz: deps/.dir
 deps/flatcc_$(FLATCC_VER).tar.gz: deps/.dir
 	curl -L https://github.com/dvidelabs/flatcc/archive/refs/tags/v0.6.1.tar.gz -o $@
 
-deps/flatcc/include/flatcc/flatcc.h: deps/flatcc_$(FLATCC_VER).tar.gz deps/.dir
+deps/flatcc/src/runtime/json_parser.c: deps/flatcc_$(FLATCC_VER).tar.gz deps/.dir
 	tar xf $<
 	rm -rf deps/flatcc
 	mv flatcc-$(FLATCC_VER) deps/flatcc

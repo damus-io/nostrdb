@@ -20,10 +20,10 @@
 #include "secp256k1_schnorrsig.h"
 
 // the maximum number of things threads pop and push in bulk
-static const int THREAD_QUEUE_BATCH = 1024;
+static const int THREAD_QUEUE_BATCH = 4096;
 
 // the maximum size of inbox queues
-static const int DEFAULT_QUEUE_SIZE = 50000;
+static const int DEFAULT_QUEUE_SIZE = 1000000;
 
 
 #define NDB_PARSED_ID           (1 << 0)
@@ -314,14 +314,10 @@ static enum ndb_idres ndb_ingester_json_controller(void *data, const char *hexid
 {
 	unsigned char id[32];
 	struct ndb_ingest_controller *c = data;
-	MDB_val key;
 
 	hex_decode(hexid, 64, id, sizeof(id));
 
 	// let's see if we already have it
-
-	key.mv_size = 32;
-	key.mv_data = id;
 
 	if (!ndb_has_note(c->read_txn, c->lmdb, id))
 		return NDB_IDRES_CONT;

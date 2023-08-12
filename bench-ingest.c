@@ -16,6 +16,7 @@ static int bench_parser(int times)
 	struct ndb *ndb;
 	struct timespec t1, t2;
 
+	written = 0;
 	mapsize = 1024 * 1024 * 100;
 	ingester_threads = 8;
 	assert(ndb_init(&ndb, mapsize, ingester_threads));
