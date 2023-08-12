@@ -116,7 +116,7 @@ struct ndb_note {
 	uint32_t content_length;
 	union ndb_packed_str content;
 	uint32_t strings;
-
+	uint32_t reserved[4]; // expansion slots
 	// nothing can come after tags since it contains variadic data
 	struct ndb_tags tags;
 };
