@@ -21,7 +21,7 @@ static int bench_parser(int times)
 	assert(ndb_init(&ndb, mapsize, ingester_threads));
 	read_file("testdata/contacts-event.json", (unsigned char*)json, alloc_size, &written);
 
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t1);
+	clock_gettime(CLOCK_MONOTONIC, &t1);
 
 	for (i = 0; i < times; i++) {
 		ndb_process_event(ndb, json, written);
@@ -30,7 +30,7 @@ static int bench_parser(int times)
 	free(json);
 	ndb_destroy(ndb);
 
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t2);
+	clock_gettime(CLOCK_MONOTONIC, &t2);
 
 	nanos = (t2.tv_sec - t1.tv_sec) * (long)1e9 + (t2.tv_nsec - t1.tv_nsec);
 	ms = nanos / 1e6;

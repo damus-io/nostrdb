@@ -14,13 +14,13 @@ static int bench_parser(int times, const char *json, int len)
 	long nanos, ms;
 	struct ndb_note *note;
 
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t1);
+	clock_gettime(CLOCK_MONOTONIC, &t1);
 	for (i = 0; i < times; i++) {
 		if (!ndb_note_from_json(json, len, &note, buf, sizeof(buf))) {
 			return 0;
 		}
 	}
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t2);
+	clock_gettime(CLOCK_MONOTONIC, &t2);
 
 	nanos = (t2.tv_sec - t1.tv_sec) * (long)1e9 + (t2.tv_nsec - t1.tv_nsec);
 	ms = nanos / 1e6;
