@@ -154,7 +154,7 @@ static void test_parse_contact_list()
 	size = ndb_note_from_json((const char*)json, written, &note, buf, alloc_size);
 	printf("ndb_note_from_json size %d\n", size);
 	assert(size > 0);
-	assert(size == 34322);
+	assert(size == 34344);
 
 	memcpy(id, note->id, 32);
 	memset(note->id, 0, 32);

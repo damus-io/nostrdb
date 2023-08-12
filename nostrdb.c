@@ -943,7 +943,8 @@ static int ndb_event_commitment(struct ndb_note *ev, unsigned char *buf, int buf
 
 	make_cursor(buf, buf + buflen, &cur);
 
-	snprintf(timebuf, sizeof(timebuf), "%d", ev->created_at);
+	// TODO: update in 2106 ...
+	snprintf(timebuf, sizeof(timebuf), "%d", (uint32_t)ev->created_at);
 	snprintf(kindbuf, sizeof(kindbuf), "%d", ev->kind);
 
 	ok =
@@ -1495,9 +1496,11 @@ int ndb_parse_json_note(struct ndb_json_parser *parser, struct ndb_note **note)
 				start = json + tok->start;
 				if (tok->type != JSMN_PRIMITIVE || tok_len <= 0)
 					return 0;
-				if (!parse_unsigned_int(start, toksize(tok),
-							&parser->builder.note->created_at))
+				// TODO: update to int64 in 2106 ... xD
+				unsigned int bigi;
+				if (!parse_unsigned_int(start, toksize(tok), &bigi))
 					return 0;
+				parser->builder.note->created_at = bigi;
 				parsed |= NDB_PARSED_CREATED_AT;
 			} else if (jsoneq(json, tok, tok_len, "content")) {
 				// content
@@ -1567,7 +1570,7 @@ void ndb_builder_set_kind(struct ndb_builder *builder, uint32_t kind)
 	builder->note->kind = kind;
 }
 
-void ndb_builder_set_created_at(struct ndb_builder *builder, uint32_t created_at)
+void ndb_builder_set_created_at(struct ndb_builder *builder, uint64_t created_at)
 {
 	builder->note->created_at = created_at;
 }

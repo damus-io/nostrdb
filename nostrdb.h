@@ -111,7 +111,7 @@ struct ndb_note {
 	unsigned char pubkey[32];
 	unsigned char sig[64];
 
-	uint32_t created_at;
+	uint64_t created_at;
 	uint32_t kind;
 	uint32_t content_length;
 	union ndb_packed_str content;
@@ -160,7 +160,7 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **, unsigned c
 int ndb_builder_init(struct ndb_builder *builder, unsigned char *buf, int bufsize);
 int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note, struct ndb_keypair *privkey);
 int ndb_builder_set_content(struct ndb_builder *builder, const char *content, int len);
-void ndb_builder_set_created_at(struct ndb_builder *builder, uint32_t created_at);
+void ndb_builder_set_created_at(struct ndb_builder *builder, uint64_t created_at);
 void ndb_builder_set_sig(struct ndb_builder *builder, unsigned char *sig);
 void ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey);
 void ndb_builder_set_id(struct ndb_builder *builder, unsigned char *id);
