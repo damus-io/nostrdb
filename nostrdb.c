@@ -519,6 +519,7 @@ static int ndb_write_profile(struct ndb_lmdb *lmdb, MDB_txn *txn,
 static uint64_t ndb_write_note(struct ndb_lmdb *lmdb, MDB_txn *txn,
 			       struct ndb_writer_note *note)
 {
+	int rc;
 	uint64_t note_key;
 	struct ndb_tsid tsid;
 	MDB_dbi note_db, id_db;
@@ -537,8 +538,8 @@ static uint64_t ndb_write_note(struct ndb_lmdb *lmdb, MDB_txn *txn,
 	val.mv_data = note->note;
 	val.mv_size = note->note_len;
 
-	if (mdb_put(txn, note_db, &key, &val, 0)) {
-		ndb_debug("write note to db failed\n");
+	if ((rc = mdb_put(txn, note_db, &key, &val, 0))) {
+		ndb_debug("write note to db failed: %s\n", mdb_strerror(rc));
 		return 0;
 	}
 
@@ -550,8 +551,9 @@ static uint64_t ndb_write_note(struct ndb_lmdb *lmdb, MDB_txn *txn,
 	val.mv_data = &note_key;
 	val.mv_size = sizeof(note_key);
 
-	if (mdb_put(txn, id_db, &key, &val, 0)) {
-		ndb_debug("write note id index to db failed\n");
+	if ((rc = mdb_put(txn, id_db, &key, &val, 0))) {
+		ndb_debug("write note id index to db failed: %s\n",
+				mdb_strerror(rc));
 		return 0;
 	}
 
@@ -932,7 +934,7 @@ int ndb_process_event(struct ndb *ndb, const char *json, int json_len)
 	return ndb_ingester_queue_event(&ndb->ingester, json_copy, json_len);
 }
 
-int ndb_process_events(struct ndb *ndb, const char *ldjson, int json_len)
+int ndb_process_events(struct ndb *ndb, const char *ldjson, size_t json_len)
 {
 	const char *start, *end, *very_end;
 	start = ldjson;
