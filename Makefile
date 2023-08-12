@@ -26,7 +26,7 @@ check: test
 	./test
 
 clean:
-	rm -rf test bench
+	rm -rf test bench bench-ingest bench-ingest-many
 
 benches: bench bench-ingest
 
