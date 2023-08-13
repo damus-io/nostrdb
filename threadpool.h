@@ -35,6 +35,12 @@ static int threadpool_init(struct threadpool *tp, int num_threads,
 	tp->quit_msg = quit_msg;
 	tp->next_thread = -1;
 
+	// Prevent creation of a thread pool with zero threads
+        if (num_threads == 0) {
+                fprintf(stderr, "threadpool_init: number of threads cannot be zero\n");
+                return 0;
+        }
+	
 	if (tp->pool == NULL) {
 		fprintf(stderr, "threadpool_init: couldn't allocate memory for pool");
 		return 0;
