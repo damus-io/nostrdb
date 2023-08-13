@@ -13,9 +13,9 @@ static const char hex_table[256] = {
     ['E'] = 14, ['F'] = 15
 };
 
-static inline int char_to_hex(unsigned char *val, int c)
+static inline int char_to_hex(unsigned char *val, unsigned char c)
 {
-	if (hex_table[(int)c] || c == '0') {
+	if (hex_table[c] || c == '0') {
 		*val = hex_table[c];
 		return 1;
 	}
