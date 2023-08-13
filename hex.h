@@ -15,7 +15,10 @@ static const char hex_table[256] = {
 
 static inline int char_to_hex(unsigned char *val, int c)
 {
-	if (hex_table[(int)c] || c == '0') {
+	if (c < 0 || c > 255) {
+		return 0; // or handle the error as appropriate for your application
+	}
+	if (hex_table[c] || c == '0') {
 		*val = hex_table[c];
 		return 1;
 	}
