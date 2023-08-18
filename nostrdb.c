@@ -157,7 +157,7 @@ static inline void ndb_tsid_init(struct ndb_tsid *key, unsigned char *id,
 static inline void ndb_tsid_high(struct ndb_tsid *key, unsigned char *id)
 {
 	memcpy(key->id, id, 32);
-	key->timestamp = 0xFFFFFFFF;
+	key->timestamp = UINT64_MAX;
 }
 
 enum ndb_ingester_msgtype {
