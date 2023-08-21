@@ -47,6 +47,14 @@ static void test_load_profiles()
 	free(buf);
 }
 
+static void test_fuzz_events() {
+	struct ndb *ndb;
+	const char *str = "[\"EVENT\"\"\"{\"content\"\"created_at\":0 \"id\"\"5086a8f76fe1da7fb56a25d1bebbafd70fca62e36a72c6263f900ff49b8f8604\"\"kind\":0 \"pubkey\":9c87f94bcbe2a837adc28d46c34eeaab8fc2e1cdf94fe19d4b99ae6a5e6acedc \"sig\"\"27374975879c94658412469cee6db73d538971d21a7b580726a407329a4cafc677fb56b946994cea59c3d9e118fef27e4e61de9d2c46ac0a65df14153 ea93cf5\"\"tags\"[[][\"\"]]}]";
+
+	ndb_init(&ndb, 1024 * 1024, 1);
+	ndb_process_event(ndb, str, strlen(str));
+	ndb_destroy(ndb);
+}
 
 static void test_basic_event() {
 	unsigned char buf[512];
@@ -538,6 +546,7 @@ int main(int argc, const char *argv[]) {
 	test_tce_eose();
 	test_tce_command_result_empty_msg();
 	test_content_len();
+	test_fuzz_events();
 
 	// protected queue tests
 	test_queue_init_pop_push();
