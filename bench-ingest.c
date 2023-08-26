@@ -19,7 +19,7 @@ static int bench_parser(int times)
 	written = 0;
 	mapsize = 1024 * 1024 * 100;
 	ingester_threads = 8;
-	assert(ndb_init(&ndb, mapsize, ingester_threads));
+	assert(ndb_init(&ndb, "testdata/db", mapsize, ingester_threads));
 	read_file("testdata/contacts-event.json", (unsigned char*)json, alloc_size, &written);
 
 	clock_gettime(CLOCK_MONOTONIC, &t1);
