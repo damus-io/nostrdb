@@ -156,7 +156,7 @@ int ndb_init(struct ndb **ndb, const char *dbdir, size_t mapsize, int ingester_t
 int ndb_process_event(struct ndb *, const char *json, int len);
 int ndb_process_events(struct ndb *, const char *ldjson, size_t len);
 int ndb_get_profile(struct ndb *, unsigned char pubkey[32], void **out);
-struct ndb_note *ndb_get_note_by_id(struct ndb *, unsigned char *id);
+struct ndb_note *ndb_get_note_by_id(struct ndb *, const unsigned char *id);
 void ndb_destroy(struct ndb *);
 
 // BUILDER

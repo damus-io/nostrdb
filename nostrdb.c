@@ -154,7 +154,7 @@ static inline void ndb_tsid_init(struct ndb_tsid *key, unsigned char *id,
 }
 
 // useful for range-searching for the latest key with a clustered created_at timen
-static inline void ndb_tsid_high(struct ndb_tsid *key, unsigned char *id)
+static inline void ndb_tsid_high(struct ndb_tsid *key, const unsigned char *id)
 {
 	memcpy(key->id, id, 32);
 	key->timestamp = UINT64_MAX;
@@ -240,7 +240,7 @@ static int ndb_writer_queue_note(struct ndb_writer *writer,
 
 // get some value based on a clustered id key
 int ndb_get_tsid(MDB_txn *txn, struct ndb_lmdb *lmdb, enum ndb_dbs db,
-		 unsigned char *id, MDB_val *val)
+		 const unsigned char *id, MDB_val *val)
 {
 	MDB_val k, v;
 	MDB_cursor *cur;
@@ -275,7 +275,7 @@ cleanup:
 	return success;
 }
 
-struct ndb_note *ndb_get_note_by_id(struct ndb *ndb, unsigned char *id)
+struct ndb_note *ndb_get_note_by_id(struct ndb *ndb, const unsigned char *id)
 {
 	MDB_val k, v;
 	MDB_txn *txn;
@@ -300,7 +300,7 @@ struct ndb_note *ndb_get_note_by_id(struct ndb *ndb, unsigned char *id)
 	return (struct ndb_note *)v.mv_data;
 }
 
-static int ndb_has_note(MDB_txn *txn, struct ndb_lmdb *lmdb, unsigned char *id)
+static int ndb_has_note(MDB_txn *txn, struct ndb_lmdb *lmdb, const unsigned char *id)
 {
 	MDB_val val;
 
