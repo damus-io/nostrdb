@@ -244,6 +244,40 @@ static void test_parse_contact_list()
 	free(buf);
 }
 
+static void test_fetch_last_noteid()
+{
+	static const int alloc_size = 1024 * 1024;
+	char *json = malloc(alloc_size);
+	unsigned char *buf = malloc(alloc_size);
+	struct ndb *ndb;
+	size_t mapsize;
+	int written, ingester_threads;
+
+	mapsize = 1024 * 1024 * 100;
+	ingester_threads = 1;
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads));
+
+	read_file("testdata/random.json", (unsigned char*)json, alloc_size, &written);
+	assert(ndb_process_events(ndb, json, written));
+
+	ndb_destroy(ndb);
+
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads));
+
+	unsigned char id[32] = { 0xdc, 0x96, 0x4f, 0x4c, 0x89, 0x83, 0x64,
+		0x13, 0x8e, 0x81, 0x96, 0xf0, 0xc7, 0x33, 0x38, 0xc8, 0xcc,
+		0x3e, 0xbf, 0xa3, 0xaf, 0xdd, 0xbc, 0x7d, 0xd1, 0x58, 0xb4,
+		0x84, 0x7c, 0x1e, 0xbf, 0xa0 };
+
+	struct ndb_note *note = ndb_get_note_by_id(ndb, id);
+	assert(note != NULL);
+
+	ndb_destroy(ndb);
+
+	free(json);
+	free(buf);
+}
+
 static void test_parse_contact_event()
 {
 	int written;
@@ -549,6 +583,9 @@ int main(int argc, const char *argv[]) {
 	test_tce_command_result_empty_msg();
 	test_content_len();
 	test_fuzz_events();
+
+	// note fetching
+	test_fetch_last_noteid();
 
 	// protected queue tests
 	test_queue_init_pop_push();
