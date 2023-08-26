@@ -18,6 +18,10 @@
 struct ndb_json_parser;
 struct ndb;
 
+struct ndb_t {
+	struct ndb *ndb;
+};
+
 // To-client event types
 enum tce_type {
 	NDB_TCE_EVENT  = 0x1,
@@ -148,7 +152,7 @@ int ndb_decode_key(const char *secstr, struct ndb_keypair *keypair);
 int ndb_note_verify(void *secp_ctx, unsigned char pubkey[32], unsigned char id[32], unsigned char signature[64]);
 
 // NDB
-int ndb_init(struct ndb **ndb, size_t mapsize, int ingester_threads);
+int ndb_init(struct ndb **ndb, const char *dbdir, size_t mapsize, int ingester_threads);
 int ndb_process_event(struct ndb *, const char *json, int len);
 int ndb_process_events(struct ndb *, const char *ldjson, size_t len);
 int ndb_get_profile(struct ndb *, unsigned char pubkey[32], void **out);

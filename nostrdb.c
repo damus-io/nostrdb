@@ -782,7 +782,7 @@ static int ndb_ingester_queue_event(struct ndb_ingester *ingester,
 	return threadpool_dispatch(&ingester->tp, &msg);
 }
 
-static int ndb_init_lmdb(struct ndb_lmdb *lmdb, size_t mapsize)
+static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t mapsize)
 {
 	int rc;
 	MDB_txn *txn;
@@ -802,7 +802,7 @@ static int ndb_init_lmdb(struct ndb_lmdb *lmdb, size_t mapsize)
 		return 0;
 	}
 
-	if ((rc = mdb_env_open(lmdb->env, "./testdata/db", 0, 0664))) {
+	if ((rc = mdb_env_open(lmdb->env, filename, 0, 0664))) {
 		fprintf(stderr, "mdb_env_open failed, error %d\n", rc);
 		return 0;
 	}
@@ -857,7 +857,7 @@ static int ndb_init_lmdb(struct ndb_lmdb *lmdb, size_t mapsize)
 	return 1;
 }
 
-int ndb_init(struct ndb **pndb, size_t mapsize, int ingester_threads)
+int ndb_init(struct ndb **pndb, const char *filename, size_t mapsize, int ingester_threads)
 {
 	struct ndb *ndb;
 	//MDB_dbi ind_id; // TODO: ind_pk, etc
@@ -868,7 +868,7 @@ int ndb_init(struct ndb **pndb, size_t mapsize, int ingester_threads)
 		return 0;
 	}
 
-	if (!ndb_init_lmdb(&ndb->lmdb, mapsize))
+	if (!ndb_init_lmdb(filename, &ndb->lmdb, mapsize))
 		return 0;
 
 	if (!ndb_writer_init(&ndb->writer, &ndb->lmdb)) {
