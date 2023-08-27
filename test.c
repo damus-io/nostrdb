@@ -39,7 +39,7 @@ static void test_load_profiles()
 	  0xd2, 0xb4, 0xd1, 0x3a, 0x55, 0x43, 0x09, 0x07 };
 	const char *expected_content = "{\"website\":\"selenejin.com\",\"lud06\":\"\",\"nip05\":\"selenejin@BitcoinNostr.com\",\"picture\":\"https://nostr.build/i/3549697beda0fe1f4ae621f359c639373d92b7c8d5c62582b656c5843138c9ed.jpg\",\"display_name\":\"Selene Jin\",\"about\":\"INTJ | Founding Designer @Blockstream\",\"name\":\"SeleneJin\"}";
 
-	struct ndb_note *note = ndb_get_note_by_id(ndb, id);
+	struct ndb_note *note = ndb_get_note_by_id(ndb, id, NULL);
 	assert(note != NULL);
 	assert(!strcmp(ndb_note_content(note), expected_content));
 
