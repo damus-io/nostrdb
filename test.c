@@ -178,7 +178,7 @@ static void test_parse_contact_list()
 	size = ndb_note_from_json((const char*)json, written, &note, buf, alloc_size);
 	printf("ndb_note_from_json size %d\n", size);
 	assert(size > 0);
-	assert(size == 34344);
+	assert(size == 34328);
 
 	memcpy(id, note->id, 32);
 	memset(note->id, 0, 32);
@@ -273,14 +273,17 @@ static void test_fetch_last_noteid()
 	
 	unsigned char pk[32] = { 0x32, 0xe1, 0x82, 0x76, 0x35, 0x45, 0x0e, 0xbb, 0x3c, 0x5a, 0x7d, 0x12, 0xc1, 0xf8, 0xe7, 0xb2, 0xb5, 0x14, 0x43, 0x9a, 0xc1, 0x0a, 0x67, 0xee, 0xf3, 0xd9, 0xfd, 0x9c, 0x5c, 0x68, 0xe2, 0x45 };
 
-	void *profile = ndb_get_profile_by_pubkey(ndb, pk, &len);
+	void *profile_record = ndb_get_profile_by_pubkey(ndb, pk, &len);
 
-	assert(profile);
+	assert(profile_record);
 
+	NdbProfile_table_t profile = NdbProfileRecord_profile_get(profile_record);
+	const char *lnurl = NdbProfileRecord_lnurl_get(profile_record);
 	const char *name = NdbProfile_name_get(profile);
 	assert(name);
-	printf("name '%s'\n", name);
+	assert(lnurl);
 	assert(!strcmp(name, "jb55"));
+	assert(!strcmp(lnurl, "fixme"));
 
 	//fwrite(profile, len, 1, stdout);
 

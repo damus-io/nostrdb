@@ -15,6 +15,7 @@
 #include <assert.h>
 
 #include "bindings/c/profile_json_parser.h"
+#include "bindings/c/profile_builder.h"
 #include "secp256k1.h"
 #include "secp256k1_ecdh.h"
 #include "secp256k1_schnorrsig.h"
@@ -343,28 +344,50 @@ static enum ndb_idres ndb_ingester_json_controller(void *data, const char *hexid
 	return NDB_IDRES_STOP;
 }
 
+static int ndbprofile_parse_json(flatcc_builder_t *B,
+        const char *buf, size_t bufsiz, int flags, NdbProfile_ref_t *profile)
+{
+	flatcc_json_parser_t parser, *ctx = &parser;
+	flatcc_json_parser_init(ctx, B, buf, buf + bufsiz, flags);
+
+	NdbProfile_parse_json_table(ctx, buf, buf + bufsiz, profile);
+
+	if (ctx->error)
+		return 0;
+
+	return 1;
+}
 
 static int ndb_process_profile_note(struct ndb_note *note, void **profile,
-				    size_t *profile_len)
+                    size_t *profile_len)
 {
-	int res;
-
+	NdbProfile_ref_t profile_table;
 	flatcc_builder_t builder;
-	flatcc_json_parser_t json_parser;
-
 	flatcc_builder_init(&builder);
 
-	//printf("parsing profile '%.*s'\n", note->content_length, ndb_note_content(note));
-	res = profile_parse_json(&builder, &json_parser,
-				 ndb_note_content(note),
-				 note->content_length,
-				 flatcc_json_parser_f_skip_unknown);
+	NdbProfileRecord_start_as_root(&builder);
 
-	if (res != 0) {
+	//printf("parsing profile '%.*s'\n", note->content_length, ndb_note_content(note));
+	if (!ndbprofile_parse_json(&builder, ndb_note_content(note),
+				note->content_length,
+				flatcc_json_parser_f_skip_unknown, &profile_table))
+	{
 		ndb_debug("profile_parse_json failed %d '%.*s'\n", res,
-				note->content_length, ndb_note_content(note));
+			  note->content_length, ndb_note_content(note));
 		return 0;
 	}
+
+	uint64_t received_at = time(NULL);
+	const char *lnurl = "fixme";
+
+	flatcc_builder_ref_t lnurl_off;
+	lnurl_off = flatcc_builder_create_string_str(&builder, lnurl);
+
+	NdbProfileRecord_profile_add(&builder, profile_table);
+	NdbProfileRecord_received_at_add(&builder, received_at);
+	NdbProfileRecord_lnurl_add(&builder, lnurl_off);
+
+	NdbProfileRecord_end_as_root(&builder);
 
 	*profile = flatcc_builder_finalize_aligned_buffer(&builder, profile_len);
 	return 1;
