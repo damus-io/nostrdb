@@ -1,0 +1,20 @@
+
+
+/*
+union NdbBlock {
+
+}
+
+table NdbBlocks {
+  words:int;
+  blocks:[NdbBlock];
+}
+*/
+
+table NdbNoteRecord {
+  note:[ubyte];
+  received_at:ulong;
+
+  // artifacts
+  //blocks:[Block];
+}

@@ -115,3 +115,51 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
   }
 }
 
+public struct NdbProfileRecord: FlatBufferObject, Verifiable {
+
+  static func validateVersion() { FlatBuffersVersion_23_5_26() }
+  public var __buffer: ByteBuffer! { return _accessor.bb }
+  private var _accessor: Table
+
+  private init(_ t: Table) { _accessor = t }
+  public init(_ bb: ByteBuffer, o: Int32) { _accessor = Table(bb: bb, position: o) }
+
+  private enum VTOFFSET: VOffset {
+    case profile = 4
+    case receivedAt = 6
+    case lnurl = 8
+    var v: Int32 { Int32(self.rawValue) }
+    var p: VOffset { self.rawValue }
+  }
+
+  public var profile: NdbProfile? { let o = _accessor.offset(VTOFFSET.profile.v); return o == 0 ? nil : NdbProfile(_accessor.bb, o: _accessor.indirect(o + _accessor.postion)) }
+  public var receivedAt: UInt64 { let o = _accessor.offset(VTOFFSET.receivedAt.v); return o == 0 ? 0 : _accessor.readBuffer(of: UInt64.self, at: o) }
+  public var lnurl: String? { let o = _accessor.offset(VTOFFSET.lnurl.v); return o == 0 ? nil : _accessor.string(at: o) }
+  public var lnurlSegmentArray: [UInt8]? { return _accessor.getVector(at: VTOFFSET.lnurl.v) }
+  public static func startNdbProfileRecord(_ fbb: inout FlatBufferBuilder) -> UOffset { fbb.startTable(with: 3) }
+  public static func add(profile: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: profile, at: VTOFFSET.profile.p) }
+  public static func add(receivedAt: UInt64, _ fbb: inout FlatBufferBuilder) { fbb.add(element: receivedAt, def: 0, at: VTOFFSET.receivedAt.p) }
+  public static func add(lnurl: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: lnurl, at: VTOFFSET.lnurl.p) }
+  public static func endNdbProfileRecord(_ fbb: inout FlatBufferBuilder, start: UOffset) -> Offset { let end = Offset(offset: fbb.endTable(at: start)); return end }
+  public static func createNdbProfileRecord(
+    _ fbb: inout FlatBufferBuilder,
+    profileOffset profile: Offset = Offset(),
+    receivedAt: UInt64 = 0,
+    lnurlOffset lnurl: Offset = Offset()
+  ) -> Offset {
+    let __start = NdbProfileRecord.startNdbProfileRecord(&fbb)
+    NdbProfileRecord.add(profile: profile, &fbb)
+    NdbProfileRecord.add(receivedAt: receivedAt, &fbb)
+    NdbProfileRecord.add(lnurl: lnurl, &fbb)
+    return NdbProfileRecord.endNdbProfileRecord(&fbb, start: __start)
+  }
+
+  public static func verify<T>(_ verifier: inout Verifier, at position: Int, of type: T.Type) throws where T: Verifiable {
+    var _v = try verifier.visitTable(at: position)
+    try _v.visit(field: VTOFFSET.profile.p, fieldName: "profile", required: false, type: ForwardOffset<NdbProfile>.self)
+    try _v.visit(field: VTOFFSET.receivedAt.p, fieldName: "receivedAt", required: false, type: UInt64.self)
+    try _v.visit(field: VTOFFSET.lnurl.p, fieldName: "lnurl", required: false, type: ForwardOffset<String>.self)
+    _v.finish()
+  }
+}
+

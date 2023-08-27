@@ -14,5 +14,13 @@ table NdbProfile {
   lud06:string;
 }
 
-root_type NdbProfile;
+table NdbProfileRecord {
+  profile:NdbProfile;
+  received_at:ulong;
+
+  // artifacts
+  lnurl:string;
+}
+
+root_type NdbProfileRecord;
 
