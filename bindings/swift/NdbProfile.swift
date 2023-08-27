@@ -115,6 +115,45 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
   }
 }
 
+extension NdbProfile: Encodable {
+
+  enum CodingKeys: String, CodingKey {
+    case name = "name"
+    case website = "website"
+    case about = "about"
+    case lud16 = "lud16"
+    case banner = "banner"
+    case displayName = "display_name"
+    case reactions = "reactions"
+    case picture = "picture"
+    case nip05 = "nip05"
+    case damusDonation = "damus_donation"
+    case damusDonationV2 = "damus_donation_v2"
+    case lud06 = "lud06"
+  }
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encodeIfPresent(name, forKey: .name)
+    try container.encodeIfPresent(website, forKey: .website)
+    try container.encodeIfPresent(about, forKey: .about)
+    try container.encodeIfPresent(lud16, forKey: .lud16)
+    try container.encodeIfPresent(banner, forKey: .banner)
+    try container.encodeIfPresent(displayName, forKey: .displayName)
+    if reactions != true {
+      try container.encodeIfPresent(reactions, forKey: .reactions)
+    }
+    try container.encodeIfPresent(picture, forKey: .picture)
+    try container.encodeIfPresent(nip05, forKey: .nip05)
+    if damusDonation != 0 {
+      try container.encodeIfPresent(damusDonation, forKey: .damusDonation)
+    }
+    if damusDonationV2 != 0 {
+      try container.encodeIfPresent(damusDonationV2, forKey: .damusDonationV2)
+    }
+    try container.encodeIfPresent(lud06, forKey: .lud06)
+  }
+}
+
 public struct NdbProfileRecord: FlatBufferObject, Verifiable {
 
   static func validateVersion() { FlatBuffersVersion_23_5_26() }
@@ -160,6 +199,23 @@ public struct NdbProfileRecord: FlatBufferObject, Verifiable {
     try _v.visit(field: VTOFFSET.receivedAt.p, fieldName: "receivedAt", required: false, type: UInt64.self)
     try _v.visit(field: VTOFFSET.lnurl.p, fieldName: "lnurl", required: false, type: ForwardOffset<String>.self)
     _v.finish()
+  }
+}
+
+extension NdbProfileRecord: Encodable {
+
+  enum CodingKeys: String, CodingKey {
+    case profile = "profile"
+    case receivedAt = "received_at"
+    case lnurl = "lnurl"
+  }
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encodeIfPresent(profile, forKey: .profile)
+    if receivedAt != 0 {
+      try container.encodeIfPresent(receivedAt, forKey: .receivedAt)
+    }
+    try container.encodeIfPresent(lnurl, forKey: .lnurl)
   }
 }
 

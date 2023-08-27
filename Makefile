@@ -66,7 +66,7 @@ bindings/c/%_json_parser.h: schemas/%.fbs bindings/c/.dir
 bindings-swift: bindings/swift/NdbProfile.swift
 
 bindings/swift/NdbProfile.swift: schemas/profile.fbs bindings/swift
-	flatc --swift $<
+	flatc --gen-json-emit --swift $<
 	@mv profile_generated.swift $@
 
 bindings/swift/NdbMeta.swift: schemas/meta.fbs bindings/swift
