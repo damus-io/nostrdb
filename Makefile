@@ -15,9 +15,9 @@ C_BINDINGS_COMMON=bindings/c/flatbuffers_common_builder.h bindings/c/flatbuffers
 C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE) $(C_BINDINGS_META)
 BINDINGS=bindings
 
-lib: benches test
-
 all: lib bindings
+
+lib: benches test
 
 bindings: bindings-swift bindings-c
 

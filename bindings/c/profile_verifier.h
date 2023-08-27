@@ -25,6 +25,7 @@ static int NdbProfile_verify_table(flatcc_table_verifier_descriptor_t *td)
     if ((ret = flatcc_verify_string_field(td, 8, 0) /* nip05 */)) return ret;
     if ((ret = flatcc_verify_field(td, 9, 4, 4) /* damus_donation */)) return ret;
     if ((ret = flatcc_verify_field(td, 10, 4, 4) /* damus_donation_v2 */)) return ret;
+    if ((ret = flatcc_verify_string_field(td, 11, 0) /* lud06 */)) return ret;
     return flatcc_verify_ok;
 }
 

@@ -25,6 +25,7 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
     case nip05 = 20
     case damusDonation = 22
     case damusDonationV2 = 24
+    case lud06 = 26
     var v: Int32 { Int32(self.rawValue) }
     var p: VOffset { self.rawValue }
   }
@@ -48,7 +49,9 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
   public var nip05SegmentArray: [UInt8]? { return _accessor.getVector(at: VTOFFSET.nip05.v) }
   public var damusDonation: Int32 { let o = _accessor.offset(VTOFFSET.damusDonation.v); return o == 0 ? 0 : _accessor.readBuffer(of: Int32.self, at: o) }
   public var damusDonationV2: Int32 { let o = _accessor.offset(VTOFFSET.damusDonationV2.v); return o == 0 ? 0 : _accessor.readBuffer(of: Int32.self, at: o) }
-  public static func startNdbProfile(_ fbb: inout FlatBufferBuilder) -> UOffset { fbb.startTable(with: 11) }
+  public var lud06: String? { let o = _accessor.offset(VTOFFSET.lud06.v); return o == 0 ? nil : _accessor.string(at: o) }
+  public var lud06SegmentArray: [UInt8]? { return _accessor.getVector(at: VTOFFSET.lud06.v) }
+  public static func startNdbProfile(_ fbb: inout FlatBufferBuilder) -> UOffset { fbb.startTable(with: 12) }
   public static func add(name: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: name, at: VTOFFSET.name.p) }
   public static func add(website: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: website, at: VTOFFSET.website.p) }
   public static func add(about: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: about, at: VTOFFSET.about.p) }
@@ -61,6 +64,7 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
   public static func add(nip05: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: nip05, at: VTOFFSET.nip05.p) }
   public static func add(damusDonation: Int32, _ fbb: inout FlatBufferBuilder) { fbb.add(element: damusDonation, def: 0, at: VTOFFSET.damusDonation.p) }
   public static func add(damusDonationV2: Int32, _ fbb: inout FlatBufferBuilder) { fbb.add(element: damusDonationV2, def: 0, at: VTOFFSET.damusDonationV2.p) }
+  public static func add(lud06: Offset, _ fbb: inout FlatBufferBuilder) { fbb.add(offset: lud06, at: VTOFFSET.lud06.p) }
   public static func endNdbProfile(_ fbb: inout FlatBufferBuilder, start: UOffset) -> Offset { let end = Offset(offset: fbb.endTable(at: start)); return end }
   public static func createNdbProfile(
     _ fbb: inout FlatBufferBuilder,
@@ -74,7 +78,8 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
     pictureOffset picture: Offset = Offset(),
     nip05Offset nip05: Offset = Offset(),
     damusDonation: Int32 = 0,
-    damusDonationV2: Int32 = 0
+    damusDonationV2: Int32 = 0,
+    lud06Offset lud06: Offset = Offset()
   ) -> Offset {
     let __start = NdbProfile.startNdbProfile(&fbb)
     NdbProfile.add(name: name, &fbb)
@@ -88,6 +93,7 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
     NdbProfile.add(nip05: nip05, &fbb)
     NdbProfile.add(damusDonation: damusDonation, &fbb)
     NdbProfile.add(damusDonationV2: damusDonationV2, &fbb)
+    NdbProfile.add(lud06: lud06, &fbb)
     return NdbProfile.endNdbProfile(&fbb, start: __start)
   }
 
@@ -104,6 +110,7 @@ public struct NdbProfile: FlatBufferObject, Verifiable {
     try _v.visit(field: VTOFFSET.nip05.p, fieldName: "nip05", required: false, type: ForwardOffset<String>.self)
     try _v.visit(field: VTOFFSET.damusDonation.p, fieldName: "damusDonation", required: false, type: Int32.self)
     try _v.visit(field: VTOFFSET.damusDonationV2.p, fieldName: "damusDonationV2", required: false, type: Int32.self)
+    try _v.visit(field: VTOFFSET.lud06.p, fieldName: "lud06", required: false, type: ForwardOffset<String>.self)
     _v.finish()
   }
 }

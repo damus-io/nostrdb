@@ -20,16 +20,16 @@
 static const flatbuffers_voffset_t __NdbProfile_required[] = { 0 };
 typedef flatbuffers_ref_t NdbProfile_ref_t;
 static NdbProfile_ref_t NdbProfile_clone(flatbuffers_builder_t *B, NdbProfile_table_t t);
-__flatbuffers_build_table(flatbuffers_, NdbProfile, 11)
+__flatbuffers_build_table(flatbuffers_, NdbProfile, 12)
 
 #define __NdbProfile_formal_args ,\
   flatbuffers_string_ref_t v0, flatbuffers_string_ref_t v1, flatbuffers_string_ref_t v2, flatbuffers_string_ref_t v3,\
   flatbuffers_string_ref_t v4, flatbuffers_string_ref_t v5, flatbuffers_bool_t v6, flatbuffers_string_ref_t v7,\
-  flatbuffers_string_ref_t v8, int32_t v9, int32_t v10
+  flatbuffers_string_ref_t v8, int32_t v9, int32_t v10, flatbuffers_string_ref_t v11
 #define __NdbProfile_call_args ,\
   v0, v1, v2, v3,\
   v4, v5, v6, v7,\
-  v8, v9, v10
+  v8, v9, v10, v11
 static inline NdbProfile_ref_t NdbProfile_create(flatbuffers_builder_t *B __NdbProfile_formal_args);
 __flatbuffers_build_table_prolog(flatbuffers_, NdbProfile, NdbProfile_file_identifier, NdbProfile_type_identifier)
 
@@ -44,6 +44,7 @@ __flatbuffers_build_string_field(7, flatbuffers_, NdbProfile_picture, NdbProfile
 __flatbuffers_build_string_field(8, flatbuffers_, NdbProfile_nip05, NdbProfile)
 __flatbuffers_build_scalar_field(9, flatbuffers_, NdbProfile_damus_donation, flatbuffers_int32, int32_t, 4, 4, INT32_C(0), NdbProfile)
 __flatbuffers_build_scalar_field(10, flatbuffers_, NdbProfile_damus_donation_v2, flatbuffers_int32, int32_t, 4, 4, INT32_C(0), NdbProfile)
+__flatbuffers_build_string_field(11, flatbuffers_, NdbProfile_lud06, NdbProfile)
 
 static inline NdbProfile_ref_t NdbProfile_create(flatbuffers_builder_t *B __NdbProfile_formal_args)
 {
@@ -58,6 +59,7 @@ static inline NdbProfile_ref_t NdbProfile_create(flatbuffers_builder_t *B __NdbP
         || NdbProfile_nip05_add(B, v8)
         || NdbProfile_damus_donation_add(B, v9)
         || NdbProfile_damus_donation_v2_add(B, v10)
+        || NdbProfile_lud06_add(B, v11)
         || NdbProfile_reactions_add(B, v6)) {
         return 0;
     }
@@ -78,6 +80,7 @@ static NdbProfile_ref_t NdbProfile_clone(flatbuffers_builder_t *B, NdbProfile_ta
         || NdbProfile_nip05_pick(B, t)
         || NdbProfile_damus_donation_pick(B, t)
         || NdbProfile_damus_donation_v2_pick(B, t)
+        || NdbProfile_lud06_pick(B, t)
         || NdbProfile_reactions_pick(B, t)) {
         return 0;
     }

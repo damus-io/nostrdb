@@ -9,9 +9,10 @@ table NdbProfile {
   reactions:bool = true;
   picture:string;
   nip05:string;
-
   damus_donation:int;
   damus_donation_v2:int;
+  lud06:string;
 }
 
 root_type NdbProfile;
+

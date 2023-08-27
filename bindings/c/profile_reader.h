@@ -57,6 +57,7 @@ __flatbuffers_define_string_field(7, NdbProfile, picture, 0)
 __flatbuffers_define_string_field(8, NdbProfile, nip05, 0)
 __flatbuffers_define_scalar_field(9, NdbProfile, damus_donation, flatbuffers_int32, int32_t, INT32_C(0))
 __flatbuffers_define_scalar_field(10, NdbProfile, damus_donation_v2, flatbuffers_int32, int32_t, INT32_C(0))
+__flatbuffers_define_string_field(11, NdbProfile, lud06, 0)
 
 
 #include "flatcc/flatcc_epilogue.h"
