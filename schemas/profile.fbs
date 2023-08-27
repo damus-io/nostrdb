@@ -1,7 +1,5 @@
 
 table NdbProfile {
-  evid:uint64;
-
   name:string;
   website:string;
   about:string;

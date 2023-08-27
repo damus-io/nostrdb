@@ -504,8 +504,8 @@ static int ndb_write_profile(struct ndb_lmdb *lmdb, MDB_txn *txn,
 	// write profile to profile store
 	key.mv_data = &profile_key;
 	key.mv_size = sizeof(profile_key);
-	val.mv_data = profile->profile_flatbuf;
-	val.mv_size = profile->profile_len;
+	val.mv_data = profile->profile_flatbuf + 4;
+	val.mv_size = profile->profile_len - 4;
 	//ndb_debug("profile_len %ld\n", profile->profile_len);
 
 	if ((rc = mdb_put(txn, profile_db, &key, &val, 0))) {
