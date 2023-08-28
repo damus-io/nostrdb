@@ -322,7 +322,7 @@ static void *ndb_lookup_tsid(struct ndb *ndb, enum ndb_dbs ind,
 	}
 
 	if (!ndb_get_tsid(txn, &ndb->lmdb, ind, pk, &k)) {
-		ndb_debug("ndb_get_profile_by_pubkey: ndb_get_tsid failed\n");
+		//ndb_debug("ndb_get_profile_by_pubkey: ndb_get_tsid failed\n");
 		goto cleanup;
 	}
 
@@ -696,7 +696,7 @@ static void *ndb_writer_thread(void *data)
 	while (!done) {
 		txn = NULL;
 		popped = prot_queue_pop_all(&writer->inbox, msgs, THREAD_QUEUE_BATCH);
-		ndb_debug("writer popped %d items\n", popped);
+		//ndb_debug("writer popped %d items\n", popped);
 
 		any_note = 0;
 		for (i = 0 ; i < popped; i++) {
@@ -783,7 +783,7 @@ static void *ndb_ingester_thread(void *data)
 		any_event = 0;
 
 		popped = prot_queue_pop_all(&thread->inbox, msgs, THREAD_QUEUE_BATCH);
-		ndb_debug("ingester popped %d items\n", popped);
+		//ndb_debug("ingester popped %d items\n", popped);
 
 		for (i = 0; i < popped; i++) {
 			msg = &msgs[i];
