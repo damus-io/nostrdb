@@ -85,7 +85,8 @@ __flatbuffers_table_as_root(NdbProfileRecord)
 
 __flatbuffers_define_table_field(0, NdbProfileRecord, profile, NdbProfile_table_t, 0)
 __flatbuffers_define_scalar_field(1, NdbProfileRecord, received_at, flatbuffers_uint64, uint64_t, UINT64_C(0))
-__flatbuffers_define_string_field(2, NdbProfileRecord, lnurl, 0)
+__flatbuffers_define_scalar_field(2, NdbProfileRecord, note_key, flatbuffers_uint64, uint64_t, UINT64_C(0))
+__flatbuffers_define_string_field(3, NdbProfileRecord, lnurl, 0)
 
 
 #include "flatcc/flatcc_epilogue.h"

@@ -17,6 +17,7 @@ table NdbProfile {
 table NdbProfileRecord {
   profile:NdbProfile;
   received_at:ulong;
+  note_key:ulong;
 
   // artifacts
   lnurl:string;

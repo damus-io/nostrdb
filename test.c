@@ -280,10 +280,14 @@ static void test_fetch_last_noteid()
 	NdbProfile_table_t profile = NdbProfileRecord_profile_get(profile_record);
 	const char *lnurl = NdbProfileRecord_lnurl_get(profile_record);
 	const char *name = NdbProfile_name_get(profile);
+	uint64_t key = NdbProfileRecord_note_key_get(profile_record);
 	assert(name);
 	assert(lnurl);
 	assert(!strcmp(name, "jb55"));
 	assert(!strcmp(lnurl, "fixme"));
+
+	printf("note_key %" PRIu64 "\n", key);
+	assert(key == 2);
 
 	//fwrite(profile, len, 1, stdout);
 

@@ -36,6 +36,10 @@ static const int DEFAULT_QUEUE_SIZE = 1000000;
 #define NDB_PARSED_TAGS         (1 << 6)
 #define NDB_PARSED_ALL          (NDB_PARSED_ID|NDB_PARSED_PUBKEY|NDB_PARSED_SIG|NDB_PARSED_CREATED_AT|NDB_PARSED_KIND|NDB_PARSED_CONTENT|NDB_PARSED_TAGS)
 
+struct ndb_profile_record_builder {
+	flatcc_builder_t *builder;
+	void *flatbuf;
+};
 
 // controls whether to continue or stop the json parser
 enum ndb_idres {
@@ -184,8 +188,7 @@ struct ndb_writer_note {
 
 struct ndb_writer_profile {
 	struct ndb_writer_note note;
-	void *profile_flatbuf;
-	size_t profile_len;
+	struct ndb_profile_record_builder record;
 };
 
 struct ndb_ingester_msg {
@@ -358,22 +361,43 @@ static int ndbprofile_parse_json(flatcc_builder_t *B,
 	return 1;
 }
 
-static int ndb_process_profile_note(struct ndb_note *note, void **profile,
-                    size_t *profile_len)
+void ndb_profile_record_builder_init(struct ndb_profile_record_builder *b)
+{
+	b->builder = malloc(sizeof(*b->builder));
+	b->flatbuf = NULL;
+}
+
+void ndb_profile_record_builder_free(struct ndb_profile_record_builder *b)
+{
+	if (b->builder)
+		free(b->builder);
+	if (b->flatbuf)
+		free(b->flatbuf);
+
+	b->builder = NULL;
+	b->flatbuf = NULL;
+}
+
+static int ndb_process_profile_note(struct ndb_note *note,
+				    struct ndb_profile_record_builder *profile)
 {
 	NdbProfile_ref_t profile_table;
-	flatcc_builder_t builder;
-	flatcc_builder_init(&builder);
+	flatcc_builder_t *builder;
 
-	NdbProfileRecord_start_as_root(&builder);
+	ndb_profile_record_builder_init(profile);
+	builder = profile->builder;
+	flatcc_builder_init(builder);
+
+	NdbProfileRecord_start_as_root(builder);
 
 	//printf("parsing profile '%.*s'\n", note->content_length, ndb_note_content(note));
-	if (!ndbprofile_parse_json(&builder, ndb_note_content(note),
+	if (!ndbprofile_parse_json(builder, ndb_note_content(note),
 				note->content_length,
 				flatcc_json_parser_f_skip_unknown, &profile_table))
 	{
 		ndb_debug("profile_parse_json failed %d '%.*s'\n", res,
 			  note->content_length, ndb_note_content(note));
+		ndb_profile_record_builder_free(profile);
 		return 0;
 	}
 
@@ -381,15 +405,13 @@ static int ndb_process_profile_note(struct ndb_note *note, void **profile,
 	const char *lnurl = "fixme";
 
 	flatcc_builder_ref_t lnurl_off;
-	lnurl_off = flatcc_builder_create_string_str(&builder, lnurl);
+	lnurl_off = flatcc_builder_create_string_str(builder, lnurl);
 
-	NdbProfileRecord_profile_add(&builder, profile_table);
-	NdbProfileRecord_received_at_add(&builder, received_at);
-	NdbProfileRecord_lnurl_add(&builder, lnurl_off);
+	NdbProfileRecord_profile_add(builder, profile_table);
+	NdbProfileRecord_received_at_add(builder, received_at);
+	NdbProfileRecord_lnurl_add(builder, lnurl_off);
 
-	NdbProfileRecord_end_as_root(&builder);
-
-	*profile = flatcc_builder_finalize_aligned_buffer(&builder, profile_len);
+	//*profile = flatcc_builder_finalize_aligned_buffer(builder, profile_len);
 	return 1;
 }
 
@@ -405,8 +427,8 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 	struct ndb_note *note;
 	struct ndb_ingest_controller controller;
 	struct ndb_id_cb cb;
-	void *buf, *flatbuf;
-	size_t bufsize, note_size, profile_len;
+	void *buf;
+	size_t bufsize, note_size;
 
 	// we will use this to check if we already have it in the DB during
 	// ID parsing
@@ -460,13 +482,15 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 		// to the writer thread
 		note = realloc(note, note_size);
 
-		if (note->kind == 0 &&
-		    ndb_process_profile_note(note, &flatbuf, &profile_len)) {
+		if (note->kind == 0) {
+			struct ndb_profile_record_builder *b = 
+				&out->profile.record;
+
+			ndb_process_profile_note(note, b);
+
 			out->type = NDB_WRITER_PROFILE;
 			out->profile.note.note = note;
 			out->profile.note.note_len = note_size;
-			out->profile.profile_flatbuf = flatbuf;
-			out->profile.profile_len = profile_len;
 		} else {
 			out->type = NDB_WRITER_NOTE;
 			out->note.note = note;
@@ -505,17 +529,28 @@ static uint64_t ndb_get_last_key(MDB_txn *txn, MDB_dbi db)
 }
 
 static int ndb_write_profile(struct ndb_lmdb *lmdb, MDB_txn *txn,
-			     struct ndb_writer_profile *profile)
+			     struct ndb_writer_profile *profile,
+			     uint64_t note_key)
 {
 	uint64_t profile_key;
 	struct ndb_tsid tsid;
 	struct ndb_note *note;
+	void *flatbuf;
+	size_t flatbuf_len;
 	int rc;
 
 	MDB_val key, val;
 	MDB_dbi profile_db, pk_db;
 	
 	note = profile->note.note;
+
+	// add note_key to profile record
+	NdbProfileRecord_note_key_add(profile->record.builder, note_key);
+	NdbProfileRecord_end_as_root(profile->record.builder);
+
+	flatbuf = profile->record.flatbuf =
+		flatcc_builder_finalize_aligned_buffer(profile->record.builder,
+						       &flatbuf_len);
 
 	// get dbs
 	profile_db = lmdb->dbs[NDB_DB_PROFILE];
@@ -527,8 +562,8 @@ static int ndb_write_profile(struct ndb_lmdb *lmdb, MDB_txn *txn,
 	// write profile to profile store
 	key.mv_data = &profile_key;
 	key.mv_size = sizeof(profile_key);
-	val.mv_data = profile->profile_flatbuf + 4;
-	val.mv_size = profile->profile_len - 4;
+	val.mv_data = flatbuf + 4;
+	val.mv_size = flatbuf_len - 4;
 	//ndb_debug("profile_len %ld\n", profile->profile_len);
 
 	if ((rc = mdb_put(txn, profile_db, &key, &val, 0))) {
@@ -602,6 +637,7 @@ static void *ndb_writer_thread(void *data)
 	struct ndb_writer *writer = data;
 	struct ndb_writer_msg msgs[THREAD_QUEUE_BATCH], *msg;
 	int i, popped, done, any_note;
+	uint64_t note_nkey;
 	MDB_txn *txn;
 
 	done = 0;
@@ -637,9 +673,14 @@ static void *ndb_writer_thread(void *data)
 				done = 1;
 				continue;
 			case NDB_WRITER_PROFILE:
-				ndb_write_note(writer->lmdb, txn, &msg->note);
-				// TODO: save note_key with profile
-				ndb_write_profile(writer->lmdb, txn, &msg->profile);
+				note_nkey = 
+					ndb_write_note(writer->lmdb, txn, &msg->note);
+				if (msg->profile.record.builder) {
+					// only write if parsing didn't fail
+					ndb_write_profile(writer->lmdb, txn,
+							  &msg->profile,
+							  note_nkey);
+				}
 				break;
 			case NDB_WRITER_NOTE:
 				ndb_write_note(writer->lmdb, txn, &msg->note);
@@ -660,8 +701,8 @@ static void *ndb_writer_thread(void *data)
 			if (msg->type == NDB_WRITER_NOTE)
 				free(msg->note.note);
 			else if (msg->type == NDB_WRITER_PROFILE) {
-				free(msg->profile.profile_flatbuf);
 				free(msg->profile.note.note);
+				ndb_profile_record_builder_free(&msg->profile.record);
 			}
 		}
 	}

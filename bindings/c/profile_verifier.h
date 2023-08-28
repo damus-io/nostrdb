@@ -55,7 +55,8 @@ static int NdbProfileRecord_verify_table(flatcc_table_verifier_descriptor_t *td)
     int ret;
     if ((ret = flatcc_verify_table_field(td, 0, 0, &NdbProfile_verify_table) /* profile */)) return ret;
     if ((ret = flatcc_verify_field(td, 1, 8, 8) /* received_at */)) return ret;
-    if ((ret = flatcc_verify_string_field(td, 2, 0) /* lnurl */)) return ret;
+    if ((ret = flatcc_verify_field(td, 2, 8, 8) /* note_key */)) return ret;
+    if ((ret = flatcc_verify_string_field(td, 3, 0) /* lnurl */)) return ret;
     return flatcc_verify_ok;
 }
 
