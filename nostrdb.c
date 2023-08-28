@@ -279,6 +279,32 @@ cleanup:
 	return success;
 }
 
+static void *ndb_lookup_by_key(struct ndb *ndb, uint64_t key,
+			       enum ndb_dbs store, size_t *len)
+{
+	MDB_val k, v;
+	MDB_txn *txn;
+
+	k.mv_data = &key;
+	k.mv_size = sizeof(key);
+
+	if (mdb_txn_begin(ndb->lmdb.env, 0, 0, &txn)) {
+		ndb_debug("ndb_get_note_by_id: mdb_txn_begin failed\n");
+		return NULL;
+	}
+
+	if (mdb_get(txn, ndb->lmdb.dbs[store], &k, &v)) {
+		ndb_debug("ndb_get_profile_by_pubkey: mdb_get note failed\n");
+		mdb_txn_abort(txn);
+		return NULL;
+	}
+
+	if (len)
+		*len = v.mv_size;
+
+	return v.mv_data;
+}
+
 static void *ndb_lookup_tsid(struct ndb *ndb, enum ndb_dbs ind,
 			     enum ndb_dbs store, const unsigned char *pk,
 			     size_t *len)
@@ -320,6 +346,11 @@ void *ndb_get_profile_by_pubkey(struct ndb *ndb, const unsigned char *pk, size_t
 struct ndb_note *ndb_get_note_by_id(struct ndb *ndb, const unsigned char *id, size_t *len)
 {
 	return ndb_lookup_tsid(ndb, NDB_DB_NOTE_ID, NDB_DB_NOTE, id, len);
+}
+
+struct ndb_note *ndb_get_note_by_key(struct ndb *ndb, uint64_t key, size_t *len)
+{
+	return ndb_lookup_by_key(ndb, key, NDB_DB_NOTE, len);
 }
 
 static int ndb_has_note(MDB_txn *txn, struct ndb_lmdb *lmdb, const unsigned char *id)
@@ -381,6 +412,8 @@ void ndb_profile_record_builder_free(struct ndb_profile_record_builder *b)
 static int ndb_process_profile_note(struct ndb_note *note,
 				    struct ndb_profile_record_builder *profile)
 {
+	int res;
+
 	NdbProfile_ref_t profile_table;
 	flatcc_builder_t *builder;
 
@@ -391,9 +424,10 @@ static int ndb_process_profile_note(struct ndb_note *note,
 	NdbProfileRecord_start_as_root(builder);
 
 	//printf("parsing profile '%.*s'\n", note->content_length, ndb_note_content(note));
-	if (!ndbprofile_parse_json(builder, ndb_note_content(note),
-				note->content_length,
-				flatcc_json_parser_f_skip_unknown, &profile_table))
+	if (!(res = ndbprofile_parse_json(builder, ndb_note_content(note),
+					  note->content_length,
+					  flatcc_json_parser_f_skip_unknown,
+					  &profile_table)))
 	{
 		ndb_debug("profile_parse_json failed %d '%.*s'\n", res,
 			  note->content_length, ndb_note_content(note));
