@@ -277,10 +277,12 @@ static void test_fetch_last_noteid()
 		0xd1, 0x2c, 0x17, 0xbd, 0xe3, 0x09, 0x4a, 0xd3, 0x2f, 0x4a, 0xb8, 0x62, 0xa6, 0xcc, 0x6f, 0x5c, 0x28, 0x9c, 0xfe, 0x7d, 0x58, 0x02, 0x27, 0x0b, 0xdf, 0x34, 0x90, 0x4d, 0xf5, 0x85, 0xf3, 0x49
 	};
 
-	void *profile_record = ndb_get_profile_by_pubkey(ndb, pk, &len);
+	void *root = ndb_get_profile_by_pubkey(ndb, pk, &len);
 
-	assert(profile_record);
+	assert(root);
+	assert((((uint64_t)root) % 4) == 0);
 
+	NdbProfileRecord_table_t profile_record = NdbProfileRecord_as_root(root);
 	NdbProfile_table_t profile = NdbProfileRecord_profile_get(profile_record);
 	const char *lnurl = NdbProfileRecord_lnurl_get(profile_record);
 	const char *name = NdbProfile_name_get(profile);

@@ -331,6 +331,7 @@ static void *ndb_lookup_tsid(struct ndb *ndb, enum ndb_dbs ind,
 	}
 
 	res = v.mv_data;
+	assert(((uint64_t)res % 4) == 0);
 	if (len)
 		*len = v.mv_size;
 cleanup:
@@ -515,6 +516,7 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 		// we didn't find anything. let's send it
 		// to the writer thread
 		note = realloc(note, note_size);
+		assert(((uint64_t)note % 4) == 0);
 
 		if (note->kind == 0) {
 			struct ndb_profile_record_builder *b = 
@@ -583,8 +585,12 @@ static int ndb_write_profile(struct ndb_lmdb *lmdb, MDB_txn *txn,
 	NdbProfileRecord_end_as_root(profile->record.builder);
 
 	flatbuf = profile->record.flatbuf =
-		flatcc_builder_finalize_aligned_buffer(profile->record.builder,
-						       &flatbuf_len);
+		flatcc_builder_finalize_buffer(profile->record.builder, &flatbuf_len);
+
+	assert(((uint64_t)flatbuf % 8) == 0);
+
+	// TODO: this may not be safe!?
+	flatbuf_len = (flatbuf_len + 3) & ~3;
 
 	// get dbs
 	profile_db = lmdb->dbs[NDB_DB_PROFILE];
@@ -596,8 +602,8 @@ static int ndb_write_profile(struct ndb_lmdb *lmdb, MDB_txn *txn,
 	// write profile to profile store
 	key.mv_data = &profile_key;
 	key.mv_size = sizeof(profile_key);
-	val.mv_data = flatbuf + 4;
-	val.mv_size = flatbuf_len - 4;
+	val.mv_data = flatbuf;
+	val.mv_size = flatbuf_len;
 	//ndb_debug("profile_len %ld\n", profile->profile_len);
 
 	if ((rc = mdb_put(txn, profile_db, &key, &val, 0))) {
@@ -1434,6 +1440,9 @@ int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note,
 			return 0;
 	}
 
+	// make sure we're aligned
+	total_size = (total_size + 3) & ~3;
+	assert((total_size % 4) == 0);
 	return total_size;
 }
 
