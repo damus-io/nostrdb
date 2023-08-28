@@ -5,6 +5,7 @@
 #include "protected_queue.h"
 #include "memchr.h"
 #include "bindings/c/profile_reader.h"
+#include "bindings/c/profile_verifier.h"
 
 #include <stdio.h>
 #include <assert.h>
@@ -280,7 +281,9 @@ static void test_fetch_last_noteid()
 	void *root = ndb_get_profile_by_pubkey(ndb, pk, &len);
 
 	assert(root);
-	assert((((uint64_t)root) % 4) == 0);
+	int res = NdbProfileRecord_verify_as_root(root, len);
+	printf("NdbProfileRecord verify result %d\n", res);
+	assert(res == 0);
 
 	NdbProfileRecord_table_t profile_record = NdbProfileRecord_as_root(root);
 	NdbProfile_table_t profile = NdbProfileRecord_profile_get(profile_record);

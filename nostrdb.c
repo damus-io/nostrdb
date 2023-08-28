@@ -16,6 +16,7 @@
 
 #include "bindings/c/profile_json_parser.h"
 #include "bindings/c/profile_builder.h"
+#include "bindings/c/profile_verifier.h"
 #include "secp256k1.h"
 #include "secp256k1_ecdh.h"
 #include "secp256k1_schnorrsig.h"
@@ -385,10 +386,18 @@ static int ndbprofile_parse_json(flatcc_builder_t *B,
 	flatcc_json_parser_t parser, *ctx = &parser;
 	flatcc_json_parser_init(ctx, B, buf, buf + bufsiz, flags);
 
-	NdbProfile_parse_json_table(ctx, buf, buf + bufsiz, profile);
+	if (flatcc_builder_start_buffer(B, 0, 0, 0))
+		return 0;
 
+	NdbProfile_parse_json_table(ctx, buf, buf + bufsiz, profile);
 	if (ctx->error)
 		return 0;
+ 
+	if (!flatcc_builder_end_buffer(B, *profile))
+		return 0;
+
+	ctx->end_loc = buf;
+
 
 	return 1;
 }
@@ -439,11 +448,12 @@ static int ndb_process_profile_note(struct ndb_note *note,
 	uint64_t received_at = time(NULL);
 	const char *lnurl = "fixme";
 
+	NdbProfileRecord_profile_add(builder, profile_table);
+	NdbProfileRecord_received_at_add(builder, received_at);
+
 	flatcc_builder_ref_t lnurl_off;
 	lnurl_off = flatcc_builder_create_string_str(builder, lnurl);
 
-	NdbProfileRecord_profile_add(builder, profile_table);
-	NdbProfileRecord_received_at_add(builder, received_at);
 	NdbProfileRecord_lnurl_add(builder, lnurl_off);
 
 	//*profile = flatcc_builder_finalize_aligned_buffer(builder, profile_len);
@@ -585,12 +595,14 @@ static int ndb_write_profile(struct ndb_lmdb *lmdb, MDB_txn *txn,
 	NdbProfileRecord_end_as_root(profile->record.builder);
 
 	flatbuf = profile->record.flatbuf =
-		flatcc_builder_finalize_buffer(profile->record.builder, &flatbuf_len);
+		flatcc_builder_finalize_aligned_buffer(profile->record.builder, &flatbuf_len);
 
 	assert(((uint64_t)flatbuf % 8) == 0);
 
 	// TODO: this may not be safe!?
-	flatbuf_len = (flatbuf_len + 3) & ~3;
+	flatbuf_len = (flatbuf_len + 7) & ~7;
+
+	//assert(NdbProfileRecord_verify_as_root(flatbuf, flatbuf_len) == 0);
 
 	// get dbs
 	profile_db = lmdb->dbs[NDB_DB_PROFILE];
@@ -1440,9 +1452,9 @@ int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note,
 			return 0;
 	}
 
-	// make sure we're aligned
-	total_size = (total_size + 3) & ~3;
-	assert((total_size % 4) == 0);
+	// make sure we're aligned as a whole
+	total_size = (total_size + 7) & ~7;
+	assert((total_size % 8) == 0);
 	return total_size;
 }
 

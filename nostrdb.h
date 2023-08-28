@@ -7,7 +7,7 @@
 #define NDB_PACKED_STR     0x1
 #define NDB_PACKED_ID      0x2
 
-//#define DEBUG 1
+#define DEBUG 1
 
 #ifdef DEBUG
 #define ndb_debug(...) printf(__VA_ARGS__)

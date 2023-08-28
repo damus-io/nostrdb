@@ -1,6 +1,6 @@
 CFLAGS = -Wall -Wno-unused-function -Werror -O0 -g -Ideps/secp256k1/include -Ideps/lmdb -Ideps/flatcc/include
 HEADERS = sha256.h nostrdb.h cursor.h hex.h jsmn.h config.h sha256.h random.h memchr.h $(C_BINDINGS)
-FLATCC_SRCS=deps/flatcc/src/runtime/json_parser.c deps/flatcc/src/runtime/builder.c deps/flatcc/src/runtime/emitter.c deps/flatcc/src/runtime/refmap.c
+FLATCC_SRCS=deps/flatcc/src/runtime/json_parser.c deps/flatcc/src/runtime/verifier.c deps/flatcc/src/runtime/builder.c deps/flatcc/src/runtime/emitter.c deps/flatcc/src/runtime/refmap.c
 SRCS = nostrdb.c sha256.c bech32.c $(FLATCC_SRCS)
 LDS = $(SRCS) $(ARS) 
 DEPS = $(SRCS) $(HEADERS) $(ARS)
