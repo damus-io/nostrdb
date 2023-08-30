@@ -41,9 +41,12 @@ static void test_load_profiles()
 	  0xd2, 0xb4, 0xd1, 0x3a, 0x55, 0x43, 0x09, 0x07 };
 	const char *expected_content = "{\"website\":\"selenejin.com\",\"lud06\":\"\",\"nip05\":\"selenejin@BitcoinNostr.com\",\"picture\":\"https://nostr.build/i/3549697beda0fe1f4ae621f359c639373d92b7c8d5c62582b656c5843138c9ed.jpg\",\"display_name\":\"Selene Jin\",\"about\":\"INTJ | Founding Designer @Blockstream\",\"name\":\"SeleneJin\"}";
 
-	struct ndb_note *note = ndb_get_note_by_id(ndb, id, NULL);
+	struct ndb_txn txn;
+	assert(ndb_begin_query(ndb, &txn));
+	struct ndb_note *note = ndb_get_note_by_id(&txn, id, NULL);
 	assert(note != NULL);
 	assert(!strcmp(ndb_note_content(note), expected_content));
+	ndb_end_query(&txn);
 
 	ndb_destroy(ndb);
 
@@ -268,7 +271,9 @@ static void test_fetch_last_noteid()
 
 	unsigned char id[32] = { 0xdc, 0x96, 0x4f, 0x4c, 0x89, 0x83, 0x64, 0x13, 0x8e, 0x81, 0x96, 0xf0, 0xc7, 0x33, 0x38, 0xc8, 0xcc, 0x3e, 0xbf, 0xa3, 0xaf, 0xdd, 0xbc, 0x7d, 0xd1, 0x58, 0xb4, 0x84, 0x7c, 0x1e, 0xbf, 0xa0 };
 
-	struct ndb_note *note = ndb_get_note_by_id(ndb, id, &len);
+	struct ndb_txn txn;
+	assert(ndb_begin_query(ndb, &txn));
+	struct ndb_note *note = ndb_get_note_by_id(&txn, id, &len);
 	assert(note != NULL);
 	assert(note->created_at == 1650054135);
 	
@@ -278,7 +283,7 @@ static void test_fetch_last_noteid()
 		0xd1, 0x2c, 0x17, 0xbd, 0xe3, 0x09, 0x4a, 0xd3, 0x2f, 0x4a, 0xb8, 0x62, 0xa6, 0xcc, 0x6f, 0x5c, 0x28, 0x9c, 0xfe, 0x7d, 0x58, 0x02, 0x27, 0x0b, 0xdf, 0x34, 0x90, 0x4d, 0xf5, 0x85, 0xf3, 0x49
 	};
 
-	void *root = ndb_get_profile_by_pubkey(ndb, pk, &len);
+	void *root = ndb_get_profile_by_pubkey(&txn, pk, &len);
 
 	assert(root);
 	int res = NdbProfileRecord_verify_as_root(root, len);
@@ -297,7 +302,8 @@ static void test_fetch_last_noteid()
 
 	printf("note_key %" PRIu64 "\n", key);
 
-	struct ndb_note *n = ndb_get_note_by_key(ndb, key, NULL);
+	struct ndb_note *n = ndb_get_note_by_key(&txn, key, NULL);
+	ndb_end_query(&txn);
 	assert(memcmp(profile_note_id, n->id, 32) == 0);
 
 	//fwrite(profile, len, 1, stdout);
