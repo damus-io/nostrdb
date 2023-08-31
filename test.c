@@ -249,6 +249,50 @@ static void test_parse_contact_list()
 	free(buf);
 }
 
+static void test_replacement()
+{
+	static const int alloc_size = 1024 * 1024;
+	char *json = malloc(alloc_size);
+	unsigned char *buf = malloc(alloc_size);
+	struct ndb *ndb;
+	size_t mapsize, len;
+	int written, ingester_threads;
+
+	mapsize = 1024 * 1024 * 100;
+	ingester_threads = 1;
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads));
+
+	read_file("testdata/old-new.json", (unsigned char*)json, alloc_size, &written);
+	assert(ndb_process_events(ndb, json, written));
+
+	ndb_destroy(ndb);
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads));
+
+	struct ndb_txn txn;
+	assert(ndb_begin_query(ndb, &txn));
+
+	unsigned char pubkey[32] = { 0xb8, 0x2b, 0x25, 0x00, 0x60, 0x47, 0xd9, 0xb3, 0xf7, 0x64, 0x1f, 0x2a,
+  0x9c, 0xde, 0x04, 0x07, 0x69, 0x7b, 0xb5, 0x7d, 0x97, 0x93, 0x9a, 0xd1,
+  0xd1, 0x49, 0xa7, 0x00, 0xc4, 0x3b, 0x59, 0x74 };
+
+	void *root = ndb_get_profile_by_pubkey(&txn, pubkey, &len);
+
+	assert(root);
+	int res = NdbProfileRecord_verify_as_root(root, len);
+	assert(res == 0);
+
+	NdbProfileRecord_table_t profile_record = NdbProfileRecord_as_root(root);
+	NdbProfile_table_t profile = NdbProfileRecord_profile_get(profile_record);
+	const char *name = NdbProfile_name_get(profile);
+
+	assert(!strcmp(name, "jb55"));
+
+	ndb_end_query(&txn);
+
+	free(json);
+	free(buf);
+}
+
 static void test_fetch_last_noteid()
 {
 	static const int alloc_size = 1024 * 1024;
@@ -633,6 +677,7 @@ int main(int argc, const char *argv[]) {
 
 	// profiles
 	test_load_profiles();
+	test_replacement();
 
 	printf("All tests passed!\n");       // Print this if all tests pass.
 }
