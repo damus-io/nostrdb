@@ -43,7 +43,7 @@ static void test_load_profiles()
 
 	struct ndb_txn txn;
 	assert(ndb_begin_query(ndb, &txn));
-	struct ndb_note *note = ndb_get_note_by_id(&txn, id, NULL);
+	struct ndb_note *note = ndb_get_note_by_id(&txn, id, NULL, NULL);
 	assert(note != NULL);
 	assert(!strcmp(ndb_note_content(note), expected_content));
 	ndb_end_query(&txn);
@@ -275,7 +275,7 @@ static void test_replacement()
   0x9c, 0xde, 0x04, 0x07, 0x69, 0x7b, 0xb5, 0x7d, 0x97, 0x93, 0x9a, 0xd1,
   0xd1, 0x49, 0xa7, 0x00, 0xc4, 0x3b, 0x59, 0x74 };
 
-	void *root = ndb_get_profile_by_pubkey(&txn, pubkey, &len);
+	void *root = ndb_get_profile_by_pubkey(&txn, pubkey, &len, NULL);
 
 	assert(root);
 	int res = NdbProfileRecord_verify_as_root(root, len);
@@ -317,7 +317,7 @@ static void test_fetch_last_noteid()
 
 	struct ndb_txn txn;
 	assert(ndb_begin_query(ndb, &txn));
-	struct ndb_note *note = ndb_get_note_by_id(&txn, id, &len);
+	struct ndb_note *note = ndb_get_note_by_id(&txn, id, &len, NULL);
 	assert(note != NULL);
 	assert(note->created_at == 1650054135);
 	
@@ -327,7 +327,7 @@ static void test_fetch_last_noteid()
 		0xd1, 0x2c, 0x17, 0xbd, 0xe3, 0x09, 0x4a, 0xd3, 0x2f, 0x4a, 0xb8, 0x62, 0xa6, 0xcc, 0x6f, 0x5c, 0x28, 0x9c, 0xfe, 0x7d, 0x58, 0x02, 0x27, 0x0b, 0xdf, 0x34, 0x90, 0x4d, 0xf5, 0x85, 0xf3, 0x49
 	};
 
-	void *root = ndb_get_profile_by_pubkey(&txn, pk, &len);
+	void *root = ndb_get_profile_by_pubkey(&txn, pk, &len, NULL);
 
 	assert(root);
 	int res = NdbProfileRecord_verify_as_root(root, len);

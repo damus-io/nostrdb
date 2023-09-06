@@ -163,8 +163,8 @@ int ndb_process_event(struct ndb *, const char *json, int len);
 int ndb_process_events(struct ndb *, const char *ldjson, size_t len);
 int ndb_begin_query(struct ndb *, struct ndb_txn *);
 void ndb_end_query(struct ndb_txn *);
-void *ndb_get_profile_by_pubkey(struct ndb_txn *txn, const unsigned char *pubkey, size_t *len);
-struct ndb_note *ndb_get_note_by_id(struct ndb_txn *txn, const unsigned char *id, size_t *len);
+void *ndb_get_profile_by_pubkey(struct ndb_txn *txn, const unsigned char *pubkey, size_t *len, uint64_t *primkey);
+struct ndb_note *ndb_get_note_by_id(struct ndb_txn *txn, const unsigned char *id, size_t *len, uint64_t *primkey);
 struct ndb_note *ndb_get_note_by_key(struct ndb_txn *txn, uint64_t key, size_t *len);
 void ndb_destroy(struct ndb *);
 

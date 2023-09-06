@@ -314,7 +314,7 @@ static void *ndb_lookup_by_key(struct ndb_txn *txn, uint64_t key,
 
 static void *ndb_lookup_tsid(struct ndb_txn *txn, enum ndb_dbs ind,
 			     enum ndb_dbs store, const unsigned char *pk,
-			     size_t *len)
+			     size_t *len, uint64_t *primkey)
 {
 	MDB_val k, v;
 	void *res = NULL;
@@ -325,6 +325,9 @@ static void *ndb_lookup_tsid(struct ndb_txn *txn, enum ndb_dbs ind,
 		//ndb_debug("ndb_get_profile_by_pubkey: ndb_get_tsid failed\n");
 		return 0;
 	}
+
+	if (primkey)
+		*primkey = *(uint64_t*)k.mv_data;
 
 	if (mdb_get(txn->mdb_txn, txn->ndb->lmdb.dbs[store], &k, &v)) {
 		ndb_debug("ndb_get_profile_by_pubkey: mdb_get note failed\n");
@@ -338,19 +341,24 @@ static void *ndb_lookup_tsid(struct ndb_txn *txn, enum ndb_dbs ind,
 	return res;
 }
 
-void *ndb_get_profile_by_pubkey(struct ndb_txn *txn, const unsigned char *pk, size_t *len)
+void *ndb_get_profile_by_pubkey(struct ndb_txn *txn, const unsigned char *pk, size_t *len, uint64_t *key)
 {
-	return ndb_lookup_tsid(txn, NDB_DB_PROFILE_PK, NDB_DB_PROFILE, pk, len);
+	return ndb_lookup_tsid(txn, NDB_DB_PROFILE_PK, NDB_DB_PROFILE, pk, len, key);
 }
 
-struct ndb_note *ndb_get_note_by_id(struct ndb_txn *txn, const unsigned char *id, size_t *len)
+struct ndb_note *ndb_get_note_by_id(struct ndb_txn *txn, const unsigned char *id, size_t *len, uint64_t *key)
 {
-	return ndb_lookup_tsid(txn, NDB_DB_NOTE_ID, NDB_DB_NOTE, id, len);
+	return ndb_lookup_tsid(txn, NDB_DB_NOTE_ID, NDB_DB_NOTE, id, len, key);
 }
 
 struct ndb_note *ndb_get_note_by_key(struct ndb_txn *txn, uint64_t key, size_t *len)
 {
 	return ndb_lookup_by_key(txn, key, NDB_DB_NOTE, len);
+}
+
+struct ndb_note *ndb_get_profile_by_key(struct ndb_txn *txn, uint64_t key, size_t *len)
+{
+	return ndb_lookup_by_key(txn, key, NDB_DB_PROFILE, len);
 }
 
 static int ndb_has_note(MDB_txn *txn, struct ndb_lmdb *lmdb, const unsigned char *id)
