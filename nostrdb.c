@@ -351,6 +351,16 @@ struct ndb_note *ndb_get_note_by_id(struct ndb_txn *txn, const unsigned char *id
 	return ndb_lookup_tsid(txn, NDB_DB_NOTE_ID, NDB_DB_NOTE, id, len, key);
 }
 
+uint64_t ndb_get_notekey_by_id(struct ndb_txn *txn, const unsigned char *id)
+{
+	MDB_val k;
+
+	if (!ndb_get_tsid(txn->mdb_txn, &txn->ndb->lmdb, NDB_DB_NOTE_ID, id, &k))
+		return 0;
+
+	return *(uint64_t*)k.mv_data;
+}
+
 struct ndb_note *ndb_get_note_by_key(struct ndb_txn *txn, uint64_t key, size_t *len)
 {
 	return ndb_lookup_by_key(txn, key, NDB_DB_NOTE, len);
