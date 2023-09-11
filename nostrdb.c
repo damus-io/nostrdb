@@ -61,7 +61,13 @@ enum ndb_dbs {
 	NDB_DB_PROFILE,
 	NDB_DB_NOTE_ID,
 	NDB_DB_PROFILE_PK,
+	NDB_DB_NDB_META,
 	NDB_DBS,
+};
+
+// keys used for storing data in the NDB metadata database (NDB_DB_NDB_META)
+enum ndb_meta_key {
+	NDB_DB_VERSION = 1
 };
 
 struct ndb_json_parser {
@@ -962,7 +968,7 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 	}
 
 	if ((rc = mdb_env_set_maxdbs(lmdb->env, NDB_DBS))) {
-		fprintf(stderr, "mdb_env_set_mapsize failed, error %d\n", rc);
+		fprintf(stderr, "mdb_env_set_maxdbs failed, error %d\n", rc);
 		return 0;
 	}
 
@@ -992,6 +998,12 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 	// profile flatbuffer db
 	if ((rc = mdb_dbi_open(txn, "profile", MDB_CREATE | MDB_INTEGERKEY, &lmdb->dbs[NDB_DB_PROFILE]))) {
 		fprintf(stderr, "mdb_dbi_open profile failed, error %d\n", rc);
+		return 0;
+	}
+
+	// ndb metadata (db version, etc)
+	if ((rc = mdb_dbi_open(txn, "ndb_meta", MDB_CREATE | MDB_INTEGERKEY, &lmdb->dbs[NDB_DB_NDB_META]))) {
+		fprintf(stderr, "mdb_dbi_open ndb_meta failed, error %d\n", rc);
 		return 0;
 	}
 
@@ -1036,12 +1048,12 @@ int ndb_init(struct ndb **pndb, const char *filename, size_t mapsize, int ingest
 		return 0;
 
 	if (!ndb_writer_init(&ndb->writer, &ndb->lmdb)) {
-		fprintf(stderr, "ndb_writer_init failed");
+		fprintf(stderr, "ndb_writer_init failed\n");
 		return 0;
 	}
 
 	if (!ndb_ingester_init(&ndb->ingester, &ndb->writer, ingester_threads)) {
-		fprintf(stderr, "failed to initialize %d ingester thread(s)",
+		fprintf(stderr, "failed to initialize %d ingester thread(s)\n",
 				ingester_threads);
 		return 0;
 	}
