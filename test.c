@@ -26,7 +26,7 @@ static void test_load_profiles()
 
 	mapsize = 1024 * 1024 * 100;
 	ingester_threads = 1;
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads));
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
 
 	read_file("testdata/profiles.json", (unsigned char*)json, alloc_size, &written);
 
@@ -34,7 +34,7 @@ static void test_load_profiles()
 
 	ndb_destroy(ndb);
 
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads));
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
 	unsigned char id[32] = {
 	  0x22, 0x05, 0x0b, 0x6d, 0x97, 0xbb, 0x9d, 0xa0, 0x9e, 0x90, 0xed, 0x0c,
 	  0x6d, 0xd9, 0x5e, 0xed, 0x1d, 0x42, 0x3e, 0x27, 0xd5, 0xcb, 0xa5, 0x94,
@@ -58,8 +58,25 @@ static void test_fuzz_events() {
 	struct ndb *ndb;
 	const char *str = "[\"EVENT\"\"\"{\"content\"\"created_at\":0 \"id\"\"5086a8f76fe1da7fb56a25d1bebbafd70fca62e36a72c6263f900ff49b8f8604\"\"kind\":0 \"pubkey\":9c87f94bcbe2a837adc28d46c34eeaab8fc2e1cdf94fe19d4b99ae6a5e6acedc \"sig\"\"27374975879c94658412469cee6db73d538971d21a7b580726a407329a4cafc677fb56b946994cea59c3d9e118fef27e4e61de9d2c46ac0a65df14153 ea93cf5\"\"tags\"[[][\"\"]]}]";
 
-	ndb_init(&ndb, test_dir, 1024 * 1024, 1);
+	ndb_init(&ndb, test_dir, 1024 * 1024, 1, 0);
 	ndb_process_event(ndb, str, strlen(str));
+	ndb_destroy(ndb);
+}
+
+static void test_migrate() {
+	static const char *v0_dir = "testdata/db/v0";
+	size_t mapsize = 1024ULL * 1024ULL * 1024ULL * 32ULL;
+	int threads = 2;
+	struct ndb *ndb;
+
+	assert(ndb_init(&ndb, v0_dir, mapsize, threads, NDB_FLAG_NOMIGRATE));
+	assert(ndb_db_version(ndb) == -1);
+	ndb_destroy(ndb);
+
+	assert(ndb_init(&ndb, v0_dir, mapsize, threads, 0));
+	ndb_destroy(ndb);
+	assert(ndb_init(&ndb, v0_dir, mapsize, threads, 0));
+	assert(ndb_db_version(ndb) == 0);
 	ndb_destroy(ndb);
 }
 
@@ -260,13 +277,13 @@ static void test_replacement()
 
 	mapsize = 1024 * 1024 * 100;
 	ingester_threads = 1;
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads));
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
 
 	read_file("testdata/old-new.json", (unsigned char*)json, alloc_size, &written);
 	assert(ndb_process_events(ndb, json, written));
 
 	ndb_destroy(ndb);
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads));
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
 
 	struct ndb_txn txn;
 	assert(ndb_begin_query(ndb, &txn));
@@ -304,14 +321,14 @@ static void test_fetch_last_noteid()
 
 	mapsize = 1024 * 1024 * 100;
 	ingester_threads = 1;
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads));
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
 
 	read_file("testdata/random.json", (unsigned char*)json, alloc_size, &written);
 	assert(ndb_process_events(ndb, json, written));
 
 	ndb_destroy(ndb);
 
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads));
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
 
 	unsigned char id[32] = { 0xdc, 0x96, 0x4f, 0x4c, 0x89, 0x83, 0x64, 0x13, 0x8e, 0x81, 0x96, 0xf0, 0xc7, 0x33, 0x38, 0xc8, 0xcc, 0x3e, 0xbf, 0xa3, 0xaf, 0xdd, 0xbc, 0x7d, 0xd1, 0x58, 0xb4, 0x84, 0x7c, 0x1e, 0xbf, 0xa0 };
 
@@ -652,6 +669,7 @@ static void test_fast_strchr()
 }
 
 int main(int argc, const char *argv[]) {
+	test_migrate();
 	test_basic_event();
 	test_empty_tags();
 	test_parse_json();

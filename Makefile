@@ -14,6 +14,7 @@ C_BINDINGS_META=bindings/c/meta_builder.h bindings/c/meta_reader.h bindings/c/me
 C_BINDINGS_COMMON=bindings/c/flatbuffers_common_builder.h bindings/c/flatbuffers_common_reader.h
 C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE) $(C_BINDINGS_META)
 BINDINGS=bindings
+CHECKDATA=testdata/db/v0/data.mdb
 
 all: lib bindings
 
@@ -21,9 +22,10 @@ lib: benches test
 
 bindings: bindings-swift bindings-c
 
-check: test
+check: test $(CHECKDATA)
 	rm -rf testdata/db/*.mdb
-	./test
+	./test || rm -rf testdata/db/v0
+	rm -rf testdata/db/v0
 
 clean:
 	rm -rf test bench bench-ingest bench-ingest-many
@@ -121,6 +123,17 @@ bench: bench.c $(DEPS)
 
 bench-ingest: bench-ingest.c $(DEPS)
 	$(CC) $(CFLAGS) bench-ingest.c $(LDS) -o $@
+
+testdata/db/ndb-v0.tar.zst:
+	curl https://cdn.jb55.com/s/ndb-v0.tar.zst -o $@
+
+testdata/db/ndb-v0.tar: testdata/db/ndb-v0.tar.zst
+	zstd -d < $< > $@
+
+testdata/db/v0/data.mdb: testdata/db/ndb-v0.tar
+	@tar xf $<
+	@rm -rf testdata/db/v0
+	@mv v0 testdata/db
 
 testdata/many-events.json.zst:
 	curl https://cdn.jb55.com/s/many-events.json.zst -o $@
