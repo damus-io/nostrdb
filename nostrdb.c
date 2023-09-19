@@ -1269,6 +1269,7 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 		fprintf(stderr, "mdb_dbi_open profile failed, error %d\n", rc);
 		return 0;
 	}
+	mdb_set_compare(txn, lmdb->dbs[NDB_DB_PROFILE_SEARCH], ndb_search_key_cmp);
 
 	// ndb metadata (db version, etc)
 	if ((rc = mdb_dbi_open(txn, "ndb_meta", MDB_CREATE | MDB_INTEGERKEY, &lmdb->dbs[NDB_DB_NDB_META]))) {
