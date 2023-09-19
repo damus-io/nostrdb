@@ -131,9 +131,9 @@ testdata/db/ndb-v0.tar: testdata/db/ndb-v0.tar.zst
 	zstd -d < $< > $@
 
 testdata/db/v0/data.mdb: testdata/db/ndb-v0.tar
-	@tar xf $<
-	@rm -rf testdata/db/v0
-	@mv v0 testdata/db
+	tar xf $<
+	rm -rf testdata/db/v0
+	mv v0 testdata/db
 
 testdata/many-events.json.zst:
 	curl https://cdn.jb55.com/s/many-events.json.zst -o $@

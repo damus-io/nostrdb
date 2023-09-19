@@ -15,6 +15,29 @@
 
 static const char *test_dir = "./testdata/db";
 
+static void test_profile_search(struct ndb *ndb)
+{
+	struct ndb_txn txn;
+	struct ndb_search search;
+	size_t len;
+	void *root;
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_search_profile(&txn, &search, "jb"));
+	assert((root = ndb_get_profile_by_key(&txn, search.profile_key, &len)));
+	assert(root);
+
+	ndb_search_profile_end(&search);
+
+	NdbProfileRecord_table_t profile_record = NdbProfileRecord_as_root(root);
+	NdbProfile_table_t profile = NdbProfileRecord_profile_get(profile_record);
+	const char *searched_name = NdbProfile_name_get(profile);
+
+	assert(!strcmp(searched_name, "jb55"));
+
+	ndb_end_query(&txn);
+}
+
 static void test_load_profiles()
 {
 	static const int alloc_size = 1024 * 1024;
@@ -47,6 +70,8 @@ static void test_load_profiles()
 	assert(note != NULL);
 	assert(!strcmp(ndb_note_content(note), expected_content));
 	ndb_end_query(&txn);
+
+	test_profile_search(ndb);
 
 	ndb_destroy(ndb);
 
