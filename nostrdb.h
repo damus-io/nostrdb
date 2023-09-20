@@ -33,7 +33,6 @@ struct ndb_search_key
 };
 
 struct ndb_search {
-	const char *query;
 	struct ndb_search_key *key;
 	uint64_t profile_key;
 	void *cursor; // MDB_cursor *
