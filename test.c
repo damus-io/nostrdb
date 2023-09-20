@@ -15,11 +15,38 @@
 
 static const char *test_dir = "./testdata/db";
 
+static void print_hex(unsigned char* data, size_t size) {
+	size_t i;
+	for (i = 0; i < size; i++) {
+		printf("%02x", data[i]);
+	}
+}
+
+
+static void print_search(struct ndb_txn *txn, struct ndb_search *search)
+{
+	void *root;
+	size_t len;
+	assert((root = ndb_get_profile_by_key(txn, search->profile_key, &len)));
+	assert(root);
+
+	NdbProfileRecord_table_t profile_record = NdbProfileRecord_as_root(root);
+	NdbProfile_table_t profile = NdbProfileRecord_profile_get(profile_record);
+
+	const char *name = NdbProfile_name_get(profile);
+	const char *display_name = NdbProfile_display_name_get(profile);
+	printf("searched_name name:'%s' display_name:'%s' pk:%" PRIu64 " ts:%" PRIu64 " id:", name, display_name, search->profile_key, search->key->timestamp);
+	print_hex(search->key->id, 32);
+	printf("\n");
+}
+
+
 static void test_profile_search(struct ndb *ndb)
 {
 	struct ndb_txn txn;
 	struct ndb_search search;
 	size_t len;
+	int i;
 	void *root;
 
 	assert(ndb_begin_query(ndb, &txn));
@@ -27,14 +54,17 @@ static void test_profile_search(struct ndb *ndb)
 	assert((root = ndb_get_profile_by_key(&txn, search.profile_key, &len)));
 	assert(root);
 
+	//assert(!strcmp(searched_name, "jb55"));
+	print_search(&txn, &search);
+
+	for (i = 0; i < 20; i++) {
+		assert(ndb_search_profile_next(&search));
+		print_search(&txn, &search);
+	}
+
+	//assert(!strcmp(searched_name, "jb55"));
+
 	ndb_search_profile_end(&search);
-
-	NdbProfileRecord_table_t profile_record = NdbProfileRecord_as_root(root);
-	NdbProfile_table_t profile = NdbProfileRecord_profile_get(profile_record);
-	const char *searched_name = NdbProfile_name_get(profile);
-
-	assert(!strcmp(searched_name, "jb55"));
-
 	ndb_end_query(&txn);
 }
 
@@ -695,6 +725,7 @@ static void test_fast_strchr()
 
 int main(int argc, const char *argv[]) {
 	test_migrate();
+	test_load_profiles();
 	test_basic_event();
 	test_empty_tags();
 	test_parse_json();
@@ -719,7 +750,6 @@ int main(int argc, const char *argv[]) {
 	test_fast_strchr();
 
 	// profiles
-	test_load_profiles();
 	test_replacement();
 
 	printf("All tests passed!\n");       // Print this if all tests pass.

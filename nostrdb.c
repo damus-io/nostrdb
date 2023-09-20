@@ -730,19 +730,29 @@ void ndb_search_profile_end(struct ndb_search *search)
 		mdb_cursor_close(search->cursor);
 }
 
-int ndb_search_profile_next(struct ndb_txn *txn, struct ndb_search *search)
+int ndb_search_profile_next(struct ndb_search *search)
 {
+	int rc;
 	MDB_val k, v;
+	unsigned char *init_id;
 
+	init_id = search->key->id;
 	k.mv_data = search->key;
 	k.mv_size = sizeof(*search->key);
 
-	if (mdb_cursor_get(search->cursor, &k, &v, MDB_NEXT)) {
+retry:
+	if ((rc = mdb_cursor_get(search->cursor, &k, &v, MDB_NEXT))) {
+		ndb_debug("ndb_search_profile_next: %s\n",
+				mdb_strerror(rc));
 		return 0;
 	} else {
 		search->key = k.mv_data;
 		assert(v.mv_size == 8);
 		search->profile_key = *((uint64_t*)v.mv_data);
+
+		// skip duplicate pubkeys
+		if (!memcmp(init_id, search->key->id, 32))
+			goto retry;
 	}
 
 	return 1;
@@ -831,6 +841,10 @@ static int ndb_write_profile_search_indices(struct ndb_lmdb *lmdb,
 	}
 
 	if (display_name) {
+		// don't write the same name/display_name twice
+		if (name && !strcmp(display_name, name)) {
+			return 1;
+		}
 		ndb_make_search_key(&index, note->pubkey, note->created_at,
 				    display_name);
 		if (!ndb_write_profile_search_index(lmdb, txn, &index,
@@ -1266,7 +1280,7 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 
 	// profile search db
 	if ((rc = mdb_dbi_open(txn, "profile_search", MDB_CREATE, &lmdb->dbs[NDB_DB_PROFILE_SEARCH]))) {
-		fprintf(stderr, "mdb_dbi_open profile failed, error %d\n", rc);
+		fprintf(stderr, "mdb_dbi_open profile_search failed, error %d\n", rc);
 		return 0;
 	}
 	mdb_set_compare(txn, lmdb->dbs[NDB_DB_PROFILE_SEARCH], ndb_search_key_cmp);
