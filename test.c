@@ -22,17 +22,21 @@ static void print_hex(unsigned char* data, size_t size) {
 	}
 }
 
-
-static void print_search(struct ndb_txn *txn, struct ndb_search *search)
+static NdbProfile_table_t lookup_profile(struct ndb_txn *txn, uint64_t pk)
 {
 	void *root;
 	size_t len;
-	assert((root = ndb_get_profile_by_key(txn, search->profile_key, &len)));
+	assert((root = ndb_get_profile_by_key(txn, pk, &len)));
 	assert(root);
 
 	NdbProfileRecord_table_t profile_record = NdbProfileRecord_as_root(root);
 	NdbProfile_table_t profile = NdbProfileRecord_profile_get(profile_record);
+	return profile;
+}
 
+static void print_search(struct ndb_txn *txn, struct ndb_search *search)
+{
+	NdbProfile_table_t profile = lookup_profile(txn, search->profile_key);
 	const char *name = NdbProfile_name_get(profile);
 	const char *display_name = NdbProfile_display_name_get(profile);
 	printf("searched_name name:'%s' display_name:'%s' pk:%" PRIu64 " ts:%" PRIu64 " id:", name, display_name, search->profile_key, search->key->timestamp);
@@ -45,19 +49,23 @@ static void test_profile_search(struct ndb *ndb)
 {
 	struct ndb_txn txn;
 	struct ndb_search search;
-	size_t len;
 	int i;
-	void *root;
+	const char *name;
+	NdbProfile_table_t profile;
 
 	assert(ndb_begin_query(ndb, &txn));
-	assert(ndb_search_profile(&txn, &search, "jb"));
-	assert((root = ndb_get_profile_by_key(&txn, search.profile_key, &len)));
-	assert(root);
+	assert(ndb_search_profile(&txn, &search, "jean"));
 
-	//assert(!strcmp(searched_name, "jb55"));
-	print_search(&txn, &search);
+	profile = lookup_profile(&txn, search.profile_key);
+	name = NdbProfile_name_get(profile);
+	assert(!strcmp(name, "jeanfromlastnight"));
 
-	for (i = 0; i < 20; i++) {
+	assert(ndb_search_profile_next(&search));
+	profile = lookup_profile(&txn, search.profile_key);
+	name = NdbProfile_name_get(profile);
+	assert(strcmp(name, "jeanfromlastnight"));
+
+	for (i = 0; i < 10; i++) {
 		assert(ndb_search_profile_next(&search));
 		print_search(&txn, &search);
 	}
