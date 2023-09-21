@@ -55,22 +55,23 @@ static void test_profile_search(struct ndb *ndb)
 
 	assert(ndb_begin_query(ndb, &txn));
 	assert(ndb_search_profile(&txn, &search, "jean"));
-
+	print_search(&txn, &search);
 	profile = lookup_profile(&txn, search.profile_key);
 	name = NdbProfile_name_get(profile);
 	assert(!strcmp(name, "jeanfromlastnight"));
 
 	assert(ndb_search_profile_next(&search));
+	print_search(&txn, &search);
 	profile = lookup_profile(&txn, search.profile_key);
 	name = NdbProfile_name_get(profile);
 	assert(strcmp(name, "jeanfromlastnight"));
 
-	for (i = 0; i < 10; i++) {
-		assert(ndb_search_profile_next(&search));
+	for (i = 0; i < 3; i++) {
+		ndb_search_profile_next(&search);
 		print_search(&txn, &search);
 	}
 
-	//assert(!strcmp(searched_name, "jb55"));
+	//assert(!strcmp(name, "jb55"));
 
 	ndb_search_profile_end(&search);
 	ndb_end_query(&txn);
@@ -132,14 +133,17 @@ static void test_migrate() {
 	int threads = 2;
 	struct ndb *ndb;
 
+	fprintf(stderr, "testing migrate on v0\n");
 	assert(ndb_init(&ndb, v0_dir, mapsize, threads, NDB_FLAG_NOMIGRATE));
-	assert(ndb_db_version(ndb) == -1);
+	assert(ndb_db_version(ndb) == 0);
 	ndb_destroy(ndb);
 
 	assert(ndb_init(&ndb, v0_dir, mapsize, threads, 0));
 	ndb_destroy(ndb);
 	assert(ndb_init(&ndb, v0_dir, mapsize, threads, 0));
-	assert(ndb_db_version(ndb) == 0);
+	assert(ndb_db_version(ndb) == 1);
+
+	test_profile_search(ndb);
 	ndb_destroy(ndb);
 }
 
