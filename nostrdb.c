@@ -1431,7 +1431,7 @@ static int ndb_run_migrations(struct ndb *ndb)
 	latest_version = sizeof(MIGRATIONS) / sizeof(MIGRATIONS[0]);
 
 	if ((version = ndb_db_version(ndb)) == -1) {
-		fprintf(stderr, "run_migrations: no version found, assuming new db\n");
+		ndb_debug("run_migrations: no version found, assuming new db\n");
 		version = latest_version;
 
 		// no version found. fresh db?
@@ -1442,11 +1442,11 @@ static int ndb_run_migrations(struct ndb *ndb)
 
 		return 1;
 	} else {
-		fprintf(stderr, "ndb: version %" PRIu64 " found\n", version);
+		ndb_debug("ndb: version %" PRIu64 " found\n", version);
 	}
 
 	if (version < latest_version)
-		fprintf(stderr, "nostrdb: migrating v%d -> v%d\n",
+		ndb_debug("nostrdb: migrating v%d -> v%d\n",
 				(int)version, (int)latest_version);
 
 	for (i = version; i < latest_version; i++) {
