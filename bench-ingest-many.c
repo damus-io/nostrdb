@@ -37,7 +37,7 @@ static int bench_parser()
 
 	mapsize = 1024ULL * 1024ULL * 400ULL * 10ULL;
 	ingester_threads = 8;
-	assert(ndb_init(&ndb, "testdata/db", mapsize, ingester_threads));
+	assert(ndb_init(&ndb, "testdata/db", mapsize, ingester_threads, 0));
 	const char *filename = "testdata/many-events.json";
 	if (!map_file(filename, (unsigned char**)&json, &written)) {
 		printf("mapping testdata/many-events.json failed\n");
