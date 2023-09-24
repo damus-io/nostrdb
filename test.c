@@ -781,6 +781,7 @@ static void test_fast_strchr()
 
 int main(int argc, const char *argv[]) {
 	test_migrate();
+	test_profile_updates();
 	test_load_profiles();
 	test_basic_event();
 	test_empty_tags();
