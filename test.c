@@ -95,7 +95,7 @@ static void test_profile_updates()
 
 	read_file("testdata/profile-updates.json", (unsigned char*)json, alloc_size, &written);
 
-	assert(ndb_process_events(ndb, json, written));
+	assert(ndb_process_client_events(ndb, json, written));
 
 	ndb_destroy(ndb);
 
