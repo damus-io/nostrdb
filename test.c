@@ -77,11 +77,56 @@ static void test_profile_search(struct ndb *ndb)
 	ndb_end_query(&txn);
 }
 
+static void test_profile_updates()
+{
+	static const int alloc_size = 1024 * 1024;
+	char *json = malloc(alloc_size);
+	struct ndb *ndb;
+	size_t mapsize, len;
+	void *record;
+	int written, ingester_threads;
+	struct ndb_txn txn;
+	uint64_t key;
+
+	mapsize = 1024 * 1024 * 100;
+	ingester_threads = 1;
+
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+
+	read_file("testdata/profile-updates.json", (unsigned char*)json, alloc_size, &written);
+
+	assert(ndb_process_events(ndb, json, written));
+
+	ndb_destroy(ndb);
+
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+
+	assert(ndb_begin_query(ndb, &txn));
+	const unsigned char pk[32] = {
+		0x87, 0xfb, 0xc6, 0xd5, 0x98, 0x31, 0xa8, 0x23, 0xa4, 0x5d,
+		0x10, 0x1f, 0x86, 0x94, 0x2c, 0x41, 0xcd, 0xe2, 0x90, 0x23,
+		0xf4, 0x09, 0x20, 0x24, 0xa2, 0x7c, 0x50, 0x10, 0x3c, 0x15,
+		0x40, 0x01
+	};
+	record = ndb_get_profile_by_pubkey(&txn, pk, &len, &key);
+
+	assert(record);
+	int res = NdbProfileRecord_verify_as_root(record, len);
+	assert(res == 0);
+
+	NdbProfileRecord_table_t profile_record = NdbProfileRecord_as_root(record);
+	NdbProfile_table_t profile = NdbProfileRecord_profile_get(profile_record);
+	const char *name = NdbProfile_name_get(profile);
+
+	assert(!strcmp(name, "c"));
+
+	ndb_destroy(ndb);
+}
+
 static void test_load_profiles()
 {
 	static const int alloc_size = 1024 * 1024;
 	char *json = malloc(alloc_size);
-	unsigned char *buf = malloc(alloc_size);
 	struct ndb *ndb;
 	size_t mapsize;
 	int written, ingester_threads;
@@ -115,7 +160,6 @@ static void test_load_profiles()
 	ndb_destroy(ndb);
 
 	free(json);
-	free(buf);
 }
 
 static void test_fuzz_events() {
