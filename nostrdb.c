@@ -1089,7 +1089,7 @@ static void ndb_write_version(struct ndb_lmdb *lmdb, MDB_txn *txn, uint64_t vers
 		return;
 	}
 
-	fprintf(stderr, "writing version %" PRIu64 "\n", version);
+	//fprintf(stderr, "writing version %" PRIu64 "\n", version);
 }
 
 static void *ndb_writer_thread(void *data)

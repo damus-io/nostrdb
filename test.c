@@ -55,20 +55,20 @@ static void test_profile_search(struct ndb *ndb)
 
 	assert(ndb_begin_query(ndb, &txn));
 	assert(ndb_search_profile(&txn, &search, "jean"));
-	print_search(&txn, &search);
+	//print_search(&txn, &search);
 	profile = lookup_profile(&txn, search.profile_key);
 	name = NdbProfile_name_get(profile);
 	assert(!strncmp(name, "jean", 4));
 
 	assert(ndb_search_profile_next(&search));
-	print_search(&txn, &search);
+	//print_search(&txn, &search);
 	profile = lookup_profile(&txn, search.profile_key);
 	name = NdbProfile_name_get(profile);
 	//assert(strncmp(name, "jean", 4));
 
 	for (i = 0; i < 3; i++) {
 		ndb_search_profile_next(&search);
-		print_search(&txn, &search);
+		//print_search(&txn, &search);
 	}
 
 	//assert(!strcmp(name, "jb55"));
