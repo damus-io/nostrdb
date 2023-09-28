@@ -443,7 +443,7 @@ struct ndb_writer_ndb_meta {
 };
 
 struct ndb_writer_last_fetch {
-	uint64_t profile_key;
+	unsigned char pubkey[32];
 	uint64_t fetched_at;
 };
 
@@ -510,8 +510,8 @@ static void ndb_writer_last_profile_fetch(struct ndb_lmdb *lmdb, MDB_txn *txn,
 	int rc;
 	MDB_val key, val;
 	
-	key.mv_data = &w->profile_key;
-	key.mv_size = sizeof(w->profile_key);
+	key.mv_data = (unsigned char*)&w->pubkey;
+	key.mv_size = sizeof(w->pubkey);
 	val.mv_data = &w->fetched_at;
 	val.mv_size = sizeof(w->fetched_at);
 
@@ -524,12 +524,12 @@ static void ndb_writer_last_profile_fetch(struct ndb_lmdb *lmdb, MDB_txn *txn,
 	//fprintf(stderr, "writing version %" PRIu64 "\n", version);
 }
 
-int ndb_write_last_profile_fetch(struct ndb *ndb, uint64_t profile_key,
+int ndb_write_last_profile_fetch(struct ndb *ndb, const unsigned char *pubkey,
 				 uint64_t fetched_at)
 {
 	struct ndb_writer_msg msg;
 	msg.type = NDB_WRITER_PROFILE_LAST_FETCH;
-	msg.last_fetch.profile_key = profile_key;
+	memcpy(&msg.last_fetch.pubkey[0], pubkey, 32);
 	msg.last_fetch.fetched_at = fetched_at;
 
 	return ndb_writer_queue_msg(&ndb->writer, &msg);
@@ -1484,7 +1484,7 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 	}
 
 	// profile last fetches
-	if ((rc = mdb_dbi_open(txn, "profile_last_fetch", MDB_CREATE | MDB_INTEGERKEY, &lmdb->dbs[NDB_DB_PROFILE_LAST_FETCH]))) {
+	if ((rc = mdb_dbi_open(txn, "profile_last_fetch", MDB_CREATE, &lmdb->dbs[NDB_DB_PROFILE_LAST_FETCH]))) {
 		fprintf(stderr, "mdb_dbi_open profile last fetch, error %d\n", rc);
 		return 0;
 	}
