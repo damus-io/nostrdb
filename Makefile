@@ -14,13 +14,14 @@ C_BINDINGS_META=bindings/c/meta_builder.h bindings/c/meta_reader.h bindings/c/me
 C_BINDINGS_COMMON=bindings/c/flatbuffers_common_builder.h bindings/c/flatbuffers_common_reader.h
 C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE) $(C_BINDINGS_META)
 BINDINGS=bindings
+
 CHECKDATA=testdata/db/v0/data.mdb
 
 all: lib bindings
 
 lib: benches test
 
-bindings: bindings-swift bindings-c
+bindings: bindings-swift bindings-rust bindings-c
 
 check: test $(CHECKDATA)
 	rm -rf testdata/db/*.mdb
@@ -65,7 +66,17 @@ bindings/c/flatbuffers_common_builder.h: bindings/c/.dir
 bindings/c/%_json_parser.h: schemas/%.fbs bindings/c/.dir
 	flatcc --json-parser $< -o bindings/c
 
-bindings-swift: bindings/swift/NdbProfile.swift
+bindings-rust: bindings/rust/ndb_profile.rs bindings/rust/ndb_meta.rs
+
+bindings/rust/ndb_profile.rs: schemas/profile.fbs bindings/rust
+	flatc --gen-json-emit --rust $<
+	@mv profile_generated.rs $@
+
+bindings/rust/ndb_meta.rs: schemas/meta.fbs bindings/swift
+	flatc --rust $< 
+	@mv meta_generated.rs $@
+
+bindings-swift: bindings/swift/NdbProfile.swift bindings/swift/NdbMeta.swift
 
 bindings/swift/NdbProfile.swift: schemas/profile.fbs bindings/swift
 	flatc --gen-json-emit --swift $<
