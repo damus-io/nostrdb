@@ -584,7 +584,6 @@ static void *ndb_lookup_by_key(struct ndb_txn *txn, uint64_t key,
 
 	if (mdb_get(txn->mdb_txn, txn->ndb->lmdb.dbs[store], &k, &v)) {
 		ndb_debug("ndb_get_profile_by_pubkey: mdb_get note failed\n");
-		mdb_txn_abort(txn->mdb_txn);
 		return NULL;
 	}
 
@@ -664,6 +663,17 @@ void *ndb_get_profile_by_key(struct ndb_txn *txn, uint64_t key, size_t *len)
 {
 	return ndb_lookup_by_key(txn, key, NDB_DB_PROFILE, len);
 }
+
+uint64_t ndb_read_last_profile_fetch(struct ndb_txn *txn, uint64_t profile_key)
+{
+	size_t len;
+	void *ret = ndb_lookup_by_key(txn, profile_key, NDB_DB_PROFILE_LAST_FETCH, &len);
+	if (ret == NULL)
+		return 0;
+	assert(len == sizeof(uint64_t));
+	return *((uint64_t*)ret);
+}
+
 
 static int ndb_has_note(MDB_txn *txn, struct ndb_lmdb *lmdb, const unsigned char *id)
 {
