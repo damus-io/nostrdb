@@ -454,11 +454,15 @@ struct ndb_writer_ndb_meta {
 	uint64_t version;
 };
 
+// Used in the writer thread when writing ndb_profile_fetch_record's
+//   kv = pubkey: recor
 struct ndb_writer_last_fetch {
 	unsigned char pubkey[32];
 	uint64_t fetched_at;
 };
 
+// The different types of messages that the writer thread can write to the
+// database
 struct ndb_writer_msg {
 	enum ndb_writer_msgtype type;
 	union {
@@ -518,15 +522,17 @@ static int ndb_writer_queue_note(struct ndb_writer *writer,
 }
 
 static void ndb_writer_last_profile_fetch(struct ndb_txn *txn,
-					  struct ndb_writer_last_fetch *w)
+					  const unsigned char *pubkey,
+					  uint64_t fetched_at
+					  )
 {
 	int rc;
 	MDB_val key, val;
 	
-	key.mv_data = (unsigned char*)&w->pubkey;
-	key.mv_size = sizeof(w->pubkey);
-	val.mv_data = &w->fetched_at;
-	val.mv_size = sizeof(w->fetched_at);
+	key.mv_data = (unsigned char*)pubkey;
+	key.mv_size = 32;
+	val.mv_data = &fetched_at;
+	val.mv_size = sizeof(fetched_at);
 
 	if ((rc = mdb_put(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_PROFILE_LAST_FETCH],
 			  &key, &val, 0)))
@@ -537,6 +543,46 @@ static void ndb_writer_last_profile_fetch(struct ndb_txn *txn,
 	}
 
 	//fprintf(stderr, "writing version %" PRIu64 "\n", version);
+}
+
+
+// We just received a profile that we haven't processed yet, but it could
+// be an older one! Make sure we only write last fetched profile if it's a new
+// one
+//
+// To do this, we first check the latest profile in the database. If the
+// created_date for this profile note is newer, then we write a
+// last_profile_fetch record, otherwise we do not.
+//
+// WARNING: This function is only valid when called from the writer thread
+static int ndb_maybe_write_last_profile_fetch(struct ndb_txn *txn,
+					       struct ndb_note *note)
+{
+	size_t len;
+	uint64_t profile_key, note_key;
+	void *root;
+	struct ndb_note *last_profile;
+	NdbProfileRecord_table_t record;
+
+	if ((root = ndb_get_profile_by_pubkey(txn, note->pubkey, &len, &profile_key))) {
+		record = NdbProfileRecord_as_root(root);
+		note_key = NdbProfileRecord_note_key(record);
+		last_profile = ndb_get_note_by_key(txn, note_key, &len);
+		if (last_profile == NULL) {
+			return 0;
+		}
+
+		// found profile, let's see if it's newer than ours
+		if (note->created_at > last_profile->created_at) {
+			// this is a new profile note, record last fetched time
+			ndb_writer_last_profile_fetch(txn, note->pubkey, time(NULL));
+		}
+	} else {
+		// couldn't fetch profile. record last fetched time
+		ndb_writer_last_profile_fetch(txn, note->pubkey, time(NULL));
+	}
+
+	return 1;
 }
 
 int ndb_write_last_profile_fetch(struct ndb *ndb, const unsigned char *pubkey,
@@ -679,14 +725,20 @@ void *ndb_get_profile_by_key(struct ndb_txn *txn, uint64_t key, size_t *len)
 	return ndb_lookup_by_key(txn, key, NDB_DB_PROFILE, len);
 }
 
-uint64_t ndb_read_last_profile_fetch(struct ndb_txn *txn, uint64_t profile_key)
+uint64_t
+ndb_read_last_profile_fetch(struct ndb_txn *txn, const unsigned char *pubkey)
 {
-	size_t len;
-	void *ret = ndb_lookup_by_key(txn, profile_key, NDB_DB_PROFILE_LAST_FETCH, &len);
-	if (ret == NULL)
+	MDB_val k, v;
+
+	k.mv_data = (unsigned char*)pubkey;
+	k.mv_size = 32;
+
+	if (mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_PROFILE_LAST_FETCH], &k, &v)) {
+		ndb_debug("ndb_read_last_profile_fetch: mdb_get note failed\n");
 		return 0;
-	assert(len == sizeof(uint64_t));
-	return *((uint64_t*)ret);
+	}
+
+	return *((uint64_t*)v.mv_data);
 }
 
 
@@ -1125,6 +1177,12 @@ static int ndb_write_profile(struct ndb_txn *txn,
 	val.mv_data = &profile_key;
 	val.mv_size = sizeof(profile_key);
 
+	// write last fetched record
+	if (!ndb_maybe_write_last_profile_fetch(txn, note)) {
+		ndb_debug("failed to write last profile fetched record\n");
+		return 0;
+	}
+
 	if ((rc = mdb_put(txn->mdb_txn, pk_db, &key, &val, 0))) {
 		ndb_debug("write profile_pk(%" PRIu64 ") to db failed: %s\n",
 				profile_key, mdb_strerror(rc));
@@ -1395,7 +1453,10 @@ static void *ndb_writer_thread(void *data)
 				ndb_write_version(&txn, msg->ndb_meta.version);
 				break;
 			case NDB_WRITER_PROFILE_LAST_FETCH:
-				ndb_writer_last_profile_fetch(&txn, &msg->last_fetch);
+				ndb_writer_last_profile_fetch(&txn,
+						msg->last_fetch.pubkey,
+						msg->last_fetch.fetched_at
+						);
 				break;
 			}
 		}

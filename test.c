@@ -46,6 +46,45 @@ static void print_search(struct ndb_txn *txn, struct ndb_search *search)
 	printf("\n");
 }
 
+static void test_fetched_at()
+{
+	struct ndb *ndb;
+	size_t mapsize;
+	int ingester_threads;
+	struct ndb_txn txn;
+	uint64_t fetched_at;
+
+	mapsize = 1024 * 1024 * 100;
+	ingester_threads = 1;
+
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+
+	const unsigned char pubkey[] = { 0x87, 0xfb, 0xc6, 0xd5, 0x98, 0x31, 0xa8, 0x23, 0xa4, 0x5d, 0x10, 0x1f,
+  0x86, 0x94, 0x2c, 0x41, 0xcd, 0xe2, 0x90, 0x23, 0xf4, 0x09, 0x20, 0x24,
+  0xa2, 0x7c, 0x50, 0x10, 0x3c, 0x15, 0x40, 0x01 };
+
+	const char profile_1[] = "[\"EVENT\",{\"id\": \"a44eb8fb6931d6155b04038bef0624407e46c85c61e5758392cbb615f00184ca\",\"pubkey\": \"87fbc6d59831a823a45d101f86942c41cde29023f4092024a27c50103c154001\",\"created_at\": 1695593354,\"kind\": 0,\"tags\": [],\"content\": \"{\\\"name\\\":\\\"b\\\"}\",\"sig\": \"7540bbde4b4479275e20d95acaa64027359a73989927f878825093cba2f468bd8e195919a77b4c230acecddf92e6b4bee26918b0c0842f84ec7c1fae82453906\"}]";
+
+	uint64_t t1 = time(NULL);
+
+	// process the first event, this should set the fetched_at
+	assert(ndb_process_client_event(ndb, profile_1, sizeof(profile_1)));
+
+	// we sleep for a second because we want to make sure the fetched_at is not
+	// updated for the next record, which is an older profile.
+	sleep(1);
+
+	assert(ndb_begin_query(ndb, &txn));
+
+	// this should be set to t1
+	fetched_at = ndb_read_last_profile_fetch(&txn, pubkey);
+
+	assert(fetched_at == t1);
+
+	//const char profile_2[] = "[\"EVENT\",{\"id\": \"9b2861dda8fc602ec2753f92f1a443c9565de606e0c8f4fd2db4f2506a3b13ca\",\"pubkey\": \"87fbc6d59831a823a45d101f86942c41cde29023f4092024a27c50103c154001\",\"created_at\": 1695593347,\"kind\": 0,\"tags\": [],\"content\": \"{\\\"name\\\":\\\"a\\\"}\",\"sig\": \"f48da228f8967d33c3caf0a78f853b5144631eb86c7777fd25949123a5272a92765a0963d4686dd0efe05b7a9b986bfac8d43070b234153acbae5006d5a90f31\"}]";
+
+
+}
 
 static void test_reaction_counter()
 {
@@ -821,6 +860,7 @@ static void test_fast_strchr()
 
 int main(int argc, const char *argv[]) {
 	test_migrate();
+	test_fetched_at();
 	test_profile_updates();
 	test_reaction_counter();
 	test_load_profiles();
