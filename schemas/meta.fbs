@@ -1,6 +1,11 @@
 
 table NdbEventMeta {
   received_at:int;
+  reactions:int;
+  quotes:int;
+  reposts:int;
+  zaps:int;
+  zap_total:long;
 }
 
 root_type NdbEventMeta;
