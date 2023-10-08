@@ -26,6 +26,11 @@ impl<'a> flatbuffers::Follow<'a> for NdbEventMeta<'a> {
 
 impl<'a> NdbEventMeta<'a> {
   pub const VT_RECEIVED_AT: flatbuffers::VOffsetT = 4;
+  pub const VT_REACTIONS: flatbuffers::VOffsetT = 6;
+  pub const VT_QUOTES: flatbuffers::VOffsetT = 8;
+  pub const VT_REPOSTS: flatbuffers::VOffsetT = 10;
+  pub const VT_ZAPS: flatbuffers::VOffsetT = 12;
+  pub const VT_ZAP_TOTAL: flatbuffers::VOffsetT = 14;
 
   #[inline]
   pub unsafe fn init_from_table(table: flatbuffers::Table<'a>) -> Self {
@@ -37,6 +42,11 @@ impl<'a> NdbEventMeta<'a> {
     args: &'args NdbEventMetaArgs
   ) -> flatbuffers::WIPOffset<NdbEventMeta<'bldr>> {
     let mut builder = NdbEventMetaBuilder::new(_fbb);
+    builder.add_zap_total(args.zap_total);
+    builder.add_zaps(args.zaps);
+    builder.add_reposts(args.reposts);
+    builder.add_quotes(args.quotes);
+    builder.add_reactions(args.reactions);
     builder.add_received_at(args.received_at);
     builder.finish()
   }
@@ -49,6 +59,41 @@ impl<'a> NdbEventMeta<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<i32>(NdbEventMeta::VT_RECEIVED_AT, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn reactions(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(NdbEventMeta::VT_REACTIONS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn quotes(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(NdbEventMeta::VT_QUOTES, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn reposts(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(NdbEventMeta::VT_REPOSTS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn zaps(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(NdbEventMeta::VT_ZAPS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn zap_total(&self) -> i64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i64>(NdbEventMeta::VT_ZAP_TOTAL, Some(0)).unwrap()}
+  }
 }
 
 impl flatbuffers::Verifiable for NdbEventMeta<'_> {
@@ -59,18 +104,33 @@ impl flatbuffers::Verifiable for NdbEventMeta<'_> {
     use self::flatbuffers::Verifiable;
     v.visit_table(pos)?
      .visit_field::<i32>("received_at", Self::VT_RECEIVED_AT, false)?
+     .visit_field::<i32>("reactions", Self::VT_REACTIONS, false)?
+     .visit_field::<i32>("quotes", Self::VT_QUOTES, false)?
+     .visit_field::<i32>("reposts", Self::VT_REPOSTS, false)?
+     .visit_field::<i32>("zaps", Self::VT_ZAPS, false)?
+     .visit_field::<i64>("zap_total", Self::VT_ZAP_TOTAL, false)?
      .finish();
     Ok(())
   }
 }
 pub struct NdbEventMetaArgs {
     pub received_at: i32,
+    pub reactions: i32,
+    pub quotes: i32,
+    pub reposts: i32,
+    pub zaps: i32,
+    pub zap_total: i64,
 }
 impl<'a> Default for NdbEventMetaArgs {
   #[inline]
   fn default() -> Self {
     NdbEventMetaArgs {
       received_at: 0,
+      reactions: 0,
+      quotes: 0,
+      reposts: 0,
+      zaps: 0,
+      zap_total: 0,
     }
   }
 }
@@ -83,6 +143,26 @@ impl<'a: 'b, 'b> NdbEventMetaBuilder<'a, 'b> {
   #[inline]
   pub fn add_received_at(&mut self, received_at: i32) {
     self.fbb_.push_slot::<i32>(NdbEventMeta::VT_RECEIVED_AT, received_at, 0);
+  }
+  #[inline]
+  pub fn add_reactions(&mut self, reactions: i32) {
+    self.fbb_.push_slot::<i32>(NdbEventMeta::VT_REACTIONS, reactions, 0);
+  }
+  #[inline]
+  pub fn add_quotes(&mut self, quotes: i32) {
+    self.fbb_.push_slot::<i32>(NdbEventMeta::VT_QUOTES, quotes, 0);
+  }
+  #[inline]
+  pub fn add_reposts(&mut self, reposts: i32) {
+    self.fbb_.push_slot::<i32>(NdbEventMeta::VT_REPOSTS, reposts, 0);
+  }
+  #[inline]
+  pub fn add_zaps(&mut self, zaps: i32) {
+    self.fbb_.push_slot::<i32>(NdbEventMeta::VT_ZAPS, zaps, 0);
+  }
+  #[inline]
+  pub fn add_zap_total(&mut self, zap_total: i64) {
+    self.fbb_.push_slot::<i64>(NdbEventMeta::VT_ZAP_TOTAL, zap_total, 0);
   }
   #[inline]
   pub fn new(_fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>) -> NdbEventMetaBuilder<'a, 'b> {
@@ -103,6 +183,11 @@ impl core::fmt::Debug for NdbEventMeta<'_> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     let mut ds = f.debug_struct("NdbEventMeta");
       ds.field("received_at", &self.received_at());
+      ds.field("reactions", &self.reactions());
+      ds.field("quotes", &self.quotes());
+      ds.field("reposts", &self.reposts());
+      ds.field("zaps", &self.zaps());
+      ds.field("zap_total", &self.zap_total());
       ds.finish()
   }
 }
