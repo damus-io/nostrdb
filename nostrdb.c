@@ -16,6 +16,8 @@
 
 #include "bindings/c/profile_json_parser.h"
 #include "bindings/c/profile_builder.h"
+#include "bindings/c/meta_builder.h"
+#include "bindings/c/meta_reader.h"
 #include "bindings/c/profile_verifier.h"
 #include "secp256k1.h"
 #include "secp256k1_ecdh.h"
@@ -807,8 +809,12 @@ static int ndb_ingester_process_note(secp256k1_context *ctx,
 				     size_t note_size,
 				     struct ndb_writer_msg *out)
 {
+	//printf("ndb_ingester_process_note ");
+	//print_hex(note->id, 32);
+	//printf("\n");
+
 	// Verify! If it's an invalid note we don't need to
-	// bothter writing it to the database
+	// bother writing it to the database
 	if (!ndb_note_verify(ctx, note->pubkey, note->id, note->sig)) {
 		ndb_debug("signature verification failed\n");
 		return 0;
@@ -1135,6 +1141,126 @@ static int ndb_write_profile(struct ndb_txn *txn,
 	return 1;
 }
 
+// find the last id tag in a note (e, p, etc)
+static unsigned char *ndb_note_last_id_tag(struct ndb_note *note, char type)
+{
+	unsigned char *last = NULL;
+	struct ndb_iterator iter;
+	struct ndb_str str;
+
+	// get the liked event id (last id)
+	ndb_tags_iterate_start(note, &iter);
+
+	while (ndb_tags_iterate_next(&iter)) {
+		if (iter.tag->count < 2)
+			continue;
+
+		str = ndb_note_str(note, &iter.tag->strs[0]);
+
+		// assign liked to the last e tag
+		if (str.flag == NDB_PACKED_STR && str.str[0] == type) {
+			str = ndb_note_str(note, &iter.tag->strs[1]);
+			if (str.flag == NDB_PACKED_ID)
+				last = str.id;
+		}
+	}
+
+	return last;
+}
+
+void *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char *id, size_t *len)
+{
+	MDB_val k, v;
+
+	k.mv_data = (unsigned char*)id;
+	k.mv_size = 32;
+
+	if (mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], &k, &v)) {
+		ndb_debug("ndb_get_note_meta: mdb_get note failed\n");
+		return NULL;
+	}
+
+	if (len)
+		*len = v.mv_size;
+
+	return v.mv_data;
+}
+
+// When receiving a reaction note, look for the liked id and increase the
+// reaction counter in the note metadata database
+//
+// TODO: I found some bugs when implementing this feature. If the same note id
+// is processed multiple times in the same ingestion block, then it will count
+// the like twice. This is because it hasn't been written to the DB yet and the
+// ingestor doesn't know about notes that are being processed at the same time.
+// One fix for this is to maintain a hashtable in the ingestor and make sure
+// the same note is not processed twice.
+// 
+// I'm not sure how common this would be, so I'm not going to worry about it
+// for now, but it's something to keep in mind.
+static int ndb_write_reaction_stats(struct ndb_txn *txn, struct ndb_note *note)
+{
+	size_t len;
+	void *root;
+	int reactions, rc;
+	MDB_val key, val;
+	NdbEventMeta_table_t meta;
+	unsigned char *liked = ndb_note_last_id_tag(note, 'e');
+
+	if (liked == NULL)
+		return 0;
+
+	root = ndb_get_note_meta(txn, liked, &len);
+
+	flatcc_builder_t builder;
+	flatcc_builder_init(&builder);
+	NdbEventMeta_start_as_root(&builder);
+
+	// no meta record, let's make one
+	if (root == NULL) {
+		NdbEventMeta_reactions_add(&builder, 1);
+	} else {
+		// clone existing and add to it
+		meta = NdbEventMeta_as_root(root);
+	
+		reactions = NdbEventMeta_reactions_get(meta);
+		NdbEventMeta_clone(&builder, meta);
+		NdbEventMeta_reactions_add(&builder, reactions + 1);
+	}
+
+	NdbProfileRecord_end_as_root(&builder);
+	root = flatcc_builder_finalize_aligned_buffer(&builder, &len);
+	assert(((uint64_t)root % 8) == 0);
+
+	if (root == NULL) {
+		ndb_debug("failed to create note metadata record\n");
+		return 0;
+	}
+
+	// metadata is keyed on id because we want to collect stats regardless
+	// if we have the note yet or not
+	key.mv_data = liked;
+	key.mv_size = 32;
+	
+	val.mv_data = root;
+	val.mv_size = len;
+
+	// write the new meta record
+	//ndb_debug("writing stats record for ");
+	//print_hex(liked, 32);
+	//ndb_debug("\n");
+
+	if ((rc = mdb_put(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], &key, &val, 0))) {
+		ndb_debug("write reaction stats to db failed: %s\n", mdb_strerror(rc));
+		return 0;
+	}
+
+	free(root);
+
+	return 1;
+}
+
+
 static uint64_t ndb_write_note(struct ndb_txn *txn,
 			       struct ndb_writer_note *note)
 {
@@ -1177,7 +1303,7 @@ static uint64_t ndb_write_note(struct ndb_txn *txn,
 	}
 
 	if (note->note->kind == 7) {
-		ndb_write_reaction_stats(txn, note->note, note_key);
+		ndb_write_reaction_stats(txn, note->note);
 	}
 
 	return note_key;
@@ -1261,6 +1387,9 @@ static void *ndb_writer_thread(void *data)
 				break;
 			case NDB_WRITER_NOTE:
 				ndb_write_note(&txn, &msg->note);
+				//printf("wrote note ");
+				//print_hex(msg->note.note->id, 32);
+				//printf("\n");
 				break;
 			case NDB_WRITER_DBMETA:
 				ndb_write_version(&txn, msg->ndb_meta.version);
@@ -1276,7 +1405,6 @@ static void *ndb_writer_thread(void *data)
 			fprintf(stderr, "writer thread txn commit failed");
 			assert(false);
 		}
-
 
 		// free notes
 		for (i = 0; i < popped; i++) {
@@ -1486,7 +1614,7 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 	}
 
 	// note metadata db
-	if ((rc = mdb_dbi_open(txn, "meta", MDB_CREATE | MDB_INTEGERKEY, &lmdb->dbs[NDB_DB_META]))) {
+	if ((rc = mdb_dbi_open(txn, "meta", MDB_CREATE, &lmdb->dbs[NDB_DB_META]))) {
 		fprintf(stderr, "mdb_dbi_open meta failed, error %d\n", rc);
 		return 0;
 	}

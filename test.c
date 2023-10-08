@@ -6,6 +6,8 @@
 #include "memchr.h"
 #include "bindings/c/profile_reader.h"
 #include "bindings/c/profile_verifier.h"
+#include "bindings/c/meta_reader.h"
+#include "bindings/c/meta_verifier.h"
 
 #include <stdio.h>
 #include <assert.h>
@@ -44,6 +46,47 @@ static void print_search(struct ndb_txn *txn, struct ndb_search *search)
 	printf("\n");
 }
 
+
+static void test_reaction_counter()
+{
+	static const int alloc_size = 1024 * 1024;
+	char *json = malloc(alloc_size);
+	struct ndb *ndb;
+	size_t mapsize, len;
+	void *root;
+	int written, ingester_threads, reactions;
+	NdbEventMeta_table_t meta;
+	struct ndb_txn txn;
+
+	mapsize = 1024 * 1024 * 100;
+	ingester_threads = 1;
+
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+
+	read_file("testdata/reactions.json", (unsigned char*)json, alloc_size, &written);
+	assert(ndb_process_client_events(ndb, json, written));
+	ndb_destroy(ndb);
+
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+
+	assert(ndb_begin_query(ndb, &txn));
+
+	const unsigned char id[32] = {
+	  0x1a, 0x41, 0x56, 0x30, 0x31, 0x09, 0xbb, 0x4a, 0x66, 0x0a, 0x6a, 0x90,
+	  0x04, 0xb0, 0xcd, 0xce, 0x8d, 0x83, 0xc3, 0x99, 0x1d, 0xe7, 0x86, 0x4f,
+	  0x18, 0x76, 0xeb, 0x0f, 0x62, 0x2c, 0x68, 0xe8
+	};
+
+	assert((root = ndb_get_note_meta(&txn, id, &len)));
+	assert(0 == NdbEventMeta_verify_as_root(root, len));
+	assert((meta = NdbEventMeta_as_root(root)));
+
+	reactions = NdbEventMeta_reactions_get(meta);
+	//printf("counted reactions: %d\n", reactions);
+	assert(reactions == 2);
+	ndb_end_query(&txn);
+	ndb_destroy(ndb);
+}
 
 static void test_profile_search(struct ndb *ndb)
 {
@@ -779,6 +822,7 @@ static void test_fast_strchr()
 int main(int argc, const char *argv[]) {
 	test_migrate();
 	test_profile_updates();
+	test_reaction_counter();
 	test_load_profiles();
 	test_basic_event();
 	test_empty_tags();
