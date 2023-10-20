@@ -523,8 +523,7 @@ static int ndb_writer_queue_note(struct ndb_writer *writer,
 
 static void ndb_writer_last_profile_fetch(struct ndb_txn *txn,
 					  const unsigned char *pubkey,
-					  uint64_t fetched_at
-					  )
+					  uint64_t fetched_at)
 {
 	int rc;
 	MDB_val key, val;

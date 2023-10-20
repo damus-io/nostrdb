@@ -46,13 +46,16 @@ static void print_search(struct ndb_txn *txn, struct ndb_search *search)
 	printf("\n");
 }
 
+
+// Test fetched_at profile records. These are saved when new profiles are
+// processed, or the last time we've fetched the profile.
 static void test_fetched_at()
 {
 	struct ndb *ndb;
 	size_t mapsize;
 	int ingester_threads;
 	struct ndb_txn txn;
-	uint64_t fetched_at;
+	uint64_t fetched_at, t1, t2;
 
 	mapsize = 1024 * 1024 * 100;
 	ingester_threads = 1;
@@ -65,7 +68,7 @@ static void test_fetched_at()
 
 	const char profile_1[] = "[\"EVENT\",{\"id\": \"a44eb8fb6931d6155b04038bef0624407e46c85c61e5758392cbb615f00184ca\",\"pubkey\": \"87fbc6d59831a823a45d101f86942c41cde29023f4092024a27c50103c154001\",\"created_at\": 1695593354,\"kind\": 0,\"tags\": [],\"content\": \"{\\\"name\\\":\\\"b\\\"}\",\"sig\": \"7540bbde4b4479275e20d95acaa64027359a73989927f878825093cba2f468bd8e195919a77b4c230acecddf92e6b4bee26918b0c0842f84ec7c1fae82453906\"}]";
 
-	uint64_t t1 = time(NULL);
+	t1 = time(NULL);
 
 	// process the first event, this should set the fetched_at
 	assert(ndb_process_client_event(ndb, profile_1, sizeof(profile_1)));
@@ -81,9 +84,23 @@ static void test_fetched_at()
 
 	assert(fetched_at == t1);
 
-	//const char profile_2[] = "[\"EVENT\",{\"id\": \"9b2861dda8fc602ec2753f92f1a443c9565de606e0c8f4fd2db4f2506a3b13ca\",\"pubkey\": \"87fbc6d59831a823a45d101f86942c41cde29023f4092024a27c50103c154001\",\"created_at\": 1695593347,\"kind\": 0,\"tags\": [],\"content\": \"{\\\"name\\\":\\\"a\\\"}\",\"sig\": \"f48da228f8967d33c3caf0a78f853b5144631eb86c7777fd25949123a5272a92765a0963d4686dd0efe05b7a9b986bfac8d43070b234153acbae5006d5a90f31\"}]";
+	t2 = time(NULL);
+	assert(t1 != t2); // sanity
 
+	const char profile_2[] = "[\"EVENT\",{\"id\": \"9b2861dda8fc602ec2753f92f1a443c9565de606e0c8f4fd2db4f2506a3b13ca\",\"pubkey\": \"87fbc6d59831a823a45d101f86942c41cde29023f4092024a27c50103c154001\",\"created_at\": 1695593347,\"kind\": 0,\"tags\": [],\"content\": \"{\\\"name\\\":\\\"a\\\"}\",\"sig\": \"f48da228f8967d33c3caf0a78f853b5144631eb86c7777fd25949123a5272a92765a0963d4686dd0efe05b7a9b986bfac8d43070b234153acbae5006d5a90f31\"}]";
 
+	t2 = time(NULL);
+
+	// process the second event, since this is older it should not change
+	// fetched_at
+	assert(ndb_process_client_event(ndb, profile_2, sizeof(profile_2)));
+
+	// we sleep for a second because we want to make sure the fetched_at is not
+	// updated for the next record, which is an older profile.
+	sleep(1);
+
+	fetched_at = ndb_read_last_profile_fetch(&txn, pubkey);
+	assert(fetched_at == t1);
 }
 
 static void test_reaction_counter()
