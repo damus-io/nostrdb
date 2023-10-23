@@ -733,7 +733,7 @@ ndb_read_last_profile_fetch(struct ndb_txn *txn, const unsigned char *pubkey)
 	k.mv_size = 32;
 
 	if (mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_PROFILE_LAST_FETCH], &k, &v)) {
-		ndb_debug("ndb_read_last_profile_fetch: mdb_get note failed\n");
+		//ndb_debug("ndb_read_last_profile_fetch: mdb_get note failed\n");
 		return 0;
 	}
 
