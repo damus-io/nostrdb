@@ -6,7 +6,7 @@ LDS = $(SRCS) $(ARS)
 DEPS = $(SRCS) $(HEADERS) $(ARS)
 ARS = deps/lmdb/liblmdb.a deps/secp256k1/.libs/libsecp256k1.a 
 LMDB_VER=0.9.31
-FLATCC_VER=0.6.1
+FLATCC_VER=05dc16dc2b0316e61063bb1fc75426647badce48
 PREFIX ?= /usr/local
 SUBMODULES = deps/secp256k1
 C_BINDINGS_PROFILE=bindings/c/profile_builder.h bindings/c/profile_reader.h bindings/c/profile_verifier.h bindings/c/profile_json_parser.h
@@ -94,7 +94,7 @@ deps/LMDB_$(LMDB_VER).tar.gz: deps/.dir
 	curl -L https://github.com/LMDB/lmdb/archive/refs/tags/LMDB_$(LMDB_VER).tar.gz -o $@
 
 deps/flatcc_$(FLATCC_VER).tar.gz: deps/.dir
-	curl -L https://github.com/dvidelabs/flatcc/archive/refs/tags/v0.6.1.tar.gz -o $@
+	curl -L https://github.com/jb55/flatcc/archive/$(FLATCC_VER).tar.gz -o $@
 
 deps/flatcc/src/runtime/json_parser.c: deps/flatcc_$(FLATCC_VER).tar.gz deps/.dir
 	tar xf $<
