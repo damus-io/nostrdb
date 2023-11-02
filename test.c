@@ -284,7 +284,7 @@ static void test_migrate() {
 	assert(ndb_init(&ndb, v0_dir, mapsize, threads, 0));
 	ndb_destroy(ndb);
 	assert(ndb_init(&ndb, v0_dir, mapsize, threads, 0));
-	assert(ndb_db_version(ndb) == 2);
+	assert(ndb_db_version(ndb) == 3);
 
 	test_profile_search(ndb);
 	ndb_destroy(ndb);
