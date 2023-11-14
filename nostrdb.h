@@ -271,6 +271,7 @@ int ndb_builder_push_tag_str(struct ndb_builder *builder, const char *str, int l
 
 // stats
 int ndb_stat(struct ndb *ndb, struct ndb_stat *stat);
+void ndb_stat_counts_init(struct ndb_stat_counts *counts);
 
 static inline struct ndb_str ndb_note_str(struct ndb_note *note,
 					  union ndb_packed_str *pstr)

@@ -2909,7 +2909,7 @@ int ndb_builder_new_tag(struct ndb_builder *builder)
 	return cursor_push_tag(&builder->note_cur, &tag);
 }
 
-static void ndb_stat_counts_init(struct ndb_stat_counts *counts)
+void ndb_stat_counts_init(struct ndb_stat_counts *counts)
 {
 	counts->count = 0;
 	counts->key_size = 0;
