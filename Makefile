@@ -14,12 +14,16 @@ C_BINDINGS_META=bindings/c/meta_builder.h bindings/c/meta_reader.h bindings/c/me
 C_BINDINGS_COMMON=bindings/c/flatbuffers_common_builder.h bindings/c/flatbuffers_common_reader.h
 C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE) $(C_BINDINGS_META)
 BINDINGS=bindings
+BIN=ndb
 
 CHECKDATA=testdata/db/v0/data.mdb
 
-all: lib bindings
+all: $(BIN) lib bindings
 
 lib: benches test
+
+ndb: ndb.c $(DEPS)
+	$(CC) $(CFLAGS) ndb.c $(LDS) -o $@
 
 bindings: bindings-swift bindings-rust bindings-c
 

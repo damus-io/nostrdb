@@ -19,3 +19,4 @@ libsecp256k1.a
 .direnv/
 deps/
 testdata/db/*.mdb
+ndb
