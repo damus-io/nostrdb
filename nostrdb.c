@@ -1572,6 +1572,7 @@ static void *ndb_ingester_thread(void *data)
 	struct ndb_writer_msg outs[THREAD_QUEUE_BATCH], *out;
 	int i, to_write, popped, done, any_event;
 	MDB_txn *read_txn = NULL;
+	int rc;
 
 	ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
 	ndb_debug("started ingester thread\n");
@@ -1592,8 +1593,12 @@ static void *ndb_ingester_thread(void *data)
 			}
 		}
 
-		if (any_event)
-			mdb_txn_begin(lmdb->env, NULL, MDB_RDONLY, &read_txn);
+		if (any_event && (rc = mdb_txn_begin(lmdb->env, NULL, MDB_RDONLY, &read_txn))) {
+			// this is bad
+			fprintf(stderr, "UNUSUAL ndb_ingester: mdb_txn_begin failed: '%s'\n",
+					mdb_strerror(rc));
+			continue;
+		}
 
 		for (i = 0; i < popped; i++) {
 			msg = &msgs[i];
