@@ -74,6 +74,16 @@ static inline void *cursor_malloc(struct cursor *mem, unsigned long size)
 	return ret;
 }
 
+static inline int cursor_skip(struct cursor *cursor, int n)
+{
+    if (cursor->p + n >= cursor->end)
+        return 0;
+
+    cursor->p += n;
+
+    return 1;
+}
+
 static inline int cursor_slice(struct cursor *mem, struct cursor *slice, size_t size)
 {
 	unsigned char *p;
