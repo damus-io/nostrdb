@@ -492,7 +492,8 @@ static void test_replacement()
 	read_file("testdata/old-new.json", (unsigned char*)json, alloc_size, &written);
 	assert(ndb_process_events(ndb, json, written));
 
-	usleep(1000); // 1ms, works at 0.1ms too
+	ndb_destroy(ndb);
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
 
 	struct ndb_txn txn;
 	assert(ndb_begin_query(ndb, &txn));
