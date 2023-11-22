@@ -47,6 +47,72 @@ static void print_search(struct ndb_txn *txn, struct ndb_search *search)
 }
 
 
+static void test_filters()
+{
+	struct ndb_filter filter, *f;
+	struct ndb_note *note;
+	unsigned char buffer[4096];
+
+	const char *test_note = "{\"id\": \"160e76ca67405d7ce9ef7d2dd72f3f36401c8661a73d45498af842d40b01b736\",\"pubkey\": \"67c67870aebc327eb2a2e765e6dbb42f0f120d2c4e4e28dc16b824cf72a5acc1\",\"created_at\": 1700688516,\"kind\": 1337,\"tags\": [[\"t\",\"hashtag\"],[\"t\",\"grownostr\"],[\"p\",\"4d2e7a6a8e08007ace5a03391d21735f45caf1bf3d67b492adc28967ab46525e\"]],\"content\": \"\",\"sig\": \"20c2d070261ed269559ada40ca5ac395c389681ee3b5f7d50de19dd9b328dd70cf27d9d13875e87c968d9b49fa05f66e90f18037be4529b9e582c7e2afac3f06\"}";
+
+	assert(ndb_note_from_json(test_note, strlen(test_note), &note, buffer, sizeof(buffer)));
+
+	f = &filter;
+
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1337));
+	assert(ndb_filter_add_int_element(f, 2));
+
+	assert(f->current->count == 2);
+	assert(f->current->field.type == NDB_FILTER_KINDS);
+
+	// can't start if we've already started
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS) == 0);
+	assert(ndb_filter_start_field(f, NDB_FILTER_GENERIC) == 0);
+	ndb_filter_end_field(f);
+
+	// try matching the filter
+	assert(ndb_filter_matches(f, note));
+
+	note->kind = 1;
+
+	// inverse match
+	assert(!ndb_filter_matches(f, note));
+
+	// should also match 2
+	note->kind = 2;
+	assert(ndb_filter_matches(f, note));
+
+	// don't free, just reset data pointers
+	ndb_filter_reset(f);
+
+	// now try generic matches
+	assert(ndb_filter_start_generic_field(f, 't'));
+	assert(ndb_filter_add_str_element(f, "grownostr"));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 3));
+	ndb_filter_end_field(f);
+
+	// shouldn't match the kind filter
+	assert(!ndb_filter_matches(f, note));
+
+	note->kind = 3;
+
+	// now it should
+	assert(ndb_filter_matches(f, note));
+
+	ndb_filter_reset(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_AUTHORS));
+	assert(ndb_filter_add_id_element(f, note->pubkey));
+	ndb_filter_end_field(f);
+	assert(f->current == NULL);
+	assert(ndb_filter_matches(f, note));
+
+	ndb_filter_free(f);
+}
+
 // Test fetched_at profile records. These are saved when new profiles are
 // processed, or the last time we've fetched the profile.
 static void test_fetched_at()
@@ -877,6 +943,7 @@ static void test_fast_strchr()
 }
 
 int main(int argc, const char *argv[]) {
+	test_filters();
 	test_migrate();
 	test_fetched_at();
 	test_profile_updates();
