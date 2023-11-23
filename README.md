@@ -1,6 +1,8 @@
 
 # nostrdb
 
+![ci](https://github.com/damus-io/nostrdb/actions/workflows/c-cpp.yml/badge.svg)
+
 The unfairly fast nostr database backed by lmdb.
 
 nostrdb stores nostr events as a custom in-memory representation that enables
