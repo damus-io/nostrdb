@@ -1203,9 +1203,41 @@ static int test_varints() {
 	return 0;
 }
 
+static void test_subscriptions()
+{
+	struct ndb *ndb;
+	struct ndb_config config;
+	struct ndb_filter filter, *f = &filter;
+	uint64_t subid;
+	uint64_t note_id = 0;
+	struct ndb_filter_group group;
+	ndb_default_config(&config);
+
+	const char *ev = "[\"EVENT\",\"s\",{\"id\": \"3718b368de4d01a021990e6e00dce4bdf860caed21baffd11b214ac498e7562e\",\"pubkey\": \"57c811c86a871081f52ca80e657004fe0376624a978f150073881b6daf0cbf1d\",\"created_at\": 1704300579,\"kind\": 1337,\"tags\": [],\"content\": \"test\",\"sig\": \"061c36d4004d8342495eb22e8e7c2e2b6e1a1c7b4ae6077fef09f9a5322c561b88bada4f63ff05c9508cb29d03f50f71ef3c93c0201dbec440fc32eda87f273b\"}]";
+
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1337));
+	ndb_filter_end_field(f);
+
+	group.filters[0] = f;
+	group.num_filters = 1;
+
+	assert((subid = ndb_subscribe(ndb, &group)));
+
+	assert(ndb_process_event(ndb, ev, strlen(ev)));
+
+	assert(ndb_wait_for_notes(ndb, subid, &note_id, 1));
+
+	assert(note_id > 0);
+}
+
 int main(int argc, const char *argv[]) {
 	test_parse_content();
 	test_url_parsing();
+	test_subscriptions();
 	test_comma_url_parsing();
 	test_varints();
 	test_bech32_objects();
