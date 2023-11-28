@@ -951,6 +951,7 @@ static void test_fulltext()
 	int written;
 	static const int alloc_size = 2 << 18;
 	char *json = malloc(alloc_size);
+	struct ndb_text_search_results results;
 
 	mapsize = 1024 * 1024 * 100;
 	ingester_threads = 1;
@@ -962,7 +963,7 @@ static void test_fulltext()
 	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
 
 	ndb_begin_query(ndb, &txn);
-	ndb_text_search(&txn, "Jumped Over");
+	ndb_text_search(&txn, "Jump Over", &results);
 	ndb_end_query(&txn);
 
 	ndb_destroy(ndb);
