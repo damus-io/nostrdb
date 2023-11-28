@@ -50,6 +50,20 @@ static inline int cursor_push(struct cursor *cursor, unsigned char *data, int le
 	return 1;
 }
 
+static inline int cursor_push_lowercase(struct cursor *cur, const char *str, int len)
+{
+	int i;
+
+	if (unlikely(cur->p + len >= cur->end))
+		return 0;
+
+	for (i = 0; i < len; i++)
+		cur->p[i] = tolower(str[i]);
+
+	cur->p += len;
+	return 1;
+}
+
 static inline int cursor_push_str(struct cursor *cursor, const char *str)
 {
 	return cursor_push(cursor, (unsigned char*)str, (int)strlen(str));

@@ -948,16 +948,26 @@ static void test_fulltext()
 	size_t mapsize;
 	int ingester_threads;
 	struct ndb_txn txn;
+	int written;
+	static const int alloc_size = 2 << 18;
+	char *json = malloc(alloc_size);
 
 	mapsize = 1024 * 1024 * 100;
 	ingester_threads = 1;
 	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
 
+	read_file("testdata/search.json", (unsigned char*)json, alloc_size, &written);
+	assert(ndb_process_client_events(ndb, json, written));
+	ndb_destroy(ndb);
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+
 	ndb_begin_query(ndb, &txn);
-	ndb_text_search(&txn, "bits after");
+	ndb_text_search(&txn, "Jumped Over");
 	ndb_end_query(&txn);
 
 	ndb_destroy(ndb);
+
+	free(json);
 }
 
 int main(int argc, const char *argv[]) {
