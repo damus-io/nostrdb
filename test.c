@@ -942,6 +942,24 @@ static void test_fast_strchr()
 	assert(fast_strchr(testStr6, 'm', strlen(testStr6)) == testStr6 + 38);
 }
 
+static void test_fulltext()
+{
+	struct ndb *ndb;
+	size_t mapsize;
+	int ingester_threads;
+	struct ndb_txn txn;
+
+	mapsize = 1024 * 1024 * 100;
+	ingester_threads = 1;
+	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+
+	ndb_begin_query(ndb, &txn);
+	ndb_text_search(&txn, "bits after");
+	ndb_end_query(&txn);
+
+	ndb_destroy(ndb);
+}
+
 int main(int argc, const char *argv[]) {
 	test_filters();
 	test_migrate();
@@ -963,6 +981,9 @@ int main(int argc, const char *argv[]) {
 
 	// note fetching
 	test_fetch_last_noteid();
+
+	// fulltext
+	test_fulltext();
 
 	// protected queue tests
 	test_queue_init_pop_push();
