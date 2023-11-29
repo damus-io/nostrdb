@@ -62,7 +62,7 @@ static void print_stats(struct ndb_stat *stat)
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
-	int threads = 8;
+	int threads = 6;
 	int flags = 0;
 	struct ndb_stat stat;
 	const char *dir;
