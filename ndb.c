@@ -5,7 +5,10 @@
 
 static int usage()
 {
-	printf("usage: ndb stat [db-dir]\n");
+	printf("usage: ndb [-d db_dir] <command>\n\n");
+	printf("commands\n\n");
+	printf("	stat\n");
+	printf("	search <fulltext query>\n");
 	return 1;
 }
 
@@ -65,22 +68,40 @@ int main(int argc, char *argv[])
 	int threads = 6;
 	int flags = 0;
 	struct ndb_stat stat;
+	struct ndb_txn txn;
+	struct ndb_text_search_results results;
 	const char *dir;
 	size_t mapsize = 1024ULL * 1024ULL * 1024ULL * 1024ULL; // 1 TiB
 
-	if (argc < 2 && strcmp(argv[1], "stat")) {
+	if (argc < 2) {
 		return usage();
 	}
 
-	dir = argv[2] == NULL ? "." : argv[2];
+	dir = ".";
+	if (!strcmp(argv[1], "-d") && argv[2]) {
+		dir = argv[2];
+		argv += 2;
+		argc -= 2;
+	}
+
+	fprintf(stderr, "using db '%s'\n", dir);
 
 	if (!ndb_init(&ndb, dir, mapsize, threads, flags)) {
 		return 2;
 	}
 
-	if (!ndb_stat(ndb, &stat)) {
-		return 3;
+	if (argc == 3 && !strcmp(argv[1], "search")) {
+		ndb_begin_query(ndb, &txn);
+		ndb_text_search(&txn, argv[2], &results);
+		ndb_end_query(&txn);
+	} else if (argc == 2 && !strcmp(argv[1], "stat")) {
+		if (!ndb_stat(ndb, &stat)) {
+			return 3;
+		}
+
+		print_stats(&stat);
+	} else {
+		return usage();
 	}
 
-	print_stats(&stat);
 }
