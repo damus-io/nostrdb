@@ -2,6 +2,10 @@
 
 #include "nostrdb.h"
 #include <stdio.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 static int usage()
 {
@@ -9,7 +13,24 @@ static int usage()
 	printf("commands\n\n");
 	printf("	stat\n");
 	printf("	search <fulltext query>\n");
+	printf("	import <line-delimited json file>\n");
 	return 1;
+}
+
+
+static int map_file(const char *filename, unsigned char **p, size_t *flen)
+{
+	struct stat st;
+	int des;
+	stat(filename, &st);
+	*flen = st.st_size;
+
+	des = open(filename, O_RDONLY);
+
+	*p = mmap(NULL, *flen, PROT_READ, MAP_PRIVATE, des, 0);
+	close(des);
+
+	return *p != MAP_FAILED;
 }
 
 static inline void print_stat_counts(struct ndb_stat_counts *counts)
@@ -71,6 +92,8 @@ int main(int argc, char *argv[])
 	struct ndb_txn txn;
 	struct ndb_text_search_results results;
 	const char *dir;
+	unsigned char *data;
+	size_t data_len;
 	size_t mapsize = 1024ULL * 1024ULL * 1024ULL * 1024ULL; // 1 TiB
 
 	if (argc < 2) {
@@ -100,8 +123,12 @@ int main(int argc, char *argv[])
 		}
 
 		print_stats(&stat);
+	} else if (argc == 3 && !strcmp(argv[1], "import")) {
+		map_file(argv[2], &data, &data_len);
+		ndb_process_events(ndb, (const char *)data, data_len);
 	} else {
 		return usage();
 	}
 
+	ndb_destroy(ndb);
 }
