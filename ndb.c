@@ -9,11 +9,14 @@
 
 static int usage()
 {
-	printf("usage: ndb [-d db_dir] <command>\n\n");
+	printf("usage: ndb [--skip-verification] [-d db_dir] <command>\n\n");
 	printf("commands\n\n");
 	printf("	stat\n");
 	printf("	search <fulltext query>\n");
-	printf("	import <line-delimited json file>\n");
+	printf("	import <line-delimited json file>\n\n");
+	printf("settings\n\n");
+	printf("	--skip-verification  skip signature validation\n");
+	printf("	-d <db_dir>          set database directory\n");
 	return 1;
 }
 
@@ -87,7 +90,7 @@ int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
 	int threads = 6;
-	int flags = 0;
+	int i, flags;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
 	struct ndb_text_search_results results;
@@ -101,10 +104,18 @@ int main(int argc, char *argv[])
 	}
 
 	dir = ".";
-	if (!strcmp(argv[1], "-d") && argv[2]) {
-		dir = argv[2];
-		argv += 2;
-		argc -= 2;
+	flags = 0;
+	for (i = 0; i < 2; i++)
+	{
+		if (!strcmp(argv[1], "-d") && argv[2]) {
+			dir = argv[2];
+			argv += 2;
+			argc -= 2;
+		} else if (!strcmp(argv[1], "--skip-verification")) {
+			flags = NDB_FLAG_SKIP_NOTE_VERIFY;
+			argv += 1;
+			argc -= 1;
+		}
 	}
 
 	fprintf(stderr, "using db '%s'\n", dir);
