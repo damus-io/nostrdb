@@ -60,4 +60,8 @@ nostrdb supports fulltext queries. You can import some test events like so:
 ```
 $ ndb --skip-verification import testdata/many-events.json
 $ ndb search 'nosy ostrich'
+
+[01] K<'ostrich' 7 1671217526 note_id:253309>
+Q: What do you call a nosy ostrich?
+A: A nosTrich!
 ```
