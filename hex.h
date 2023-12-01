@@ -50,7 +50,7 @@ static inline char hexchar(unsigned int val)
 	abort();
 }
 
-static int hex_encode(const void *buf, size_t bufsize, char *dest, size_t destsize)
+static int hex_encode(const void *buf, size_t bufsize, char *dest)
 {
 	size_t i;
 
