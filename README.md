@@ -22,5 +22,5 @@ functionality (yet?)
 
 ## API
 
-The API is *very* unstable. nostrdb is in heavy development mode so don't expect
-any of the interfaces to be stable over time.
+The API is *very* unstable. nostrdb is in heavy development mode so don't
+expect any of the interfaces to be stable at this time.
