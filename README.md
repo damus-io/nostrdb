@@ -58,6 +58,6 @@ $ make ndb
 nostrdb supports fulltext queries. You can import some test events like so:
 
 ```
-$ ndb --skip-validation import testdata/many-events.json
+$ ndb --skip-verification import testdata/many-events.json
 $ ndb search 'nosy ostrich'
 ```
