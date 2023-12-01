@@ -10,7 +10,7 @@
 	#error "Unsupported platform"
 #endif
 
-static inline int get_physical_cores() {
+static inline int get_cpu_cores() {
 	int num_cores = 0;
 
 	// Windows
