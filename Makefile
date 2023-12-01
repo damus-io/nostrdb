@@ -136,9 +136,6 @@ deps/lmdb/liblmdb.a: deps/lmdb/lmdb.h
 bench: bench.c $(DEPS)
 	$(CC) $(CFLAGS) bench.c $(LDS) -o $@
 
-bench-ingest: bench-ingest.c $(DEPS)
-	$(CC) $(CFLAGS) bench-ingest.c $(LDS) -o $@
-
 testdata/db/ndb-v0.tar.zst:
 	curl https://cdn.jb55.com/s/ndb-v0.tar.zst -o $@
 
