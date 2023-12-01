@@ -27,18 +27,20 @@ int map_file(const char *filename, unsigned char **p, size_t *flen)
 
 static int bench_parser()
 {
-	int ingester_threads;
 	long nanos, ms;
-	size_t written, mapsize;
+	size_t written;
 	struct ndb *ndb;
 	struct timespec t1, t2;
 	char *json;
 	int times = 1;
+	struct ndb_config config;
+	ndb_default_config(&config);
 
-	mapsize = 1024ULL * 1024ULL * 400ULL * 10ULL;
-	ingester_threads = 8;
-	assert(ndb_init(&ndb, "testdata/db", mapsize, ingester_threads,
-			NDB_FLAG_SKIP_NOTE_VERIFY));
+	ndb_config_set_mapsize(&config, 1024ULL * 1024ULL * 400ULL * 10ULL);
+	ndb_config_set_ingest_threads(&config, 8);
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+
+	assert(ndb_init(&ndb, "testdata/db", &config));
 	const char *filename = "testdata/many-events.json";
 	if (!map_file(filename, (unsigned char**)&json, &written)) {
 		printf("mapping testdata/many-events.json failed\n");
