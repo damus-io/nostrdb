@@ -86,6 +86,30 @@ static void print_stats(struct ndb_stat *stat)
 	}
 }
 
+static void ndb_print_text_search_key(struct ndb_text_search_key *key)
+{
+	printf("K<'%.*s' %d %" PRIu64 " note_id:%" PRIu64 ">", key->str_len, key->str,
+						    key->word_index,
+						    key->timestamp,
+						    key->note_id);
+}
+
+static void ndb_print_text_search_result(struct ndb_txn *txn,
+		struct ndb_text_search_result *r)
+{
+	size_t len;
+	struct ndb_note *note;
+
+	ndb_print_text_search_key(&r->key);
+
+	if (!(note = ndb_get_note_by_key(txn, r->key.note_id, &len))) {
+		printf(": note not found");
+		return;
+	}
+
+	printf("\n%s\n\n---\n", ndb_note_str(note, &note->content).str);
+}
+
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
@@ -93,6 +117,7 @@ int main(int argc, char *argv[])
 	struct ndb_stat stat;
 	struct ndb_txn txn;
 	struct ndb_text_search_results results;
+	struct ndb_text_search_result *result;
 	const char *dir;
 	unsigned char *data;
 	size_t data_len;
@@ -130,6 +155,14 @@ int main(int argc, char *argv[])
 	if (argc == 3 && !strcmp(argv[1], "search")) {
 		ndb_begin_query(ndb, &txn);
 		ndb_text_search(&txn, argv[2], &results);
+
+		// print results for now
+		for (i = 0; i < results.num_results; i++) {
+			result = &results.results[i];
+			printf("[%02d] ", i+1);
+			ndb_print_text_search_result(&txn, result);
+		}
+
 		ndb_end_query(&txn);
 	} else if (argc == 2 && !strcmp(argv[1], "stat")) {
 		if (!ndb_stat(ndb, &stat)) {
