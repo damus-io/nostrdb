@@ -19,3 +19,8 @@ functionality (yet?)
 
 [1]: https://github.com/hoytech/strfry
 
+
+## API
+
+The API is *very* unstable. nostrdb is in heavy development mode so don't expect
+any of the interfaces to be stable over time.
