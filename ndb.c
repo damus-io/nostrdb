@@ -89,7 +89,6 @@ static void print_stats(struct ndb_stat *stat)
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
-	int threads = 6;
 	int i, flags;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
@@ -97,7 +96,9 @@ int main(int argc, char *argv[])
 	const char *dir;
 	unsigned char *data;
 	size_t data_len;
-	size_t mapsize = 1024ULL * 1024ULL * 1024ULL * 1024ULL; // 1 TiB
+	struct ndb_config config;
+	ndb_default_config(&config);
+	ndb_config_set_mapsize(&config, 1024ULL * 1024ULL * 1024ULL * 1024ULL /* 1 TiB */);
 
 	if (argc < 2) {
 		return usage();
@@ -118,9 +119,11 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	ndb_config_set_flags(&config, flags);
+
 	fprintf(stderr, "using db '%s'\n", dir);
 
-	if (!ndb_init(&ndb, dir, mapsize, threads, flags)) {
+	if (!ndb_init(&ndb, dir, &config)) {
 		return 2;
 	}
 
