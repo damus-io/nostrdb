@@ -24,3 +24,40 @@ functionality (yet?)
 
 The API is *very* unstable. nostrdb is in heavy development mode so don't
 expect any of the interfaces to be stable at this time.
+
+## CLI
+
+nostrdb comes with a handy `ndb` command line tool for interacting with nostrdb
+databases. The tool is relatively new, and only supports a few commands.
+
+### Usage
+
+```
+usage: ndb [--skip-verification] [-d db_dir] <command>
+
+commands
+
+	stat
+	search <fulltext query>
+	import <line-delimited json file>
+
+settings
+
+	--skip-verification  skip signature validation
+	-d <db_dir>          set database directory
+```
+
+### Building
+
+```bash
+$ make ndb
+```
+
+### Fulltext Queries
+
+nostrdb supports fulltext queries. You can import some test events like so:
+
+```
+$ ndb --skip-validation import testdata/many-events.json
+$ ndb search 'nosy ostrich'
+```
