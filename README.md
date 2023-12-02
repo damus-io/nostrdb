@@ -38,7 +38,7 @@ usage: ndb [--skip-verification] [-d db_dir] <command>
 commands
 
 	stat
-	search <fulltext query>
+	search [--oldest-first] [--limit 42] <fulltext query>
 	import <line-delimited json file>
 
 settings
@@ -60,7 +60,7 @@ nostrdb supports fulltext queries. You can import some test events like so:
 ```
 $ make testdata/many-events.json
 $ ndb --skip-verification import testdata/many-events.json
-$ ndb search 'nosy ostrich'
+$ ndb search --limit 2 --oldest-first 'nosy ostrich'
 
 [01] K<'ostrich' 7 1671217526 note_id:253309>
 Q: What do you call a nosy ostrich?

@@ -2,6 +2,7 @@
 
 #include "nostrdb.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -12,7 +13,7 @@ static int usage()
 	printf("usage: ndb [--skip-verification] [-d db_dir] <command>\n\n");
 	printf("commands\n\n");
 	printf("	stat\n");
-	printf("	search <fulltext query>\n");
+	printf("	search [--oldest-first] [--limit 42] <fulltext query>\n");
 	printf("	import <line-delimited json file>\n\n");
 	printf("settings\n\n");
 	printf("	--skip-verification  skip signature validation\n");
@@ -113,7 +114,7 @@ static void ndb_print_text_search_result(struct ndb_txn *txn,
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
-	int i, flags;
+	int i, flags, limit;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
 	struct ndb_text_search_results results;
@@ -122,7 +123,9 @@ int main(int argc, char *argv[])
 	unsigned char *data;
 	size_t data_len;
 	struct ndb_config config;
+	struct ndb_text_search_config search_config;
 	ndb_default_config(&config);
+	ndb_default_text_search_config(&search_config);
 	ndb_config_set_mapsize(&config, 1024ULL * 1024ULL * 1024ULL * 1024ULL /* 1 TiB */);
 
 	if (argc < 2) {
@@ -152,9 +155,22 @@ int main(int argc, char *argv[])
 		return 2;
 	}
 
-	if (argc == 3 && !strcmp(argv[1], "search")) {
+	if (argc >= 3 && !strcmp(argv[1], "search")) {
+		for (i = 0; i < 2; i++) {
+			if (!strcmp(argv[2], "--oldest-first")) {
+				ndb_text_search_config_set_order(&search_config, NDB_ORDER_ASCENDING);
+				argv++;
+				argc--;
+			} else if (!strcmp(argv[2], "--limit")) {
+				limit = atoi(argv[3]);
+				ndb_text_search_config_set_limit(&search_config, limit);
+				argv += 2;
+				argc -= 2;
+			}
+		}
+
 		ndb_begin_query(ndb, &txn);
-		ndb_text_search(&txn, argv[2], &results, 999);
+		ndb_text_search(&txn, argv[2], &results, &search_config);
 
 		// print results for now
 		for (i = 0; i < results.num_results; i++) {
