@@ -960,7 +960,7 @@ static void test_fulltext()
 	assert(ndb_init(&ndb, test_dir, &config));
 
 	ndb_begin_query(ndb, &txn);
-	ndb_text_search(&txn, "Jump Over", &results);
+	ndb_text_search(&txn, "Jump Over", &results, NULL);
 	ndb_end_query(&txn);
 
 	ndb_destroy(ndb);
