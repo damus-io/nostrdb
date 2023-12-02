@@ -95,6 +95,13 @@ static void ndb_print_text_search_key(struct ndb_text_search_key *key)
 						    key->note_id);
 }
 
+static void print_hex(unsigned char* data, size_t size) {
+	size_t i;
+	for (i = 0; i < size; i++) {
+		printf("%02x", data[i]);
+	}
+}
+
 static void ndb_print_text_search_result(struct ndb_txn *txn,
 		struct ndb_text_search_result *r)
 {
@@ -107,6 +114,9 @@ static void ndb_print_text_search_result(struct ndb_txn *txn,
 		printf(": note not found");
 		return;
 	}
+
+	printf(" ");
+	print_hex(note->id, 32);
 
 	printf("\n%s\n\n---\n", ndb_note_str(note, &note->content).str);
 }
