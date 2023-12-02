@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
 
 	if (argc == 3 && !strcmp(argv[1], "search")) {
 		ndb_begin_query(ndb, &txn);
-		ndb_text_search(&txn, argv[2], &results);
+		ndb_text_search(&txn, argv[2], &results, 999);
 
 		// print results for now
 		for (i = 0; i < results.num_results; i++) {
