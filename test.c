@@ -961,6 +961,9 @@ static void test_fulltext()
 
 	ndb_begin_query(ndb, &txn);
 	ndb_text_search(&txn, "Jump Over", &results, NULL);
+	fprintf(stderr, "num results %d\n", results.num_results);
+	assert(results.num_results == 2);
+	assert(!strcmp(results.results[0].key.str, "jumped"));
 	ndb_end_query(&txn);
 
 	ndb_destroy(ndb);

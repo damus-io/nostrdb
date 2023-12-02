@@ -121,6 +121,8 @@ static void ndb_print_text_search_result(struct ndb_txn *txn,
 	printf("\n%s\n\n---\n", ndb_note_str(note, &note->content).str);
 }
 
+int ndb_print_search_keys(struct ndb_txn *txn);
+
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
@@ -199,6 +201,11 @@ int main(int argc, char *argv[])
 	} else if (argc == 3 && !strcmp(argv[1], "import")) {
 		map_file(argv[2], &data, &data_len);
 		ndb_process_events(ndb, (const char *)data, data_len);
+		ndb_process_client_events(ndb, (const char *)data, data_len);
+	} else if (argc == 2 && !strcmp(argv[1], "print-search-keys")) {
+		ndb_begin_query(ndb, &txn);
+		ndb_print_search_keys(&txn);
+		ndb_end_query(&txn);
 	} else {
 		return usage();
 	}
