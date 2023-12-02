@@ -1,4 +1,8 @@
 tags
+data.mdb
+lock.mdb
+v0-lock
+keys.txt
 test
 .buildcmd
 .build-result
