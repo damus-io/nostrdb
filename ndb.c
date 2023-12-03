@@ -199,9 +199,13 @@ int main(int argc, char *argv[])
 
 		print_stats(&stat);
 	} else if (argc == 3 && !strcmp(argv[1], "import")) {
-		map_file(argv[2], &data, &data_len);
-		ndb_process_events(ndb, (const char *)data, data_len);
-		ndb_process_client_events(ndb, (const char *)data, data_len);
+		if (!strcmp(argv[2], "-")) {
+			ndb_process_events_stream(ndb, stdin);
+		} else {
+			map_file(argv[2], &data, &data_len);
+			ndb_process_events(ndb, (const char *)data, data_len);
+			ndb_process_client_events(ndb, (const char *)data, data_len);
+		}
 	} else if (argc == 2 && !strcmp(argv[1], "print-search-keys")) {
 		ndb_begin_query(ndb, &txn);
 		ndb_print_search_keys(&txn);
