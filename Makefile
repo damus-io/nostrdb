@@ -1,5 +1,5 @@
 CFLAGS = -Wall -Wno-misleading-indentation -Wno-unused-function -Werror -O2 -g -Ideps/secp256k1/include -Ideps/lmdb -Ideps/flatcc/include
-HEADERS = sha256.h nostrdb.h cursor.h hex.h jsmn.h config.h sha256.h random.h memchr.h $(C_BINDINGS)
+HEADERS = sha256.h nostrdb.h cursor.h hex.h jsmn.h config.h sha256.h random.h memchr.h cpu.h $(C_BINDINGS)
 FLATCC_SRCS=deps/flatcc/src/runtime/json_parser.c deps/flatcc/src/runtime/verifier.c deps/flatcc/src/runtime/builder.c deps/flatcc/src/runtime/emitter.c deps/flatcc/src/runtime/refmap.c
 SRCS = nostrdb.c sha256.c bech32.c $(FLATCC_SRCS)
 LDS = $(SRCS) $(ARS) 
@@ -18,7 +18,7 @@ BIN=ndb
 
 CHECKDATA=testdata/db/v0/data.mdb
 
-all: $(BIN) lib bindings
+all: $(BIN) lib bindings ndb
 
 lib: benches test
 
@@ -135,9 +135,6 @@ deps/lmdb/liblmdb.a: deps/lmdb/lmdb.h
 
 bench: bench.c $(DEPS)
 	$(CC) $(CFLAGS) bench.c $(LDS) -o $@
-
-bench-ingest: bench-ingest.c $(DEPS)
-	$(CC) $(CFLAGS) bench-ingest.c $(LDS) -o $@
 
 testdata/db/ndb-v0.tar.zst:
 	curl https://cdn.jb55.com/s/ndb-v0.tar.zst -o $@

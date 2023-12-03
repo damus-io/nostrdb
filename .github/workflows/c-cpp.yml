@@ -29,5 +29,8 @@ jobs:
         ./scripts/build.sh
         sudo cp bin/flatcc /usr/bin
 
+    - name: make all
+      run: make
+
     - name: make check
       run: make check

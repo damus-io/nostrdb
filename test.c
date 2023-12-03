@@ -118,15 +118,12 @@ static void test_filters()
 static void test_fetched_at()
 {
 	struct ndb *ndb;
-	size_t mapsize;
-	int ingester_threads;
 	struct ndb_txn txn;
 	uint64_t fetched_at, t1, t2;
+	struct ndb_config config;
+	ndb_default_config(&config);
 
-	mapsize = 1024 * 1024 * 100;
-	ingester_threads = 1;
-
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	const unsigned char pubkey[] = { 0x87, 0xfb, 0xc6, 0xd5, 0x98, 0x31, 0xa8, 0x23, 0xa4, 0x5d, 0x10, 0x1f,
   0x86, 0x94, 0x2c, 0x41, 0xcd, 0xe2, 0x90, 0x23, 0xf4, 0x09, 0x20, 0x24,
@@ -174,22 +171,21 @@ static void test_reaction_counter()
 	static const int alloc_size = 1024 * 1024;
 	char *json = malloc(alloc_size);
 	struct ndb *ndb;
-	size_t mapsize, len;
+	size_t len;
 	void *root;
-	int written, ingester_threads, reactions;
+	int written, reactions;
 	NdbEventMeta_table_t meta;
 	struct ndb_txn txn;
+	struct ndb_config config;
+	ndb_default_config(&config);
 
-	mapsize = 1024 * 1024 * 100;
-	ingester_threads = 1;
-
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	read_file("testdata/reactions.json", (unsigned char*)json, alloc_size, &written);
 	assert(ndb_process_client_events(ndb, json, written));
 	ndb_destroy(ndb);
 
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	assert(ndb_begin_query(ndb, &txn));
 
@@ -247,16 +243,15 @@ static void test_profile_updates()
 	static const int alloc_size = 1024 * 1024;
 	char *json = malloc(alloc_size);
 	struct ndb *ndb;
-	size_t mapsize, len;
+	size_t len;
 	void *record;
-	int written, ingester_threads;
+	int written;
 	struct ndb_txn txn;
 	uint64_t key;
+	struct ndb_config config;
+	ndb_default_config(&config);
 
-	mapsize = 1024 * 1024 * 100;
-	ingester_threads = 1;
-
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	read_file("testdata/profile-updates.json", (unsigned char*)json, alloc_size, &written);
 
@@ -264,7 +259,7 @@ static void test_profile_updates()
 
 	ndb_destroy(ndb);
 
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	assert(ndb_begin_query(ndb, &txn));
 	const unsigned char pk[32] = {
@@ -293,12 +288,11 @@ static void test_load_profiles()
 	static const int alloc_size = 1024 * 1024;
 	char *json = malloc(alloc_size);
 	struct ndb *ndb;
-	size_t mapsize;
-	int written, ingester_threads;
+	int written;
+	struct ndb_config config;
+	ndb_default_config(&config);
 
-	mapsize = 1024 * 1024 * 100;
-	ingester_threads = 1;
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	read_file("testdata/profiles.json", (unsigned char*)json, alloc_size, &written);
 
@@ -306,7 +300,7 @@ static void test_load_profiles()
 
 	ndb_destroy(ndb);
 
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 	unsigned char id[32] = {
 	  0x22, 0x05, 0x0b, 0x6d, 0x97, 0xbb, 0x9d, 0xa0, 0x9e, 0x90, 0xed, 0x0c,
 	  0x6d, 0xd9, 0x5e, 0xed, 0x1d, 0x42, 0x3e, 0x27, 0xd5, 0xcb, 0xa5, 0x94,
@@ -330,26 +324,31 @@ static void test_load_profiles()
 static void test_fuzz_events() {
 	struct ndb *ndb;
 	const char *str = "[\"EVENT\"\"\"{\"content\"\"created_at\":0 \"id\"\"5086a8f76fe1da7fb56a25d1bebbafd70fca62e36a72c6263f900ff49b8f8604\"\"kind\":0 \"pubkey\":9c87f94bcbe2a837adc28d46c34eeaab8fc2e1cdf94fe19d4b99ae6a5e6acedc \"sig\"\"27374975879c94658412469cee6db73d538971d21a7b580726a407329a4cafc677fb56b946994cea59c3d9e118fef27e4e61de9d2c46ac0a65df14153 ea93cf5\"\"tags\"[[][\"\"]]}]";
+	struct ndb_config config;
+	ndb_default_config(&config);
 
-	ndb_init(&ndb, test_dir, 1024 * 1024, 1, 0);
+	ndb_init(&ndb, test_dir, &config);
 	ndb_process_event(ndb, str, strlen(str));
 	ndb_destroy(ndb);
 }
 
 static void test_migrate() {
 	static const char *v0_dir = "testdata/db/v0";
-	size_t mapsize = 1024ULL * 1024ULL * 1024ULL * 32ULL;
-	int threads = 2;
 	struct ndb *ndb;
+	struct ndb_config config;
+	ndb_default_config(&config);
+	ndb_config_set_flags(&config, NDB_FLAG_NOMIGRATE);
 
 	fprintf(stderr, "testing migrate on v0\n");
-	assert(ndb_init(&ndb, v0_dir, mapsize, threads, NDB_FLAG_NOMIGRATE));
+	assert(ndb_init(&ndb, v0_dir, &config));
 	assert(ndb_db_version(ndb) == 0);
 	ndb_destroy(ndb);
 
-	assert(ndb_init(&ndb, v0_dir, mapsize, threads, 0));
+	ndb_config_set_flags(&config, 0);
+
+	assert(ndb_init(&ndb, v0_dir, &config));
 	ndb_destroy(ndb);
-	assert(ndb_init(&ndb, v0_dir, mapsize, threads, 0));
+	assert(ndb_init(&ndb, v0_dir, &config));
 	assert(ndb_db_version(ndb) == 3);
 
 	test_profile_search(ndb);
@@ -548,18 +547,18 @@ static void test_replacement()
 	char *json = malloc(alloc_size);
 	unsigned char *buf = malloc(alloc_size);
 	struct ndb *ndb;
-	size_t mapsize, len;
-	int written, ingester_threads;
+	size_t len;
+	int written;
+	struct ndb_config config;
+	ndb_default_config(&config);
 
-	mapsize = 1024 * 1024 * 100;
-	ingester_threads = 1;
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	read_file("testdata/old-new.json", (unsigned char*)json, alloc_size, &written);
 	assert(ndb_process_events(ndb, json, written));
 
 	ndb_destroy(ndb);
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	struct ndb_txn txn;
 	assert(ndb_begin_query(ndb, &txn));
@@ -590,19 +589,19 @@ static void test_fetch_last_noteid()
 	char *json = malloc(alloc_size);
 	unsigned char *buf = malloc(alloc_size);
 	struct ndb *ndb;
-	size_t mapsize, len;
-	int written, ingester_threads;
+	size_t len;
+	int written;
+	struct ndb_config config;
+	ndb_default_config(&config);
 
-	mapsize = 1024 * 1024 * 100;
-	ingester_threads = 1;
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	read_file("testdata/random.json", (unsigned char*)json, alloc_size, &written);
 	assert(ndb_process_events(ndb, json, written));
 
 	ndb_destroy(ndb);
 
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	unsigned char id[32] = { 0xdc, 0x96, 0x4f, 0x4c, 0x89, 0x83, 0x64, 0x13, 0x8e, 0x81, 0x96, 0xf0, 0xc7, 0x33, 0x38, 0xc8, 0xcc, 0x3e, 0xbf, 0xa3, 0xaf, 0xdd, 0xbc, 0x7d, 0xd1, 0x58, 0xb4, 0x84, 0x7c, 0x1e, 0xbf, 0xa0 };
 
@@ -945,25 +944,26 @@ static void test_fast_strchr()
 static void test_fulltext()
 {
 	struct ndb *ndb;
-	size_t mapsize;
-	int ingester_threads;
 	struct ndb_txn txn;
 	int written;
 	static const int alloc_size = 2 << 18;
 	char *json = malloc(alloc_size);
 	struct ndb_text_search_results results;
+	struct ndb_config config;
+	ndb_default_config(&config);
 
-	mapsize = 1024 * 1024 * 100;
-	ingester_threads = 1;
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	read_file("testdata/search.json", (unsigned char*)json, alloc_size, &written);
 	assert(ndb_process_client_events(ndb, json, written));
 	ndb_destroy(ndb);
-	assert(ndb_init(&ndb, test_dir, mapsize, ingester_threads, 0));
+	assert(ndb_init(&ndb, test_dir, &config));
 
 	ndb_begin_query(ndb, &txn);
-	ndb_text_search(&txn, "Jump Over", &results);
+	ndb_text_search(&txn, "Jump Over", &results, NULL);
+	fprintf(stderr, "num results %d\n", results.num_results);
+	assert(results.num_results == 2);
+	assert(!strcmp(results.results[0].key.str, "jumped"));
 	ndb_end_query(&txn);
 
 	ndb_destroy(ndb);

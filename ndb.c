@@ -2,6 +2,7 @@
 
 #include "nostrdb.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -12,7 +13,7 @@ static int usage()
 	printf("usage: ndb [--skip-verification] [-d db_dir] <command>\n\n");
 	printf("commands\n\n");
 	printf("	stat\n");
-	printf("	search <fulltext query>\n");
+	printf("	search [--oldest-first] [--limit 42] <fulltext query>\n");
 	printf("	import <line-delimited json file>\n\n");
 	printf("settings\n\n");
 	printf("	--skip-verification  skip signature validation\n");
@@ -86,18 +87,58 @@ static void print_stats(struct ndb_stat *stat)
 	}
 }
 
+static void ndb_print_text_search_key(struct ndb_text_search_key *key)
+{
+	printf("K<'%.*s' %d %" PRIu64 " note_id:%" PRIu64 ">", key->str_len, key->str,
+						    key->word_index,
+						    key->timestamp,
+						    key->note_id);
+}
+
+static void print_hex(unsigned char* data, size_t size) {
+	size_t i;
+	for (i = 0; i < size; i++) {
+		printf("%02x", data[i]);
+	}
+}
+
+static void ndb_print_text_search_result(struct ndb_txn *txn,
+		struct ndb_text_search_result *r)
+{
+	size_t len;
+	struct ndb_note *note;
+
+	ndb_print_text_search_key(&r->key);
+
+	if (!(note = ndb_get_note_by_key(txn, r->key.note_id, &len))) {
+		printf(": note not found");
+		return;
+	}
+
+	printf(" ");
+	print_hex(note->id, 32);
+
+	printf("\n%s\n\n---\n", ndb_note_str(note, &note->content).str);
+}
+
+int ndb_print_search_keys(struct ndb_txn *txn);
+
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
-	int threads = 6;
-	int i, flags;
+	int i, flags, limit;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
 	struct ndb_text_search_results results;
+	struct ndb_text_search_result *result;
 	const char *dir;
 	unsigned char *data;
 	size_t data_len;
-	size_t mapsize = 1024ULL * 1024ULL * 1024ULL * 1024ULL; // 1 TiB
+	struct ndb_config config;
+	struct ndb_text_search_config search_config;
+	ndb_default_config(&config);
+	ndb_default_text_search_config(&search_config);
+	ndb_config_set_mapsize(&config, 1024ULL * 1024ULL * 1024ULL * 1024ULL /* 1 TiB */);
 
 	if (argc < 2) {
 		return usage();
@@ -118,15 +159,38 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	ndb_config_set_flags(&config, flags);
+
 	fprintf(stderr, "using db '%s'\n", dir);
 
-	if (!ndb_init(&ndb, dir, mapsize, threads, flags)) {
+	if (!ndb_init(&ndb, dir, &config)) {
 		return 2;
 	}
 
-	if (argc == 3 && !strcmp(argv[1], "search")) {
+	if (argc >= 3 && !strcmp(argv[1], "search")) {
+		for (i = 0; i < 2; i++) {
+			if (!strcmp(argv[2], "--oldest-first")) {
+				ndb_text_search_config_set_order(&search_config, NDB_ORDER_ASCENDING);
+				argv++;
+				argc--;
+			} else if (!strcmp(argv[2], "--limit")) {
+				limit = atoi(argv[3]);
+				ndb_text_search_config_set_limit(&search_config, limit);
+				argv += 2;
+				argc -= 2;
+			}
+		}
+
 		ndb_begin_query(ndb, &txn);
-		ndb_text_search(&txn, argv[2], &results);
+		ndb_text_search(&txn, argv[2], &results, &search_config);
+
+		// print results for now
+		for (i = 0; i < results.num_results; i++) {
+			result = &results.results[i];
+			printf("[%02d] ", i+1);
+			ndb_print_text_search_result(&txn, result);
+		}
+
 		ndb_end_query(&txn);
 	} else if (argc == 2 && !strcmp(argv[1], "stat")) {
 		if (!ndb_stat(ndb, &stat)) {
@@ -137,6 +201,11 @@ int main(int argc, char *argv[])
 	} else if (argc == 3 && !strcmp(argv[1], "import")) {
 		map_file(argv[2], &data, &data_len);
 		ndb_process_events(ndb, (const char *)data, data_len);
+		ndb_process_client_events(ndb, (const char *)data, data_len);
+	} else if (argc == 2 && !strcmp(argv[1], "print-search-keys")) {
+		ndb_begin_query(ndb, &txn);
+		ndb_print_search_keys(&txn);
+		ndb_end_query(&txn);
 	} else {
 		return usage();
 	}

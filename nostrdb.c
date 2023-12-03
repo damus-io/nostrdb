@@ -7,6 +7,7 @@
 #include "sha256.h"
 #include "lmdb.h"
 #include "util.h"
+#include "cpu.h"
 #include "threadpool.h"
 #include "protected_queue.h"
 #include "memchr.h"
@@ -115,6 +116,8 @@ struct ndb_ingester {
 	uint32_t flags;
 	struct threadpool tp;
 	struct ndb_writer *writer;
+	void *filter_context;
+	ndb_ingest_filter_fn filter;
 };
 
 
@@ -174,7 +177,7 @@ static int ndb_make_text_search_key(unsigned char *buf, int bufsize,
 	// TODO: need update this to uint64_t
 	// we push this first because our query function can pull this off
 	// quicky to check matches
-	if (!push_varint(&cur, (int)note_id))
+	if (!push_varint(&cur, (int32_t)note_id))
 		return 0;
 
 	// string length
@@ -235,11 +238,13 @@ static int ndb_make_text_search_key_high(unsigned char *buf, int bufsize,
 					 int *keysize)
 {
 	uint64_t timestamp, note_id;
-	timestamp = UINT64_MAX;
-	note_id = UINT64_MAX;
+	timestamp = INT32_MAX;
+	note_id = INT32_MAX;
 	return ndb_make_text_search_key(buf, bufsize, 0, wordlen, word,
 					timestamp, note_id, keysize);
 }
+
+typedef int (*ndb_text_search_key_order_fn)(unsigned char *buf, int bufsize, int wordlen, const char *word, int *keysize);
 
 /** From LMDB: Compare two items lexically */
 static int mdb_cmp_memn(const MDB_val *a, const MDB_val *b) {
@@ -1577,16 +1582,23 @@ static int ndb_ingester_process_note(secp256k1_context *ctx,
 				     struct ndb_note *note,
 				     size_t note_size,
 				     struct ndb_writer_msg *out,
-				     uint32_t flags)
+				     struct ndb_ingester *ingester)
 {
-	//printf("ndb_ingester_process_note ");
-	//print_hex(note->id, 32);
-	//printf("\n");
+	enum ndb_ingest_filter_action action;
+	action = NDB_INGEST_ACCEPT;
+
+	if (ingester->filter)
+		action = ingester->filter(ingester->filter_context, note);
+
+	if (action == NDB_INGEST_REJECT)
+		return 0;
 
 	// some special situations we might want to skip sig validation,
 	// like during large imports
-	if (!(flags & NDB_FLAG_SKIP_NOTE_VERIFY)) {
-		// Verify! If it's an invalid note we don't need to
+	if (action == NDB_INGEST_SKIP_VALIDATION || (ingester->flags & NDB_FLAG_SKIP_NOTE_VERIFY)) {
+		// if we're skipping validation we don't need to verify
+	} else {
+		// verify! If it's an invalid note we don't need to
 		// bother writing it to the database
 		if (!ndb_note_verify(ctx, note->pubkey, note->id, note->sig)) {
 			ndb_debug("signature verification failed\n");
@@ -1678,7 +1690,7 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 			}
 
 			if (!ndb_ingester_process_note(ctx, note, note_size,
-						       out, ingester->flags)) {
+						       out, ingester)) {
 				goto cleanup;
 			} else {
 				// we're done with the original json, free it
@@ -1699,7 +1711,7 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 			}
 
 			if (!ndb_ingester_process_note(ctx, note, note_size,
-						       out, ingester->flags)) {
+						       out, ingester)) {
 				goto cleanup;
 			} else {
 				// we're done with the original json, free it
@@ -2453,16 +2465,60 @@ static int prefix_count(const char *str1, int len1, const char *str2, int len2) 
 	return count;
 }
 
+static void ndb_print_text_search_key(struct ndb_text_search_key *key)
+{
+	printf("K<'%.*s' %d %" PRIu64 " note_id:%" PRIu64 ">", key->str_len, key->str,
+						    key->word_index,
+						    key->timestamp,
+						    key->note_id);
+}
+
+static int ndb_prefix_matches(struct ndb_text_search_result *result,
+			      struct ndb_word *search_word)
+{
+	// Empty strings shouldn't happen but let's
+	if (result->key.str_len < 2 || search_word->word_len < 2)
+		return 0;
+
+	// make sure we at least have two matching prefix characters. exact
+	// matches are nice but range searches allow us to match prefixes as
+	// well. A double-char prefix is suffient, but maybe we could up this
+	// in the future.
+	// 
+	// TODO: How are we handling utf-8 prefix matches like
+	// japanese?
+	//
+	if (   result->key.str[0] != tolower(search_word->word[0])
+	    && result->key.str[1] != tolower(search_word->word[1])
+	    )
+		return 0;
+
+	// count the number of prefix-matched characters. This will be used
+	// for ranking search results
+	result->prefix_chars = prefix_count(result->key.str,
+					    result->key.str_len,
+					    search_word->word,
+					    search_word->word_len);
+
+	if (result->prefix_chars <= (int)((double)search_word->word_len / 1.5)) 
+		return 0;
+
+	return 1;
+}
 
 // This is called when scanning the full text search index. Scanning stops
 // when we no longer have a prefix match for the word
 static int ndb_text_search_next_word(MDB_cursor *cursor, MDB_cursor_op op,
 	MDB_val *k, struct ndb_word *search_word,
 	struct ndb_text_search_result *last_result,
-	struct ndb_text_search_result *result)
+	struct ndb_text_search_result *result,
+	MDB_cursor_op order_op)
 {
 	struct cursor key_cursor;
+	//struct ndb_text_search_key search_key;
 	MDB_val v;
+	int retries;
+	retries = -1;
 
 	make_cursor(k->mv_data, k->mv_data + k->mv_size, &key_cursor);
 
@@ -2471,8 +2527,27 @@ static int ndb_text_search_next_word(MDB_cursor *cursor, MDB_cursor_op op,
 	// key.
 	//
 	// Subsequent searches should use MDB_NEXT
-	if (mdb_cursor_get(cursor, k, &v, op))
-		return 0;
+	if (mdb_cursor_get(cursor, k, &v, op)) {
+		// we should only do this if we're going in reverse
+		if (op == MDB_SET_RANGE && order_op == MDB_PREV) {
+			// if set range worked and our key exists, it should be
+			// the one right before this one
+			if (mdb_cursor_get(cursor, k, &v, MDB_PREV))
+				return 0;
+		} else {
+			return 0;
+		}
+	}
+
+retry:
+	retries++;
+	/*
+	printf("continuing from ");
+	if (ndb_unpack_text_search_key(k->mv_data, k->mv_size, &search_key)) {
+		ndb_print_text_search_key(&search_key);
+	} else { printf("??"); }
+	printf("\n");
+	*/
 
 	make_cursor(k->mv_data, k->mv_data + k->mv_size, &key_cursor);
 
@@ -2502,32 +2577,17 @@ static int ndb_text_search_next_word(MDB_cursor *cursor, MDB_cursor_op op,
 		return 0;
 	}
 
-	// Empty strings shouldn't happen but let's
-	if (result->key.str_len < 2 || search_word->word_len < 2)
-		return 0;
-
-	// make sure we at least have two matching prefix characters. exact
-	// matches are nice but range searches allow us to match prefixes as
-	// well. A double-char prefix is suffient, but maybe we could up this
-	// in the future.
-	// 
-	// TODO: How are we handling utf-8 prefix matches like
-	// japanese?
-	//
-	if (   result->key.str[0] != tolower(search_word->word[0])
-	    && result->key.str[1] != tolower(search_word->word[1])
-	    )
-		return 0;
-
-	// count the number of prefix-matched characters. This will be used
-	// for ranking search results
-	result->prefix_chars = prefix_count(result->key.str,
-					    result->key.str_len,
-					    search_word->word,
-					    search_word->word_len);
-
-	if (result->prefix_chars <= (int)((double)search_word->word_len / 1.5)) 
-		return 0;
+	if (!ndb_prefix_matches(result, search_word)) {
+		// we should only do this if we're going in reverse
+		if (retries == 0 && op == MDB_SET_RANGE && order_op == MDB_PREV) {
+			// if set range worked and our key exists, it should be
+			// the one right before this one
+			if (mdb_cursor_get(cursor, k, &v, MDB_PREV))
+				goto retry;
+		} else {
+			return 0;
+		}
+	}
 
 	// Unpack the remaining text search key, we will need this information
 	// when building up our search results.
@@ -2551,57 +2611,65 @@ static int ndb_text_search_next_word(MDB_cursor *cursor, MDB_cursor_op op,
 	return 1;
 }
 
-static void ndb_print_text_search_key(struct ndb_text_search_key *key)
-{
-	printf("K<'%.*s' %d %" PRIu64 " note_id:%" PRIu64 ">", key->str_len, key->str,
-						    key->word_index,
-						    key->timestamp,
-						    key->note_id);
-}
-
-static void ndb_print_text_search_result(struct ndb_txn *txn,
-		struct ndb_text_search_result *r)
-{
-	size_t len;
-	struct ndb_note *note;
-
-	ndb_print_text_search_key(&r->key);
-
-	if (!(note = ndb_get_note_by_key(txn, r->key.note_id, &len))) {
-		printf(": note not found");
-		return;
-	}
-
-	printf("\n%s\n\n---\n", ndb_note_str(note, &note->content).str);
-}
-
 static void ndb_text_search_results_init(
 		struct ndb_text_search_results *results) {
 	results->num_results = 0;
 }
 
+void ndb_default_text_search_config(struct ndb_text_search_config *cfg)
+{
+	cfg->order = NDB_ORDER_DESCENDING;
+	cfg->limit = MAX_TEXT_SEARCH_RESULTS;
+}
+
+void ndb_text_search_config_set_order(struct ndb_text_search_config *cfg,
+				     enum ndb_search_order order)
+{
+	cfg->order = order;
+}
+
+void ndb_text_search_config_set_limit(struct ndb_text_search_config *cfg, int limit)
+{
+	cfg->limit = limit;
+}
+
 int ndb_text_search(struct ndb_txn *txn, const char *query,
-		    struct ndb_text_search_results *results)
+		    struct ndb_text_search_results *results,
+		    struct ndb_text_search_config *config)
 {
 	unsigned char buffer[1024], *buf;
 	unsigned char saved_buf[1024], *saved;
 	struct ndb_text_search_result *result, *last_result;
 	struct ndb_text_search_result candidate, last_candidate;
 	struct ndb_search_words search_words;
+	//struct ndb_text_search_key search_key;
 	struct ndb_word *search_word;
 	struct cursor cur;
+	ndb_text_search_key_order_fn key_order_fn;
 	MDB_dbi text_db;
 	MDB_cursor *cursor;
 	MDB_val k, v;
-	int i, j, keysize, saved_size;
-	MDB_cursor_op op;
+	int i, j, keysize, saved_size, limit;
+	MDB_cursor_op op, order_op;
 	//int num_note_ids;
 
 	saved = NULL;
 	ndb_text_search_results_init(results);
 	ndb_search_words_init(&search_words);
+
+	// search config
+	limit = MAX_TEXT_SEARCH_RESULTS;
+	order_op = MDB_PREV;
+	key_order_fn = ndb_make_text_search_key_high;
+	if (config) {
+		if (config->order == NDB_ORDER_ASCENDING) {
+			order_op = MDB_NEXT;
+			key_order_fn = ndb_make_text_search_key_low;
+		}
+		limit = min(limit, config->limit);
+	}
+	// end search config
 	
-	//num_note_ids = 0;
 	text_db = txn->lmdb->dbs[NDB_DB_NOTE_TEXT];
 	make_cursor((unsigned char *)query, (unsigned char *)query + strlen(query), &cur);
 
@@ -2614,24 +2682,14 @@ int ndb_text_search(struct ndb_txn *txn, const char *query,
 		return 0;
 	}
 
-	fprintf(stderr, "search query: '%s'\n", query);
-
-
 	// for each word, we recursively find all of the submatches
-	while (results->num_results < MAX_TEXT_SEARCH_RESULTS) {
+	while (results->num_results < limit) {
 		last_result = NULL;
 		result = &results->results[results->num_results];
 
 		// if we have saved, then we continue from the last root search
 		// sequence
 		if (saved) {
-			/*
-			fprintf(stderr, "continuing from ");
-			if (ndb_unpack_text_search_key(saved_buf, saved_size, &search_key)) {
-				ndb_print_text_search_key(&search_key);
-			}
-			fprintf(stderr, "\n");
-			*/
 			buf = saved_buf;
 			saved = NULL;
 			keysize = saved_size;
@@ -2643,16 +2701,15 @@ int ndb_text_search(struct ndb_txn *txn, const char *query,
 			if (mdb_cursor_get(cursor, &k, &v, MDB_SET_RANGE))
 				break;
 
-			op = MDB_NEXT;
+			op = order_op;
 		} else {
 			// construct a packed fulltext search key using this
 			// word this key doesn't contain any timestamp or index
 			// info, so it should range match instead of exact
 			// match
-			if (!ndb_make_text_search_key_low(
-				buffer, sizeof(buffer),
-				search_words.words[0].word_len,
-				search_words.words[0].word, &keysize))
+			if (!key_order_fn(buffer, sizeof(buffer),
+					  search_words.words[0].word_len,
+					  search_words.words[0].word, &keysize))
 			{
 				// word is too big to fit in 1024-sized key
 				continue;
@@ -2699,7 +2756,8 @@ int ndb_text_search(struct ndb_txn *txn, const char *query,
 			if (!ndb_text_search_next_word(cursor, op, &k,
 						       search_word,
 						       last_result,
-						       &candidate)) {
+						       &candidate,
+						       order_op)) {
 				break;
 			}
 
@@ -2726,13 +2784,6 @@ cont:
 			break;
 		}
 
-	}
-
-	// print results for now
-	for (j = 0; j < results->num_results; j++) {
-		result = &results->results[j];
-		printf("[%02d] ", j+1);
-		ndb_print_text_search_result(txn, result);
 	}
 
 	mdb_cursor_close(cursor);
@@ -2773,8 +2824,8 @@ static uint64_t ndb_write_note(struct ndb_txn *txn,
 	if (!ndb_write_note_kind_index(txn, note->note, note_key))
 		return 0;
 
-	// only do fulltext index on kind1 notes
-	if (note->note->kind == 1) {
+	// only do fulltext index on text and longform notes
+	if (note->note->kind == 1 || note->note->kind == 30023) {
 		if (!ndb_write_note_fulltext_index(txn, note->note, note_key))
 			return 0;
 	}
@@ -3000,8 +3051,8 @@ static int ndb_writer_init(struct ndb_writer *writer, struct ndb_lmdb *lmdb)
 
 // initialize the ingester queue and then spawn the thread
 static int ndb_ingester_init(struct ndb_ingester *ingester,
-			     struct ndb_writer *writer, int num_threads,
-			     int flags)
+			     struct ndb_writer *writer,
+			     struct ndb_config *config)
 {
 	int elem_size, num_elems;
 	static struct ndb_ingester_msg quit_msg = { .type = NDB_INGEST_QUIT };
@@ -3011,10 +3062,13 @@ static int ndb_ingester_init(struct ndb_ingester *ingester,
 	num_elems = DEFAULT_QUEUE_SIZE;
 
 	ingester->writer = writer;
-	ingester->flags = flags;
+	ingester->flags = config->flags;
+	ingester->filter = config->ingest_filter;
+	ingester->filter_context = config->filter_context;
 
-	if (!threadpool_init(&ingester->tp, num_threads, elem_size, num_elems,
-			     &quit_msg, ingester, ndb_ingester_thread))
+	if (!threadpool_init(&ingester->tp, config->ingester_threads,
+			     elem_size, num_elems, &quit_msg, ingester,
+			     ndb_ingester_thread))
 	{
 		fprintf(stderr, "ndb ingester threadpool failed to init\n");
 		return 0;
@@ -3221,20 +3275,20 @@ static int ndb_run_migrations(struct ndb *ndb)
 	return 1;
 }
 
-int ndb_init(struct ndb **pndb, const char *filename, size_t mapsize, int ingester_threads, int flags)
+int ndb_init(struct ndb **pndb, const char *filename, struct ndb_config *config)
 {
 	struct ndb *ndb;
 	//MDB_dbi ind_id; // TODO: ind_pk, etc
 
 	ndb = *pndb = calloc(1, sizeof(struct ndb));
-	ndb->flags = flags;
+	ndb->flags = config->flags;
 
 	if (ndb == NULL) {
 		fprintf(stderr, "ndb_init: malloc failed\n");
 		return 0;
 	}
 
-	if (!ndb_init_lmdb(filename, &ndb->lmdb, mapsize))
+	if (!ndb_init_lmdb(filename, &ndb->lmdb, config->mapsize))
 		return 0;
 
 	if (!ndb_writer_init(&ndb->writer, &ndb->lmdb)) {
@@ -3242,14 +3296,14 @@ int ndb_init(struct ndb **pndb, const char *filename, size_t mapsize, int ingest
 		return 0;
 	}
 
-	if (!ndb_ingester_init(&ndb->ingester, &ndb->writer, ingester_threads,
-			       ndb->flags)) {
+	if (!ndb_ingester_init(&ndb->ingester, &ndb->writer, config)) {
 		fprintf(stderr, "failed to initialize %d ingester thread(s)\n",
-				ingester_threads);
+				config->ingester_threads);
 		return 0;
 	}
 
-	if (!ndb_flag_set(flags, NDB_FLAG_NOMIGRATE) && !ndb_run_migrations(ndb)) {
+	if (!ndb_flag_set(config->flags, NDB_FLAG_NOMIGRATE) &&
+			  !ndb_run_migrations(ndb)) {
 		fprintf(stderr, "failed to run migrations\n");
 		return 0;
 	}
@@ -4380,4 +4434,64 @@ inline int ndb_builder_push_tag_str(struct ndb_builder *builder,
 	return ndb_builder_finalize_tag(builder, pstr);
 }
 
+//
+// CONFIG
+// 
+void ndb_default_config(struct ndb_config *config)
+{
+	int cores = get_cpu_cores();
+	config->mapsize = 1024UL * 1024UL * 1024UL * 32UL; // 32 GiB
+	config->ingester_threads = cores == -1 ? 4 : cores;
+	config->flags = 0;
+	config->ingest_filter = NULL;
+	config->filter_context = NULL;
+}
 
+void ndb_config_set_ingest_threads(struct ndb_config *config, int threads)
+{
+	config->ingester_threads = threads;
+}
+
+void ndb_config_set_flags(struct ndb_config *config, int flags)
+{
+	config->flags = flags;
+}
+
+void ndb_config_set_mapsize(struct ndb_config *config, size_t mapsize)
+{
+	config->mapsize = mapsize;
+}
+
+void ndb_config_set_ingest_filter(struct ndb_config *config,
+				  ndb_ingest_filter_fn fn, void *filter_ctx)
+{
+	config->ingest_filter = fn;
+	config->filter_context = filter_ctx;
+}
+
+// used by ndb.c
+int ndb_print_search_keys(struct ndb_txn *txn)
+{
+	MDB_cursor *cur;
+	MDB_val k, v;
+	int i;
+	struct ndb_text_search_key search_key;
+
+	if (mdb_cursor_open(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE_TEXT], &cur))
+		return 0;
+
+	i = 1;
+	while (mdb_cursor_get(cur, &k, &v, MDB_NEXT) == 0) {
+		if (!ndb_unpack_text_search_key(k.mv_data, k.mv_size, &search_key)) {
+			fprintf(stderr, "error decoding key %d\n", i);
+			continue;
+		}
+
+		ndb_print_text_search_key(&search_key);
+		printf("\n");
+
+		i++;
+	}
+
+	return 1;
+}
