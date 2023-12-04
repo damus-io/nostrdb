@@ -4,6 +4,7 @@
 #include "io.h"
 #include "protected_queue.h"
 #include "memchr.h"
+#include "print_util.h"
 #include "bindings/c/profile_reader.h"
 #include "bindings/c/profile_verifier.h"
 #include "bindings/c/meta_reader.h"
@@ -16,13 +17,6 @@
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
 static const char *test_dir = "./testdata/db";
-
-static void print_hex(unsigned char* data, size_t size) {
-	size_t i;
-	for (i = 0; i < size; i++) {
-		printf("%02x", data[i]);
-	}
-}
 
 static NdbProfile_table_t lookup_profile(struct ndb_txn *txn, uint64_t pk)
 {
