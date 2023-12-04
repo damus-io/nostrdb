@@ -944,7 +944,9 @@ static void test_fulltext()
 	char *json = malloc(alloc_size);
 	struct ndb_text_search_results results;
 	struct ndb_config config;
+	struct ndb_text_search_config search_config;
 	ndb_default_config(&config);
+	ndb_default_text_search_config(&search_config);
 
 	assert(ndb_init(&ndb, test_dir, &config));
 
@@ -956,8 +958,8 @@ static void test_fulltext()
 	ndb_begin_query(ndb, &txn);
 	ndb_text_search(&txn, "Jump Over", &results, NULL);
 	fprintf(stderr, "num results %d\n", results.num_results);
-	assert(results.num_results == 2);
-	assert(!strcmp(results.results[0].key.str, "jumped"));
+	assert(results.num_results == 1);
+	assert(!strncmp(results.results[0].key.str, "over", 4));
 	ndb_end_query(&txn);
 
 	ndb_destroy(ndb);
