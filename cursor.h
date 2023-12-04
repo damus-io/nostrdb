@@ -523,7 +523,7 @@ static inline int parse_utf8_char(struct cursor *cursor, unsigned int *code_poin
         remaining_bytes = 0;
         *utf8_length = 1; // Assume 1 byte length for unrecognized UTF-8 characters
         // TODO: We need to gracefully handle unrecognized UTF-8 characters
-        printf("Invalid UTF-8 byte: %x\n", *code_point);
+        //printf("Invalid UTF-8 byte: %x\n", *code_point);
         *code_point = ((first_byte & 0xF0) << 6); // Prevent testing as punctuation
         return 0; // Invalid first byte
     }
@@ -634,7 +634,7 @@ static inline int consume_until_boundary(struct cursor *cur) {
             if (!parse_utf8_char(cur, &c, utf8_char_length)) {
                 if (!is_right_boundary(c)){
                     // TODO: We should work towards handling all UTF-8 characters.
-                    printf("Invalid UTF-8 code point: %x\n", c);
+                    //printf("Invalid UTF-8 code point: %x\n", c);
                 }
             }
         }
