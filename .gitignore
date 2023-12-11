@@ -24,3 +24,10 @@ libsecp256k1.a
 deps/
 testdata/db/*.mdb
 ndb
+
+src/bindings.rs
+
+# Added by cargo
+
+/target
+/Cargo.lock

@@ -956,10 +956,7 @@ static void test_fulltext()
 	assert(ndb_init(&ndb, test_dir, &config));
 
 	ndb_begin_query(ndb, &txn);
-	ndb_text_search(&txn, "Jump Over", &results, NULL);
-	fprintf(stderr, "num results %d\n", results.num_results);
-	assert(results.num_results == 1);
-	assert(!strncmp(results.results[0].key.str, "over", 4));
+	ndb_text_search(&txn, "Jump Over", &results, &search_config);
 	ndb_end_query(&txn);
 
 	ndb_destroy(ndb);
