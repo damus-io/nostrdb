@@ -193,6 +193,15 @@ struct ndb_text_search_results {
 	int num_results;
 };
 
+enum block_type {
+    BLOCK_HASHTAG        = 1,
+    BLOCK_TEXT           = 2,
+    BLOCK_MENTION_INDEX  = 3,
+    BLOCK_MENTION_BECH32 = 4,
+    BLOCK_URL            = 5,
+    BLOCK_INVOICE        = 6,
+};
+
 // these must be byte-aligned, they are directly accessing the serialized data
 // representation
 #pragma pack(push, 1)
@@ -235,6 +244,35 @@ struct ndb_note {
 	uint32_t strings;
 	// nothing can come after tags since it contains variadic data
 	struct ndb_tags tags;
+};
+
+struct ndb_str_block {
+	uint32_t start;
+	uint32_t end;
+};
+
+typedef struct invoice_block {
+    struct ndb_str_block invstr;
+} invoice_block_t;
+
+struct ndb_note_block {
+	uint16_t type;
+	uint16_t padding;
+	union {
+		struct ndb_str_block str;
+		struct ndb_str_block invoice;
+		struct ndb_str_blocks mention_bech32;
+		int mention_index;
+	} block;
+};
+
+struct ndb_note_blocks {
+	unsigned char version;
+	unsigned char padding[3];
+	uint32_t words;
+	uint32_t num_blocks;
+	uint32_t strings;
+	struct ndb_note_block blocks[0];
 };
 
 #pragma pack(pop)
