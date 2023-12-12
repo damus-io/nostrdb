@@ -29,8 +29,8 @@ static void ndb_print_text_search_result(struct ndb_txn *txn,
 	}
 
 	printf(" ");
-	print_hex(note->id, 32);
+	print_hex(ndb_note_id(note), 32);
 
-	printf("\n%s\n\n---\n", ndb_note_str(note, &note->content).str);
+	printf("\n%s\n\n---\n", ndb_note_content(note));
 }
 

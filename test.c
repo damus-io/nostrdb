@@ -49,9 +49,8 @@ static void test_filters()
 
 	const char *test_note = "{\"id\": \"160e76ca67405d7ce9ef7d2dd72f3f36401c8661a73d45498af842d40b01b736\",\"pubkey\": \"67c67870aebc327eb2a2e765e6dbb42f0f120d2c4e4e28dc16b824cf72a5acc1\",\"created_at\": 1700688516,\"kind\": 1337,\"tags\": [[\"t\",\"hashtag\"],[\"t\",\"grownostr\"],[\"p\",\"4d2e7a6a8e08007ace5a03391d21735f45caf1bf3d67b492adc28967ab46525e\"]],\"content\": \"\",\"sig\": \"20c2d070261ed269559ada40ca5ac395c389681ee3b5f7d50de19dd9b328dd70cf27d9d13875e87c968d9b49fa05f66e90f18037be4529b9e582c7e2afac3f06\"}";
 
-	assert(ndb_note_from_json(test_note, strlen(test_note), &note, buffer, sizeof(buffer)));
-
 	f = &filter;
+	assert(ndb_note_from_json(test_note, strlen(test_note), &note, buffer, sizeof(buffer)));
 
 	assert(ndb_filter_init(f));
 	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
@@ -69,13 +68,13 @@ static void test_filters()
 	// try matching the filter
 	assert(ndb_filter_matches(f, note));
 
-	note->kind = 1;
+	_ndb_note_set_kind(note, 1);
 
 	// inverse match
 	assert(!ndb_filter_matches(f, note));
 
 	// should also match 2
-	note->kind = 2;
+	_ndb_note_set_kind(note, 2);
 	assert(ndb_filter_matches(f, note));
 
 	// don't free, just reset data pointers
@@ -92,14 +91,14 @@ static void test_filters()
 	// shouldn't match the kind filter
 	assert(!ndb_filter_matches(f, note));
 
-	note->kind = 3;
+	_ndb_note_set_kind(note, 3);
 
 	// now it should
 	assert(ndb_filter_matches(f, note));
 
 	ndb_filter_reset(f);
 	assert(ndb_filter_start_field(f, NDB_FILTER_AUTHORS));
-	assert(ndb_filter_add_id_element(f, note->pubkey));
+	assert(ndb_filter_add_id_element(f, ndb_note_pubkey(note)));
 	ndb_filter_end_field(f);
 	assert(f->current == NULL);
 	assert(ndb_filter_matches(f, note));
@@ -370,7 +369,7 @@ static void test_basic_event() {
 	assert(ok);
 	note = builder.note;
 
-	memset(note->padding, 3, sizeof(note->padding));
+	//memset(note->padding, 3, sizeof(note->padding));
 
 	ok = ndb_builder_set_content(b, hex_pk, strlen(hex_pk)); assert(ok);
 	ndb_builder_set_id(b, id); assert(ok);
@@ -390,8 +389,9 @@ static void test_basic_event() {
 	assert(ok);
 
 	// content should never be packed id
-	assert(note->content.packed.flag != NDB_PACKED_ID);
-	assert(note->tags.count == 2);
+	// TODO: figure out how to test this now that we don't expose it
+	// assert(note->content.packed.flag != NDB_PACKED_ID);
+	assert(ndb_tags_count(ndb_note_tags(note)) == 2);
 
 	// test iterator
 	struct ndb_iterator iter, *it = &iter;
@@ -400,7 +400,7 @@ static void test_basic_event() {
 	ok = ndb_tags_iterate_next(it);
 	assert(ok);
 
-	assert(it->tag->count == 2);
+	assert(ndb_tag_count(it->tag) == 2);
 	const char *p      = ndb_iter_tag_str(it, 0).str;
 	struct ndb_str hpk = ndb_iter_tag_str(it, 1);
 
@@ -412,7 +412,7 @@ static void test_basic_event() {
 
 	ok = ndb_tags_iterate_next(it);
 	assert(ok);
-	assert(it->tag->count == 3);
+	assert(ndb_tag_count(it->tag) == 3);
 	assert(!strcmp(ndb_iter_tag_str(it, 0).str, "word"));
 	assert(!strcmp(ndb_iter_tag_str(it, 1).str, "words"));
 	assert(!strcmp(ndb_iter_tag_str(it, 2).str, "w"));
@@ -434,7 +434,7 @@ static void test_empty_tags() {
 	ok = ndb_builder_finalize(b, &note, NULL);
 	assert(ok);
 
-	assert(note->tags.count == 0);
+	assert(ndb_tags_count(ndb_note_tags(note)) == 0);
 
 	ndb_tags_iterate_start(note, it);
 	ok = ndb_tags_iterate_next(it);
@@ -442,9 +442,10 @@ static void test_empty_tags() {
 }
 
 static void print_tag(struct ndb_note *note, struct ndb_tag *tag) {
-	for (int i = 0; i < tag->count; i++) {
-		union ndb_packed_str *elem = &tag->strs[i];
-		struct ndb_str str = ndb_note_str(note, elem);
+	struct ndb_str str;
+	int tag_count = ndb_tag_count(tag);
+	for (int i = 0; i < tag_count; i++) {
+		str = ndb_tag_str(note, tag, i);
 		if (str.flag == NDB_PACKED_ID) {
 			printf("<id> ");
 		} else {
@@ -470,10 +471,10 @@ static void test_parse_contact_list()
 	assert(size > 0);
 	assert(size == 34328);
 
-	memcpy(id, note->id, 32);
-	memset(note->id, 0, 32);
+	memcpy(id, ndb_note_id(note), 32);
+	memset(ndb_note_id(note), 0, 32);
 	assert(ndb_calculate_id(note, json, alloc_size));
-	assert(!memcmp(note->id, id, 32));
+	assert(!memcmp(ndb_note_id(note), id, 32));
 
 	const char* expected_content = 
 	"{\"wss://nos.lol\":{\"write\":true,\"read\":true},"
@@ -488,7 +489,7 @@ static void test_parse_contact_list()
 	assert(!strcmp(expected_content, ndb_note_content(note)));
 	assert(ndb_note_created_at(note) == 1689904312);
 	assert(ndb_note_kind(note) == 3);
-	assert(note->tags.count == 786);
+	assert(ndb_tags_count(ndb_note_tags(note)) == 786);
 	//printf("note content length %d\n", ndb_note_content_length(note));
 	printf("ndb_content_len %d, expected_len %ld\n",
 			ndb_note_content_length(note),
@@ -502,21 +503,20 @@ static void test_parse_contact_list()
 	int total_elems = 0;
 
 	while (ndb_tags_iterate_next(it)) {
-		total_elems += it->tag->count;
+		total_elems += ndb_tag_count(it->tag);
 		//printf("tag %d: ", tags);
 		if (tags == 0 || tags == 1 || tags == 2)
-			assert(it->tag->count == 3);
+			assert(ndb_tag_count(it->tag) == 3);
 
 		if (tags == 6)
-			assert(it->tag->count == 2);
+			assert(ndb_tag_count(it->tag) == 2);
 
 		if (tags == 7)
-			assert(!strcmp(ndb_note_str(note, &it->tag->strs[2]).str,
-						"wss://nostr-pub.wellorder.net"));
+			assert(!strcmp(ndb_tag_str(note, it->tag, 2).str, "wss://nostr-pub.wellorder.net"));
 
 		if (tags == 786) {
 			static unsigned char h[] = { 0x74, 0xfa, 0xe6, 0x66, 0x4c, 0x9e, 0x79, 0x98, 0x0c, 0x6a, 0xc1, 0x1c, 0x57, 0x75, 0xed, 0x30, 0x93, 0x2b, 0xe9, 0x26, 0xf5, 0xc4, 0x5b, 0xe8, 0xd6, 0x55, 0xe0, 0x0e, 0x35, 0xec, 0xa2, 0x88 };
-			assert(!memcmp(ndb_note_str(note, &it->tag->strs[1]).id, h, 32));
+			assert(!memcmp(ndb_tag_str(note, it->tag, 1).id, h, 32));
 		}
 
 		//print_tag(it->note, it->tag);
@@ -603,7 +603,7 @@ static void test_fetch_last_noteid()
 	assert(ndb_begin_query(ndb, &txn));
 	struct ndb_note *note = ndb_get_note_by_id(&txn, id, &len, NULL);
 	assert(note != NULL);
-	assert(note->created_at == 1650054135);
+	assert(ndb_note_created_at(note) == 1650054135);
 	
 	unsigned char pk[32] = { 0x32, 0xe1, 0x82, 0x76, 0x35, 0x45, 0x0e, 0xbb, 0x3c, 0x5a, 0x7d, 0x12, 0xc1, 0xf8, 0xe7, 0xb2, 0xb5, 0x14, 0x43, 0x9a, 0xc1, 0x0a, 0x67, 0xee, 0xf3, 0xd9, 0xfd, 0x9c, 0x5c, 0x68, 0xe2, 0x45 };
 
@@ -632,7 +632,7 @@ static void test_fetch_last_noteid()
 
 	struct ndb_note *n = ndb_get_note_by_key(&txn, key, NULL);
 	ndb_end_query(&txn);
-	assert(memcmp(profile_note_id, n->id, 32) == 0);
+	assert(memcmp(profile_note_id, ndb_note_id(n), 32) == 0);
 
 	//fwrite(profile, len, 1, stdout);
 
@@ -700,17 +700,17 @@ static void test_parse_json() {
 	assert(!strcmp(content, "共通語"));
 	assert(!memcmp(id, hex_id, 32));
 
-	assert(note->tags.count == 2);
+	assert(ndb_tags_count(ndb_note_tags(note)) == 2);
 
 	struct ndb_iterator iter, *it = &iter;
 	ndb_tags_iterate_start(note, it); assert(ok);
 	ok = ndb_tags_iterate_next(it); assert(ok);
-	assert(it->tag->count == 2);
+	assert(ndb_tag_count(it->tag) == 2);
 	assert(!strcmp(ndb_iter_tag_str(it, 0).str, "p"));
 	assert(!memcmp(ndb_iter_tag_str(it, 1).id, hex_id, 32));
 
 	ok = ndb_tags_iterate_next(it); assert(ok);
-	assert(it->tag->count == 3);
+	assert(ndb_tag_count(it->tag) == 3);
 	assert(!strcmp(ndb_iter_tag_str(it, 0).str, "word"));
 	assert(!strcmp(ndb_iter_tag_str(it, 1).str, "words"));
 	assert(!strcmp(ndb_iter_tag_str(it, 2).str, "w"));
@@ -725,10 +725,10 @@ static void test_strings_work_before_finalization() {
 	ok = ndb_builder_init(b, buf, sizeof(buf)); assert(ok);
 	ndb_builder_set_content(b, "hello", 5);
 
-	assert(!strcmp(ndb_note_str(b->note, &b->note->content).str, "hello"));
+	assert(!strcmp(ndb_note_content(b->note), "hello"));
 	assert(ndb_builder_finalize(b, &note, NULL));
 
-	assert(!strcmp(ndb_note_str(b->note, &b->note->content).str, "hello"));
+	assert(!strcmp(ndb_note_content(note), "hello"));
 }
 
 static void test_tce_eose() {
