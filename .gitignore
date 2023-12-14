@@ -25,7 +25,7 @@ deps/
 testdata/db/*.mdb
 ndb
 
-src/bindings.rs
+rust/src/bindings.rs
 
 # Added by cargo
 

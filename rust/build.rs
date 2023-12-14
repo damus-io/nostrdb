@@ -7,9 +7,9 @@ fn secp256k1_build() {
     // Actual build
     let mut base_config = cc::Build::new();
     base_config
-        .include("deps/secp256k1/")
-        .include("deps/secp256k1/include")
-        .include("deps/secp256k1/src")
+        .include("../deps/secp256k1/")
+        .include("../deps/secp256k1/include")
+        .include("../deps/secp256k1/src")
         .flag_if_supported("-Wno-unused-function") // some ecmult stuff is defined but not used upstream
         .flag_if_supported("-Wno-unused-parameter") // patching out printf causes this warning
         //.define("SECP256K1_API", Some(""))
@@ -41,10 +41,10 @@ fn secp256k1_build() {
 
     // secp256k1
     base_config
-        .file("deps/secp256k1/contrib/lax_der_parsing.c")
-        .file("deps/secp256k1/src/precomputed_ecmult_gen.c")
-        .file("deps/secp256k1/src/precomputed_ecmult.c")
-        .file("deps/secp256k1/src/secp256k1.c");
+        .file("../deps/secp256k1/contrib/lax_der_parsing.c")
+        .file("../deps/secp256k1/src/precomputed_ecmult_gen.c")
+        .file("../deps/secp256k1/src/precomputed_ecmult.c")
+        .file("../deps/secp256k1/src/secp256k1.c");
 
     if base_config.try_compile("libsecp256k1.a").is_err() {
         // Some embedded platforms may not have, eg, string.h available, so if the build fails
@@ -61,20 +61,20 @@ fn main() {
 
     build
         .files([
-            "nostrdb.c",
-            "sha256.c",
-            "bech32.c",
-            "deps/flatcc/src/runtime/json_parser.c",
-            "deps/flatcc/src/runtime/verifier.c",
-            "deps/flatcc/src/runtime/builder.c",
-            "deps/flatcc/src/runtime/emitter.c",
-            "deps/flatcc/src/runtime/refmap.c",
-            "deps/lmdb/mdb.c",
-            "deps/lmdb/midl.c",
+            "../nostrdb.c",
+            "../sha256.c",
+            "../bech32.c",
+            "../deps/flatcc/src/runtime/json_parser.c",
+            "../deps/flatcc/src/runtime/verifier.c",
+            "../deps/flatcc/src/runtime/builder.c",
+            "../deps/flatcc/src/runtime/emitter.c",
+            "../deps/flatcc/src/runtime/refmap.c",
+            "../deps/lmdb/mdb.c",
+            "../deps/lmdb/midl.c",
         ])
-        .include("deps/lmdb")
-        .include("deps/flatcc/include")
-        .include("deps/secp256k1/include")
+        .include("../deps/lmdb")
+        .include("../deps/flatcc/include")
+        .include("../deps/secp256k1/include")
         // Add other include paths
         //.flag("-Wall")
         .flag("-Wno-misleading-indentation")
@@ -87,12 +87,12 @@ fn main() {
 
     // Re-run the build script if any of the C files or headers change
     for file in &[
-        "src/nostrdb.c",
-        "src/sha256.c",
-        "src/bech32.c",
+        "../nostrdb.c",
+        "../sha256.c",
+        "../bech32.c",
         // Add all your C source files here
-        "include/nostrdb.h",
-        "include/sha256.h",
+        "../nostrdb.h",
+        "../sha256.h",
         // Add all your header files here
     ] {
         println!("cargo:rerun-if-changed={}", file);
@@ -111,7 +111,7 @@ fn main() {
     // The bindgen::Builder is the main entry point to bindgen, and lets you build up options for
     // the resulting bindings.
     let bindings = bindgen::Builder::default()
-        .header("nostrdb.h")
+        .header("../nostrdb.h")
         .generate()
         .expect("Unable to generate bindings");
 
