@@ -4,12 +4,11 @@
 #[allow(unused)]
 mod bindings;
 
-use std::ffi::CString;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use bindings as ndb;
+    use std::ffi::CString;
 
     #[test]
     fn ndb_init_works() {
