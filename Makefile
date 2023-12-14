@@ -35,7 +35,7 @@ check: test $(CHECKDATA)
 clean:
 	rm -rf test bench bench-ingest bench-ingest-many
 
-benches: bench bench-ingest
+benches: bench
 
 distclean: clean
 	rm -rf deps

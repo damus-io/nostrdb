@@ -29,8 +29,14 @@ jobs:
         ./scripts/build.sh
         sudo cp bin/flatcc /usr/bin
 
+    - name: flatc version
+      run: flatc --version
+
     - name: make all
       run: make
 
     - name: make check
       run: make check
+
+    - name: rust
+      run: cargo test
