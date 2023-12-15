@@ -6,7 +6,7 @@ readme = "README.md"
 version = "0.1.0"
 edition = "2021"
 build = "build.rs"
-include = ["../deps", "src", "Cargo.toml", "../*.c", "../*.h"]
+include = ["../deps", "src", "Cargo.toml", "build.rs", "../*.c", "../*.h"]
 
 [build-dependencies]
 bindgen = "0.69.1"
