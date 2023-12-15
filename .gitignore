@@ -21,8 +21,10 @@ configurator
 config.h
 libsecp256k1.a
 .direnv/
-deps/
+deps/secp256k1
 testdata/db/*.mdb
+deps/*.tar.gz
+deps/.dir
 ndb
 
 # Added by cargo
