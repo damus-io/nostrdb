@@ -18,7 +18,7 @@ BIN=ndb
 
 CHECKDATA=testdata/db/v0/data.mdb
 
-all: $(BIN) lib bindings ndb
+all: lib ndb
 
 lib: benches test
 
