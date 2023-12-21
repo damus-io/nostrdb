@@ -6,7 +6,6 @@ keys.txt
 test
 .buildcmd
 .build-result
-shell.nix
 *.dSYM
 *.zst
 testdata/many-events.json
