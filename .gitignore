@@ -8,6 +8,7 @@ test
 .build-result
 *.dSYM
 *.zst
+*.o
 testdata/many-events.json
 testdata/db/ndb-v0.tar
 testdata/db/v0
