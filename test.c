@@ -967,7 +967,7 @@ static void test_fulltext()
 
 }
 
-static void test_varint(int64_t value) {
+static void test_varint(uint64_t value) {
 	unsigned char buffer[10];
 	struct cursor cursor;
 	uint64_t result;
@@ -1006,15 +1006,15 @@ static int test_varints() {
 	test_varint(2097152); // Edge case for 4-byte varint
 	test_varint(268435455); // Edge case for 4-byte varint
 	test_varint(268435456); // Edge case for 5-byte varint
-	test_varint(34359738367LL); // Edge case for 5-byte varint
-	test_varint(34359738368LL); // Edge case for 6-byte varint
-	test_varint(4398046511103LL); // Edge case for 6-byte varint
-	test_varint(4398046511104LL); // Edge case for 7-byte varint
-	test_varint(562949953421311LL); // Edge case for 7-byte varint
-	test_varint(562949953421312LL); // Edge case for 8-byte varint
-	test_varint(72057594037927935LL); // Edge case for 8-byte varint
-	test_varint(72057594037927936LL); // Edge case for 9-byte varint
-	test_varint(9223372036854775807LL); // Maximum 64-bit integer
+	test_varint(34359738367ULL); // Edge case for 5-byte varint
+	test_varint(34359738368ULL); // Edge case for 6-byte varint
+	test_varint(4398046511103ULL); // Edge case for 6-byte varint
+	test_varint(4398046511104ULL); // Edge case for 7-byte varint
+	test_varint(562949953421311ULL); // Edge case for 7-byte varint
+	test_varint(562949953421312ULL); // Edge case for 8-byte varint
+	test_varint(72057594037927935ULL); // Edge case for 8-byte varint
+	test_varint(72057594037927936ULL); // Edge case for 9-byte varint
+	test_varint(9223372036854775807ULL); // Maximum 64-bit integer
 
 	return 0;
 }
