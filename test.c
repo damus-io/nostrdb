@@ -3,7 +3,7 @@
 #include "hex.h"
 #include "io.h"
 #include "bolt11/bolt11.h"
-#include "bolt11/amount.h"
+#include "invoice.h"
 #include "protected_queue.h"
 #include "memchr.h"
 #include "print_util.h"
@@ -106,6 +106,45 @@ static void test_filters()
 	assert(ndb_filter_matches(f, note));
 
 	ndb_filter_free(f);
+}
+
+static void test_invoice_encoding(const char *bolt11_str)
+{
+	unsigned char buf[4096];
+	char *fail = NULL;
+	struct cursor cur;
+	struct ndb_invoice invoice;
+	struct bolt11 *bolt11;
+
+	bolt11 = bolt11_decode(NULL, bolt11_str, &fail);
+	make_cursor(buf, buf + sizeof(buf), &cur);
+
+	assert(fail == NULL);
+	assert(ndb_encode_invoice(&cur, bolt11));
+	cur.p = cur.start;
+	assert(ndb_decode_invoice(&cur, &invoice));
+
+	assert(bolt11->msat->millisatoshis == invoice.amount);
+	assert(bolt11->timestamp == invoice.timestamp);
+	assert(bolt11->expiry == invoice.expiry);
+
+	if (bolt11->description != NULL && invoice.description != NULL)
+		assert(!strcmp(bolt11->description, invoice.description));
+	else if (bolt11->description_hash != NULL && invoice.description_hash != NULL)
+		assert(!memcmp(bolt11->description_hash->u.u8, invoice.description_hash, 32));
+	else
+		assert(0);
+	
+	tal_free(bolt11);
+}
+
+static void test_encode_decode_invoice()
+{
+	const char *deschash = "lnbc12n1pjctuljsp57l6za0xry37prkrz7vuv4324ljnssm8ukr2vrf6qvvrgclsmpyhspp5xqfuk89duzjlt2yg56ym7p3enrfxxltyfpc364qc8nsu3kznkl8shp5eugmd894yph7wq68u09gke5x2hmn7mg3zrwd06fs57gmcrjm0uxsxqyjw5qcqpjrzjqd7yw3w4kvhx8uvcj7qusfw4uqre3j56zjz9t07nd2u55yuya3awsrqdlcqqdzcqqqqqqqqqqqqqqzqqyg9qxpqysgqwm2tsc448ellvf5xem2c95hfvc07lakph9r8hffh704uxqhs22r9s4ly0jel48zv6f7fy8zjkgmjt5h2l4jc9gyj4av42s40qvve2ysqwuega8";
+	const char *desc = "lnbc12u1pjctuklsp5lg8wdhq2g5xfphkqd5k6gf0femt06wfevu94uuqfprc4ggyqma7spp54lmpmz0mhv3lczepdckr0acf3gdany2654u4k2s8fp5xh0yanjhsdq5w3jhxapdd9h8vmmfvdjsxqyjw5qcqpjrzjqgtsq68q0s9wdadpg32gcfu7hslgkhdpaysj2ha3dtnm8882wa6jyzahpqqqpsgqqyqqqqlgqqqqqpsq9q9qxpqysgqdqzhl8gz46nmalhg27stl25z2u7mqtclv3zz223mjwut90m24fa46xqprjewsqys78j2uljfznz5vtefctu6fw7375ee66e62tj965gpcs85tc";
+
+	test_invoice_encoding(deschash);
+	test_invoice_encoding(desc);
 }
 
 // Test fetched_at profile records. These are saved when new profiles are
@@ -1021,6 +1060,7 @@ static int test_varints() {
 
 int main(int argc, const char *argv[]) {
 	test_varints();
+	test_encode_decode_invoice();
 	test_filters();
 	//test_migrate();
 	test_fetched_at();
