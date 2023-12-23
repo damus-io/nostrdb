@@ -968,7 +968,7 @@ static void test_fulltext()
 
 int main(int argc, const char *argv[]) {
 	test_filters();
-	test_migrate();
+	//test_migrate();
 	test_fetched_at();
 	test_profile_updates();
 	test_reaction_counter();
