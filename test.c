@@ -2,6 +2,8 @@
 #include "nostrdb.h"
 #include "hex.h"
 #include "io.h"
+#include "bolt11/bolt11.h"
+#include "bolt11/amount.h"
 #include "protected_queue.h"
 #include "memchr.h"
 #include "print_util.h"

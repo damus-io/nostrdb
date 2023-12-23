@@ -24,7 +24,7 @@
 
 #ifndef LIGHTNING_COMMON_BECH32_H
 #define LIGHTNING_COMMON_BECH32_H
-#include "config.h"
+#include "../config.h"
 
 #include <stdint.h>
 #include <stdlib.h>

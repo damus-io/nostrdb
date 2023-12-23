@@ -1,7 +1,8 @@
 CFLAGS = -Wall -Wno-misleading-indentation -Wno-unused-function -Werror -O2 -g -Ideps/secp256k1/include -Ideps/lmdb -Ideps/flatcc/include
 HEADERS = sha256.h nostrdb.h cursor.h hex.h jsmn.h config.h sha256.h random.h memchr.h cpu.h $(C_BINDINGS)
 FLATCC_SRCS=deps/flatcc/src/runtime/json_parser.c deps/flatcc/src/runtime/verifier.c deps/flatcc/src/runtime/builder.c deps/flatcc/src/runtime/emitter.c deps/flatcc/src/runtime/refmap.c
-SRCS = nostrdb.c sha256.c bech32.c $(FLATCC_SRCS)
+BOLT11_SRCS = bolt11/bolt11.c bolt11/bech32.c bolt11/tal.c bolt11/talstr.c bolt11/take.c bolt11/list.c bolt11/utf8.c bolt11/amount.c bolt11/hash_u5.c
+SRCS = nostrdb.c sha256.c $(BOLT11_SRCS) $(FLATCC_SRCS)
 LDS = $(OBJS) $(ARS) 
 OBJS = $(SRCS:.c=.o)
 DEPS = $(OBJS) $(HEADERS) $(ARS)

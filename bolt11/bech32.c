@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#include "config.h"
+#include "../config.h"
 #include <assert.h>
 #include "bech32.h"
 #include <string.h>
