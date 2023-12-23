@@ -964,9 +964,63 @@ static void test_fulltext()
 	ndb_destroy(ndb);
 
 	free(json);
+
+}
+
+static void test_varint(int64_t value) {
+	unsigned char buffer[10];
+	struct cursor cursor;
+	uint64_t result;
+
+	// Initialize cursor
+	cursor.start = buffer;
+	cursor.p = buffer;
+	cursor.end = buffer + sizeof(buffer);
+
+	// Push the value
+	assert(cursor_push_varint(&cursor, value));
+
+	// Reset cursor for reading
+	cursor.p = buffer;
+
+	// Pull the value
+	if (!cursor_pull_varint(&cursor, &result)) {
+		printf("Test failed for value %" PRIu64 " \n", value);
+		assert(!"Failed to pull value");
+	}
+
+	// Check if the pushed and pulled values are the same
+	if (value != result) {
+		printf("Test failed for value %" PRIu64 "\n", value);
+		assert(!"test failed");
+	}
+}
+
+static int test_varints() {
+	test_varint(0);
+	test_varint(127); // Edge case for 1-byte varint
+	test_varint(128); // Edge case for 2-byte varint
+	test_varint(16383); // Edge case for 2-byte varint
+	test_varint(16384); // Edge case for 3-byte varint
+	test_varint(2097151); // Edge case for 3-byte varint
+	test_varint(2097152); // Edge case for 4-byte varint
+	test_varint(268435455); // Edge case for 4-byte varint
+	test_varint(268435456); // Edge case for 5-byte varint
+	test_varint(34359738367LL); // Edge case for 5-byte varint
+	test_varint(34359738368LL); // Edge case for 6-byte varint
+	test_varint(4398046511103LL); // Edge case for 6-byte varint
+	test_varint(4398046511104LL); // Edge case for 7-byte varint
+	test_varint(562949953421311LL); // Edge case for 7-byte varint
+	test_varint(562949953421312LL); // Edge case for 8-byte varint
+	test_varint(72057594037927935LL); // Edge case for 8-byte varint
+	test_varint(72057594037927936LL); // Edge case for 9-byte varint
+	test_varint(9223372036854775807LL); // Maximum 64-bit integer
+
+	return 0;
 }
 
 int main(int argc, const char *argv[]) {
+	test_varints();
 	test_filters();
 	//test_migrate();
 	test_fetched_at();
