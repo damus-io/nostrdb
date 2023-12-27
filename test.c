@@ -782,6 +782,25 @@ static void test_parse_content() {
 	assert(blocks->num_blocks == 4);
 }
 
+static void test_bech32_objects() {
+	struct nostr_bech32 obj;
+	unsigned char buf[4096];
+	const char *nevent = "nevent1qqstjtqmd3lke9m3ftv49pagzxth4q2va4hy2m6kprl0p4y6es4vvnspz3mhxue69uhhyetvv9ujuerpd46hxtnfduedelhq";
+
+	unsigned char id[32] = {
+	  0xb9, 0x2c, 0x1b, 0x6c, 0x7f, 0x6c, 0x97, 0x71, 0x4a, 0xd9, 0x52, 0x87,
+	  0xa8, 0x11, 0x97, 0x7a, 0x81, 0x4c, 0xed, 0x6e, 0x45, 0x6f, 0x56, 0x08,
+	  0xfe, 0xf0, 0xd4, 0x9a, 0xcc, 0x2a, 0xc6, 0x4e };
+
+	assert(parse_nostr_bech32(buf, sizeof(buf), nevent, strlen(nevent), &obj));
+	assert(obj.type == NOSTR_BECH32_NEVENT);
+	assert(!memcmp(obj.nevent.event_id, id, 32));
+	assert(obj.nevent.relays.num_relays == 1);
+	const char damus_relay[] = "wss://relay.damus.io";
+	assert(sizeof(damus_relay)-1 == obj.nevent.relays.relays[0].len);
+	assert(!memcmp(obj.nevent.relays.relays[0].str, damus_relay, sizeof(damus_relay)-1));
+}
+
 static void test_tce_eose() {
 	unsigned char buf[1024];
 	const char json[] = "[\"EOSE\",\"s\"]";
@@ -1071,6 +1090,7 @@ static int test_varints() {
 int main(int argc, const char *argv[]) {
 	test_parse_content();
 	test_varints();
+	test_bech32_objects();
 	test_encode_decode_invoice();
 	test_filters();
 	//test_migrate();
