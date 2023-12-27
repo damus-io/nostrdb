@@ -4,6 +4,7 @@
 #include "io.h"
 #include "bolt11/bolt11.h"
 #include "invoice.h"
+#include "block.h"
 #include "protected_queue.h"
 #include "memchr.h"
 #include "print_util.h"
@@ -772,6 +773,15 @@ static void test_strings_work_before_finalization() {
 	assert(!strcmp(ndb_note_content(note), "hello"));
 }
 
+static void test_parse_content() {
+	const char *content = "hello,#world,https://github.com/damus-io";
+	struct ndb_note_blocks *blocks;
+	unsigned char buf[4096];
+
+	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
+	assert(blocks->num_blocks == 4);
+}
+
 static void test_tce_eose() {
 	unsigned char buf[1024];
 	const char json[] = "[\"EOSE\",\"s\"]";
@@ -1059,6 +1069,7 @@ static int test_varints() {
 }
 
 int main(int argc, const char *argv[]) {
+	test_parse_content();
 	test_varints();
 	test_encode_decode_invoice();
 	test_filters();
