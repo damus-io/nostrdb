@@ -785,7 +785,7 @@ static void test_parse_content() {
 static void test_bech32_objects() {
 	struct nostr_bech32 obj;
 	unsigned char buf[4096];
-	const char *nevent = "nevent1qqstjtqmd3lke9m3ftv49pagzxth4q2va4hy2m6kprl0p4y6es4vvnspz3mhxue69uhhyetvv9ujuerpd46hxtnfduedelhq";
+	const char *nevent = "nevent1qqstjtqmd3lke9m3ftv49pagzxth4q2va4hy2m6kprl0p4y6es4vvnspz3mhxue69uhhyetvv9ujuerpd46hxtnfduqsuamn8ghj7mr0vdskc6r0wd6qegay04";
 
 	unsigned char id[32] = {
 	  0xb9, 0x2c, 0x1b, 0x6c, 0x7f, 0x6c, 0x97, 0x71, 0x4a, 0xd9, 0x52, 0x87,
@@ -795,10 +795,12 @@ static void test_bech32_objects() {
 	assert(parse_nostr_bech32(buf, sizeof(buf), nevent, strlen(nevent), &obj));
 	assert(obj.type == NOSTR_BECH32_NEVENT);
 	assert(!memcmp(obj.nevent.event_id, id, 32));
-	assert(obj.nevent.relays.num_relays == 1);
+	assert(obj.nevent.relays.num_relays == 2);
 	const char damus_relay[] = "wss://relay.damus.io";
+	const char local_relay[] = "ws://localhost";
 	assert(sizeof(damus_relay)-1 == obj.nevent.relays.relays[0].len);
 	assert(!memcmp(obj.nevent.relays.relays[0].str, damus_relay, sizeof(damus_relay)-1));
+	assert(!memcmp(obj.nevent.relays.relays[1].str, local_relay, sizeof(local_relay)-1));
 }
 
 static void test_tce_eose() {
