@@ -774,13 +774,44 @@ static void test_strings_work_before_finalization() {
 }
 
 static void test_parse_content() {
-	const char *content = "hello,#world,https://github.com/damus-io";
-	struct ndb_note_blocks *blocks;
 	unsigned char buf[4096];
+	const char *content = "hello,#world,https://github.com/damus-io";
+	struct ndb_blocks *blocks;
 
 	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
 	assert(blocks->num_blocks == 4);
 }
+
+static void test_url_parsing() {
+	unsigned char buf[4096];
+#define DAMUSIO "https://github.com/damus-io"
+#define JB55COM "https://jb55.com/"
+#define WIKIORG "http://wikipedia.org"
+	const char *content = DAMUSIO ", " JB55COM ", " WIKIORG;
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_str_block *str;
+
+	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
+	printf("blocks %d\n", blocks->num_blocks);
+	assert(blocks->num_blocks == 5);
+
+	struct ndb_block_iterator *iter = ndb_blocks_iterate_start(content, blocks);
+	int i = 0;
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		str = ndb_block_str(block);
+		switch (i++) {
+		case 0: assert(!strncmp(str->str, DAMUSIO, str->len)); break;
+		case 1: assert(!strncmp(str->str, ", ", str->len)); break;
+		case 2: assert(!strncmp(str->str, JB55COM, str->len)); break;
+		case 3: assert(!strncmp(str->str, ", ", str->len)); break;
+		case 4: assert(!strncmp(str->str, WIKIORG, str->len)); break;
+		}
+	}
+
+	assert(i == 5);
+}
+
 
 static void test_bech32_objects() {
 	struct nostr_bech32 obj;
@@ -1091,8 +1122,10 @@ static int test_varints() {
 
 int main(int argc, const char *argv[]) {
 	test_parse_content();
+	test_url_parsing();
 	test_varints();
 	test_bech32_objects();
+	//test_block_coding();
 	test_encode_decode_invoice();
 	test_filters();
 	//test_migrate();
