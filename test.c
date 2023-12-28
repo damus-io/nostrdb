@@ -800,16 +800,18 @@ static void test_url_parsing() {
 	int i = 0;
 	while ((block = ndb_blocks_iterate_next(iter))) {
 		str = ndb_block_str(block);
-		switch (i++) {
-		case 0: assert(!strncmp(str->str, DAMUSIO, str->len)); break;
-		case 1: assert(!strncmp(str->str, ", ", str->len)); break;
-		case 2: assert(!strncmp(str->str, JB55COM, str->len)); break;
-		case 3: assert(!strncmp(str->str, ", ", str->len)); break;
-		case 4: assert(!strncmp(str->str, WIKIORG, str->len)); break;
+		switch (++i) {
+		case 1: assert(!strncmp(str->str, DAMUSIO, str->len)); break;
+		case 2: assert(!strncmp(str->str, ", ", str->len)); break;
+		case 3: assert(!strncmp(str->str, JB55COM, str->len)); break;
+		case 4: assert(!strncmp(str->str, ", ", str->len)); break;
+		case 5: assert(!strncmp(str->str, WIKIORG, str->len)); break;
 		}
 	}
 
 	assert(i == 5);
+	ndb_blocks_iterate_free(iter);
+
 }
 
 
