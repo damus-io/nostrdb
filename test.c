@@ -774,12 +774,42 @@ static void test_strings_work_before_finalization() {
 }
 
 static void test_parse_content() {
+}
+
+static void test_parse_nevent() {
 	unsigned char buf[4096];
-	const char *content = "hello,#world,https://github.com/damus-io";
+	const char *content = "nostr:nevent1qqs9qhc0pjvp6jl2w6ppk5cft8ets8fhxy7fcqcjnp7g38whjy0x5aqpzpmhxue69uhkummnw3ezuamfdejsyg86np9a0kajstc8u9h846rmy6320wdepdeydfz8w8cv7kh9sqv02g947d58,#hashtag";
 	struct ndb_blocks *blocks;
+	struct ndb_block *block = NULL;
+	struct nostr_bech32 *bech32;
+	int ok = 0;
+
+	static unsigned char event_id[] = { 0x50, 0x5f, 0x0f, 0x0c, 0x98, 0x1d, 0x4b, 0xea, 0x76, 0x82, 0x1b, 0x53,
+  0x09, 0x59, 0xf2, 0xb8, 0x1d, 0x37, 0x31, 0x3c, 0x9c, 0x03, 0x12, 0x98,
+  0x7c, 0x88, 0x9d, 0xd7, 0x91, 0x1e, 0x6a, 0x74 };
 
 	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
-	assert(blocks->num_blocks == 4);
+	struct ndb_block_iterator *iter = ndb_blocks_iterate_start(content, blocks);
+	assert(blocks->num_blocks == 3);
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		switch (++ok) {
+		case 1:
+			assert(ndb_get_block_type(block) == BLOCK_MENTION_BECH32);
+			bech32 = ndb_bech32_block(block);
+			assert(bech32->type == NOSTR_BECH32_NEVENT);
+			assert(!memcmp(bech32->nevent.event_id, event_id, 32));
+			break;
+		case 2:
+			assert(ndb_get_block_type(block) == BLOCK_TEXT);
+			assert(ndb_str_block_ptr(ndb_block_str(block))[0] == ',');
+			break;
+		case 3:
+			assert(ndb_get_block_type(block) == BLOCK_HASHTAG);
+			assert(!strncmp("hashtag", ndb_str_block_ptr(ndb_block_str(block)), 7));
+			break;
+		}
+	}
+	assert(ok == 3);
 }
 
 static void test_url_parsing() {
