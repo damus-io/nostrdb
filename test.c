@@ -823,7 +823,6 @@ static void test_url_parsing() {
 	struct ndb_str_block *str;
 
 	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
-	printf("blocks %d\n", blocks->num_blocks);
 	assert(blocks->num_blocks == 5);
 
 	struct ndb_block_iterator *iter = ndb_blocks_iterate_start(content, blocks);
