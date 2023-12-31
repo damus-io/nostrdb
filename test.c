@@ -782,6 +782,8 @@ static void test_parse_nevent() {
 	struct ndb_blocks *blocks;
 	struct ndb_block *block = NULL;
 	struct nostr_bech32 *bech32;
+	struct ndb_block_iterator iterator, *iter;
+	iter = &iterator;
 	int ok = 0;
 
 	static unsigned char event_id[] = { 0x50, 0x5f, 0x0f, 0x0c, 0x98, 0x1d, 0x4b, 0xea, 0x76, 0x82, 0x1b, 0x53,
@@ -789,7 +791,7 @@ static void test_parse_nevent() {
   0x7c, 0x88, 0x9d, 0xd7, 0x91, 0x1e, 0x6a, 0x74 };
 
 	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
-	struct ndb_block_iterator *iter = ndb_blocks_iterate_start(content, blocks);
+	ndb_blocks_iterate_start(content, blocks, iter);
 	assert(blocks->num_blocks == 3);
 	while ((block = ndb_blocks_iterate_next(iter))) {
 		switch (++ok) {
@@ -821,11 +823,13 @@ static void test_url_parsing() {
 	struct ndb_blocks *blocks;
 	struct ndb_block *block;
 	struct ndb_str_block *str;
+	struct ndb_block_iterator iterator, *iter;
+	iter = &iterator;
 
 	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
 	assert(blocks->num_blocks == 5);
 
-	struct ndb_block_iterator *iter = ndb_blocks_iterate_start(content, blocks);
+	ndb_blocks_iterate_start(content, blocks, iter);
 	int i = 0;
 	while ((block = ndb_blocks_iterate_next(iter))) {
 		str = ndb_block_str(block);
@@ -839,8 +843,6 @@ static void test_url_parsing() {
 	}
 
 	assert(i == 5);
-	ndb_blocks_iterate_free(iter);
-
 }
 
 
