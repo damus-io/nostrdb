@@ -51,7 +51,6 @@ settings
 
 #### Dependencies required
 
-- curl
 - autoconf
 - libtool
 
