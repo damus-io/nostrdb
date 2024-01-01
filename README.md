@@ -47,7 +47,7 @@ settings
 	-d <db_dir>          set database directory
 ```
 
-### Building
+### Building (Linux only)
 
 ```bash
 $ make ndb
