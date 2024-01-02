@@ -814,6 +814,42 @@ static void test_parse_nevent() {
 	assert(ok == 3);
 }
 
+static void test_comma_url_parsing() {
+	unsigned char buf[4096];
+	const char *content = "http://example.com,http://example.com";
+
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_str_block *str;
+	struct ndb_block_iterator iterator, *iter;
+
+	iter = &iterator;
+	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
+	assert(blocks->num_blocks == 3);
+
+	ndb_blocks_iterate_start(content, blocks, iter);
+	int i = 0;
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		str = ndb_block_str(block);
+		switch (++i) {
+		case 1: 
+			assert(ndb_get_block_type(block) == BLOCK_URL);
+			assert(!strncmp(str->str, "http://example.com", str->len));
+			break;
+		case 2:
+			assert(ndb_get_block_type(block) == BLOCK_TEXT);
+			assert(!strncmp(str->str, ",", str->len));
+			break;
+		case 3:
+			assert(ndb_get_block_type(block) == BLOCK_URL);
+			assert(!strncmp(str->str, "http://example.com", str->len));
+			break;
+		}
+	}
+
+	assert(i == 3);
+}
+
 static void test_url_parsing() {
 	unsigned char buf[4096];
 #define DAMUSIO "https://github.com/damus-io"
@@ -1170,6 +1206,7 @@ static int test_varints() {
 int main(int argc, const char *argv[]) {
 	test_parse_content();
 	test_url_parsing();
+	test_comma_url_parsing();
 	test_varints();
 	test_bech32_objects();
 	//test_block_coding();
