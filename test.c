@@ -1211,6 +1211,8 @@ static void test_subscriptions()
 	uint64_t subid;
 	uint64_t note_id = 0;
 	struct ndb_filter_group group;
+	struct ndb_txn txn;
+	struct ndb_note *note;
 	ndb_default_config(&config);
 
 	const char *ev = "[\"EVENT\",\"s\",{\"id\": \"3718b368de4d01a021990e6e00dce4bdf860caed21baffd11b214ac498e7562e\",\"pubkey\": \"57c811c86a871081f52ca80e657004fe0376624a978f150073881b6daf0cbf1d\",\"created_at\": 1704300579,\"kind\": 1337,\"tags\": [],\"content\": \"test\",\"sig\": \"061c36d4004d8342495eb22e8e7c2e2b6e1a1c7b4ae6077fef09f9a5322c561b88bada4f63ff05c9508cb29d03f50f71ef3c93c0201dbec440fc32eda87f273b\"}]";
@@ -1230,6 +1232,12 @@ static void test_subscriptions()
 	assert(ndb_process_event(ndb, ev, strlen(ev)));
 
 	assert(ndb_wait_for_notes(ndb, subid, &note_id, 1));
+	assert(ndb_begin_query(ndb, &txn));
+
+	assert((note = ndb_get_note_by_key(&txn, note_id, NULL)));
+	assert(!strcmp(ndb_note_content(note), "test"));
+
+	ndb_end_query(&txn);
 
 	assert(note_id > 0);
 }
