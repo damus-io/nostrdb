@@ -208,19 +208,30 @@ static void test_reaction_counter()
 	struct ndb *ndb;
 	size_t len;
 	void *root;
-	int written, reactions;
+	int written, reactions, results;
 	NdbEventMeta_table_t meta;
 	struct ndb_txn txn;
 	struct ndb_config config;
 	ndb_default_config(&config);
+	static const int num_reactions = 3;
+	struct ndb_filter_group group;
+	uint64_t note_ids[num_reactions], subid;
 
 	assert(ndb_init(&ndb, test_dir, &config));
 
 	read_file("testdata/reactions.json", (unsigned char*)json, alloc_size, &written);
-	assert(ndb_process_client_events(ndb, json, written));
-	ndb_destroy(ndb);
 
-	assert(ndb_init(&ndb, test_dir, &config));
+	group.num_filters = 0;
+	assert((subid = ndb_subscribe(ndb, &group)));
+
+	assert(ndb_process_client_events(ndb, json, written));
+
+	for (reactions = 0; reactions < num_reactions;) {
+		results = ndb_wait_for_notes(ndb, subid, note_ids, num_reactions);
+		reactions += results;
+		fprintf(stderr, "got %d notes, total %d\n", results, reactions);
+		assert(reactions > 0);
+	}
 
 	assert(ndb_begin_query(ndb, &txn));
 
@@ -1231,7 +1242,7 @@ static void test_subscriptions()
 
 	assert(ndb_process_event(ndb, ev, strlen(ev)));
 
-	assert(ndb_wait_for_notes(ndb, subid, &note_id, 1));
+	assert(ndb_wait_for_notes(ndb, subid, &note_id, 1) == 1);
 	assert(ndb_begin_query(ndb, &txn));
 
 	assert((note = ndb_get_note_by_key(&txn, note_id, NULL)));
