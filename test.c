@@ -287,32 +287,39 @@ static void test_profile_search(struct ndb *ndb)
 static void test_profile_updates()
 {
 	static const int alloc_size = 1024 * 1024;
-	char *json = malloc(alloc_size);
-	struct ndb *ndb;
+	static const int num_notes = 3;
+	char *json;
+	int written, i;
 	size_t len;
-	void *record;
-	int written;
-	struct ndb_txn txn;
-	uint64_t key;
+	struct ndb *ndb;
 	struct ndb_config config;
-	ndb_default_config(&config);
+	struct ndb_filter_group group;
+	struct ndb_txn txn;
+	uint64_t key, subid;
+	uint64_t note_ids[num_notes];
+	void *record;
 
+	json = malloc(alloc_size);
+
+	ndb_default_config(&config);
 	assert(ndb_init(&ndb, test_dir, &config));
 
-	read_file("testdata/profile-updates.json", (unsigned char*)json, alloc_size, &written);
+	ndb_filter_group_init(&group);
+	subid = ndb_subscribe(ndb, &group);
 
+	ndb_debug("testing profile updates\n");
+	read_file("testdata/profile-updates.json", (unsigned char*)json, alloc_size, &written);
 	assert(ndb_process_client_events(ndb, json, written));
 
-	ndb_destroy(ndb);
-
-	assert(ndb_init(&ndb, test_dir, &config));
+	for (i = 0; i < num_notes;)
+		i += ndb_wait_for_notes(ndb, subid, note_ids, num_notes);
 
 	assert(ndb_begin_query(ndb, &txn));
 	const unsigned char pk[32] = {
-		0x87, 0xfb, 0xc6, 0xd5, 0x98, 0x31, 0xa8, 0x23, 0xa4, 0x5d,
-		0x10, 0x1f, 0x86, 0x94, 0x2c, 0x41, 0xcd, 0xe2, 0x90, 0x23,
-		0xf4, 0x09, 0x20, 0x24, 0xa2, 0x7c, 0x50, 0x10, 0x3c, 0x15,
-		0x40, 0x01
+		0x1c, 0x55, 0x46, 0xe4, 0xf5, 0x93, 0x3b, 0xbe, 0x86, 0x66,
+		0x2a, 0x8e, 0xc3, 0x28, 0x9a, 0x29, 0x87, 0xc0, 0x5d, 0xab,
+		0x25, 0x6c, 0x06, 0x8b, 0x77, 0x42, 0x9f, 0x0f, 0x08, 0xa7,
+		0xa0, 0x90
 	};
 	record = ndb_get_profile_by_pubkey(&txn, pk, &len, &key);
 
@@ -1235,8 +1242,8 @@ static void test_subscriptions()
 	assert(ndb_filter_add_int_element(f, 1337));
 	ndb_filter_end_field(f);
 
-	group.filters[0] = f;
-	group.num_filters = 1;
+	ndb_filter_group_init(&group);
+	ndb_filter_group_add(&group, f);
 
 	assert((subid = ndb_subscribe(ndb, &group)));
 
