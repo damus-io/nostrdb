@@ -106,7 +106,7 @@ static void test_filters()
 	assert(f->current == NULL);
 	assert(ndb_filter_matches(f, note));
 
-	ndb_filter_free(f);
+	ndb_filter_destroy(f);
 }
 
 static void test_invoice_encoding(const char *bolt11_str)
@@ -1243,14 +1243,14 @@ static void test_subscriptions()
 	assert(ndb_process_event(ndb, ev, strlen(ev)));
 
 	assert(ndb_wait_for_notes(ndb, subid, &note_id, 1) == 1);
+	assert(note_id > 0);
 	assert(ndb_begin_query(ndb, &txn));
 
 	assert((note = ndb_get_note_by_key(&txn, note_id, NULL)));
 	assert(!strcmp(ndb_note_content(note), "test"));
 
 	ndb_end_query(&txn);
-
-	assert(note_id > 0);
+	ndb_destroy(ndb);
 }
 
 int main(int argc, const char *argv[]) {
