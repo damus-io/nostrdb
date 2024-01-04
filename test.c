@@ -220,15 +220,13 @@ static void test_reaction_counter()
 	struct ndb_config config;
 	ndb_default_config(&config);
 	static const int num_reactions = 3;
-	struct ndb_filter_group group;
 	uint64_t note_ids[num_reactions], subid;
 
 	assert(ndb_init(&ndb, test_dir, &config));
 
 	read_file("testdata/reactions.json", (unsigned char*)json, alloc_size, &written);
 
-	group.num_filters = 0;
-	assert((subid = ndb_subscribe(ndb, &group)));
+	assert((subid = ndb_subscribe(ndb, NULL, 0)));
 
 	assert(ndb_process_client_events(ndb, json, written));
 
@@ -299,7 +297,6 @@ static void test_profile_updates()
 	size_t len;
 	struct ndb *ndb;
 	struct ndb_config config;
-	struct ndb_filter_group group;
 	struct ndb_txn txn;
 	uint64_t key, subid;
 	uint64_t note_ids[num_notes];
@@ -310,8 +307,7 @@ static void test_profile_updates()
 	ndb_default_config(&config);
 	assert(ndb_init(&ndb, test_dir, &config));
 
-	ndb_filter_group_init(&group);
-	subid = ndb_subscribe(ndb, &group);
+	subid = ndb_subscribe(ndb, NULL, 0);
 
 	ndb_debug("testing profile updates\n");
 	read_file("testdata/profile-updates.json", (unsigned char*)json, alloc_size, &written);
@@ -1234,7 +1230,6 @@ static void test_subscriptions()
 	struct ndb_filter filter, *f = &filter;
 	uint64_t subid;
 	uint64_t note_id = 0;
-	struct ndb_filter_group group;
 	struct ndb_txn txn;
 	struct ndb_note *note;
 	ndb_default_config(&config);
@@ -1248,10 +1243,7 @@ static void test_subscriptions()
 	assert(ndb_filter_add_int_element(f, 1337));
 	ndb_filter_end_field(f);
 
-	ndb_filter_group_init(&group);
-	ndb_filter_group_add(&group, f);
-
-	assert((subid = ndb_subscribe(ndb, &group)));
+	assert((subid = ndb_subscribe(ndb, NULL, 0)));
 
 	assert(ndb_process_event(ndb, ev, strlen(ev)));
 
