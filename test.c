@@ -1243,7 +1243,7 @@ static void test_subscriptions()
 	assert(ndb_filter_add_int_element(f, 1337));
 	ndb_filter_end_field(f);
 
-	assert((subid = ndb_subscribe(ndb, NULL, 0)));
+	assert((subid = ndb_subscribe(ndb, f, 1)));
 
 	assert(ndb_process_event(ndb, ev, strlen(ev)));
 
