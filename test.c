@@ -1147,10 +1147,12 @@ static void test_query()
 	struct ndb_txn txn;
 	struct ndb_filter filter, *f = &filter;
 	struct ndb_config config;
-	struct ndb_query_result results[2];
-	int count;
-	uint64_t subid, note_ids[2];
+	struct ndb_query_result results[4];
+	int count, cap;
+	uint64_t subid, note_ids[4];
 	ndb_default_config(&config);
+
+	cap = sizeof(results) / sizeof(results[0]);
 
 	const unsigned char id[] = {
 	  0x03, 0x36, 0x94, 0x8b, 0xdf, 0xbf, 0x5f, 0x93, 0x98, 0x02, 0xeb, 0xa0,
@@ -1169,6 +1171,11 @@ static void test_query()
 
 	const char *ev2 = "[\"EVENT\",\"s\",{\"id\": \"0a350c5851af6f6ce368bab4e2d4fe442a1318642c7fe58de5392103700c10fc\",\"pubkey\": \"dfa3fc062f7430dab3d947417fd3c6fb38a7e60f82ffe3387e2679d4c6919b1d\",\"created_at\": 1704404822,\"kind\": 1,\"tags\": [],\"content\": \"hello2\",\"sig\": \"48a0bb9560b89ee2c6b88edcf1cbeeff04f5e1b10d26da8564cac851065f30fa6961ee51f450cefe5e8f4895e301e8ffb2be06a2ff44259684fbd4ea1c885696\"}]";
 
+
+	const char *ev3 = "[\"EVENT\",\"s\",{\"id\": \"20d2b66e1a3ac4a2afe22866ad742091b6267e6e614303de062adb33e12c9931\",\"pubkey\": \"7987bfb2632d561088fc8e3c30a95836f822e4f53633228ec92ae2f5cd6690aa\",\"created_at\": 1704408561,\"kind\": 2,\"tags\": [],\"content\": \"what\",\"sig\": \"cc8533bf177ac87771a5218a04bed24f7a1706f0b2d92700045cdeb38accc5507c6c8de09525e43190df3652012b554d4efe7b82ab268a87ff6f23da44e16a8f\"}";
+
+	const char *ev4 = "[\"EVENT\",\"s\",{\"id\": \"8a2057c13c1c57b536eab78e6c55428732d33b6b5b234c1f5eab2b5918c37fa1\",\"pubkey\": \"303b5851504da5caa14142e9e2e1b1b60783c48d6f137c205019d46d09244c26\",\"created_at\": 1704408730,\"kind\": 2,\"tags\": [],\"content\": \"hmm\",\"sig\": \"e7cd3029042d41964192411929cade59592840af766da6420077ccc57a61405312db6ca879150db01f53c3b81c477cec5d6bd49f9dc10937267cacf7e5c784b3\"}";
+
 	assert(ndb_init(&ndb, test_dir, &config));
 
 	ndb_filter_init(f);
@@ -1180,12 +1187,26 @@ static void test_query()
 	assert((subid = ndb_subscribe(ndb, f, 1)));
 	assert(ndb_process_event(ndb, ev, strlen(ev)));
 	assert(ndb_process_event(ndb, ev2, strlen(ev2)));
-	assert(ndb_wait_for_notes(ndb, subid, note_ids, 2));
+	assert(ndb_process_event(ndb, ev3, strlen(ev3)));
+	assert(ndb_process_event(ndb, ev4, strlen(ev4)));
+	assert(ndb_wait_for_notes(ndb, subid, note_ids, 4));
 
 	ndb_begin_query(ndb, &txn);
-	assert(ndb_query(&txn, f, 1, results, 2, &count));
+	assert(ndb_query(&txn, f, 1, results, cap, &count));
 	assert(count == 2);
 	assert(0 == memcmp(ndb_note_id(results[0].note), id2, 32));
+
+	ndb_filter_reset(f);
+	ndb_filter_start_field(f, NDB_FILTER_KINDS);
+	ndb_filter_add_int_element(f, 2);
+	ndb_filter_end_field(f);
+	ndb_filter_start_field(f, NDB_FILTER_LIMIT);
+	ndb_filter_add_int_element(f, 1);
+	ndb_filter_end_field(f);
+
+	assert(ndb_query(&txn, f, 1, results, cap, &count));
+	assert(count == 1);
+
 	ndb_end_query(&txn);
 	ndb_destroy(ndb);
 }
