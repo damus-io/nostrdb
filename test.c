@@ -1141,6 +1141,55 @@ static void test_fast_strchr()
 	assert(fast_strchr(testStr6, 'm', strlen(testStr6)) == testStr6 + 38);
 }
 
+static void test_query()
+{
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_filter filter, *f = &filter;
+	struct ndb_config config;
+	struct ndb_query_result results[2];
+	int count;
+	uint64_t subid, note_ids[2];
+	ndb_default_config(&config);
+
+	const unsigned char id[] = {
+	  0x03, 0x36, 0x94, 0x8b, 0xdf, 0xbf, 0x5f, 0x93, 0x98, 0x02, 0xeb, 0xa0,
+	  0x3a, 0xa7, 0x87, 0x35, 0xc8, 0x28, 0x25, 0x21, 0x1e, 0xec, 0xe9, 0x87,
+	  0xa6, 0xd2, 0xe2, 0x0e, 0x3c, 0xff, 0xf9, 0x30
+	};
+
+	const unsigned char id2[] = {
+	  0x0a, 0x35, 0x0c, 0x58, 0x51, 0xaf, 0x6f, 0x6c, 0xe3, 0x68, 0xba, 0xb4,
+	  0xe2, 0xd4, 0xfe, 0x44, 0x2a, 0x13, 0x18, 0x64, 0x2c, 0x7f, 0xe5, 0x8d,
+	  0xe5, 0x39, 0x21, 0x03, 0x70, 0x0c, 0x10, 0xfc
+	};
+
+
+	const char *ev = "[\"EVENT\",\"s\",{\"id\": \"0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930\",\"pubkey\": \"aeadd3bf2fd92e509e137c9e8bdf20e99f286b90be7692434e03c015e1d3bbfe\",\"created_at\": 1704401597,\"kind\": 1,\"tags\": [],\"content\": \"hello\",\"sig\": \"232395427153b693e0426b93d89a8319324d8657e67d23953f014a22159d2127b4da20b95644b3e34debd5e20be0401c283e7308ccb63c1c1e0f81cac7502f09\"}]";
+
+	const char *ev2 = "[\"EVENT\",\"s\",{\"id\": \"0a350c5851af6f6ce368bab4e2d4fe442a1318642c7fe58de5392103700c10fc\",\"pubkey\": \"dfa3fc062f7430dab3d947417fd3c6fb38a7e60f82ffe3387e2679d4c6919b1d\",\"created_at\": 1704404822,\"kind\": 1,\"tags\": [],\"content\": \"hello2\",\"sig\": \"48a0bb9560b89ee2c6b88edcf1cbeeff04f5e1b10d26da8564cac851065f30fa6961ee51f450cefe5e8f4895e301e8ffb2be06a2ff44259684fbd4ea1c885696\"}]";
+
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	ndb_filter_init(f);
+	ndb_filter_start_field(f, NDB_FILTER_IDS);
+	ndb_filter_add_id_element(f, id);
+	ndb_filter_add_id_element(f, id2);
+	ndb_filter_end_field(f);
+
+	assert((subid = ndb_subscribe(ndb, f, 1)));
+	assert(ndb_process_event(ndb, ev, strlen(ev)));
+	assert(ndb_process_event(ndb, ev2, strlen(ev2)));
+	assert(ndb_wait_for_notes(ndb, subid, note_ids, 2));
+
+	ndb_begin_query(ndb, &txn);
+	assert(ndb_query(&txn, f, 1, results, 2, &count));
+	assert(count == 2);
+	assert(0 == memcmp(ndb_note_id(results[0].note), id2, 32));
+	ndb_end_query(&txn);
+	ndb_destroy(ndb);
+}
+
 static void test_fulltext()
 {
 	struct ndb *ndb;
@@ -1259,6 +1308,7 @@ static void test_subscriptions()
 }
 
 int main(int argc, const char *argv[]) {
+	test_query();
 	test_parse_content();
 	test_url_parsing();
 	test_subscriptions();
