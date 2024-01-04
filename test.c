@@ -47,6 +47,7 @@ static void print_search(struct ndb_txn *txn, struct ndb_search *search)
 static void test_filters()
 {
 	struct ndb_filter filter, *f;
+	struct ndb_filter_elements *current;
 	struct ndb_note *note;
 	unsigned char buffer[4096];
 
@@ -60,6 +61,7 @@ static void test_filters()
 	assert(ndb_filter_add_int_element(f, 1337));
 	assert(ndb_filter_add_int_element(f, 2));
 
+	current = f->current;
 	assert(f->current->count == 2);
 	assert(f->current->field.type == NDB_FILTER_KINDS);
 
@@ -67,6 +69,10 @@ static void test_filters()
 	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS) == 0);
 	assert(ndb_filter_start_field(f, NDB_FILTER_GENERIC) == 0);
 	ndb_filter_end_field(f);
+
+	// should be sorted after end
+	assert(current->elements[0].integer == 2);
+	assert(current->elements[1].integer == 1337);
 
 	// try matching the filter
 	assert(ndb_filter_matches(f, note));
