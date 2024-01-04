@@ -236,6 +236,10 @@ struct ndb_u64_tsid {
 	uint64_t timestamp;
 };
 
+struct ndb_query_result {
+	struct ndb_note *note;
+}
+
 struct ndb_word
 {
 	const char *word;
@@ -724,10 +728,10 @@ int ndb_filter_add_id_element(struct ndb_filter *filter, const unsigned char *id
 	case NDB_FILTER_SINCE:
 	case NDB_FILTER_UNTIL:
 	case NDB_FILTER_LIMIT:
+	case NDB_FILTER_KINDS:
 		return 0;
 	case NDB_FILTER_IDS:
 	case NDB_FILTER_AUTHORS:
-	case NDB_FILTER_KINDS:
 	case NDB_FILTER_GENERIC:
 		break;
 	}
@@ -836,7 +840,8 @@ static int compare_kinds(const void *pa, const void *pb)
 
 
 // returns 1 if a filter matches a note
-int ndb_filter_matches(struct ndb_filter *filter, struct ndb_note *note)
+static int ndb_filter_matches_with(struct ndb_filter *filter,
+				   struct ndb_note *note, int already_matched)
 {
 	int i, j;
 	unsigned char *id;
@@ -844,6 +849,11 @@ int ndb_filter_matches(struct ndb_filter *filter, struct ndb_note *note)
 
 	for (i = 0; i < filter->num_elements; i++) {
 		els = filter->elements[i];
+
+		// if we know we already match from a query scan result,
+		// we can skip this check
+		if ((1 << els->field.type) & already_matched)
+			continue;
 
 		switch (els->field.type) {
 		case NDB_FILTER_KINDS:
@@ -889,6 +899,11 @@ cont:
 	}
 
 	return 1;
+}
+
+int ndb_filter_matches(struct ndb_filter *filter, struct ndb_note *note)
+{
+	return ndb_filter_matches_with(filter, note, 0);
 }
 
 void ndb_filter_end_field(struct ndb_filter *filter)
@@ -1493,18 +1508,34 @@ int ndb_write_last_profile_fetch(struct ndb *ndb, const unsigned char *pubkey,
 	return ndb_writer_queue_msg(&ndb->writer, &msg);
 }
 
+
+// When doing cursor scans from greatest to lowest, this function positions the
+// cursor at the first element before descending. MDB_SET_RANGE puts us right
+// after the first element, so we have to go back one.
+static int ndb_cursor_start(MDB_cursor *cur, MDB_val *k, MDB_val *v)
+{
+	// Position cursor at the next key greater than or equal to the specified key
+	if (mdb_cursor_get(cur, k, v, MDB_SET_RANGE)) {
+		// Failed :(. It could be the last element?
+		if (mdb_cursor_get(cur, k, v, MDB_LAST))
+			return 0;
+	} else {
+		// if set range worked and our key exists, it should be
+		// the one right before this one
+		if (mdb_cursor_get(cur, k, v, MDB_PREV))
+			return 0;
+	}
+
+	return 1;
+}
+
 // get some value based on a clustered id key
-int ndb_get_tsid(struct ndb_txn *txn, enum ndb_dbs db, const unsigned char *id,
-		 MDB_val *val)
+int ndb_query_tsid(struct ndb_txn *txn, enum ndb_dbs db,
+		   struct ndb_tsid *tsid, MDB_val *val)
 {
 	MDB_val k, v;
 	MDB_cursor *cur;
 	int success = 0, rc;
-	struct ndb_tsid tsid;
-
-	// position at the most recent
-	ndb_tsid_high(&tsid, id);
-
 	k.mv_data = &tsid;
 	k.mv_size = sizeof(tsid);
 
@@ -1513,17 +1544,8 @@ int ndb_get_tsid(struct ndb_txn *txn, enum ndb_dbs db, const unsigned char *id,
 		return 0;
 	}
 
-	// Position cursor at the next key greater than or equal to the specified key
-	if (mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE)) {
-		// Failed :(. It could be the last element?
-		if (mdb_cursor_get(cur, &k, &v, MDB_LAST))
-			goto cleanup;
-	} else {
-		// if set range worked and our key exists, it should be
-		// the one right before this one
-		if (mdb_cursor_get(cur, &k, &v, MDB_PREV))
-			goto cleanup;
-	}
+	if (!ndb_cursor_start(cur))
+		goto cleanup;
 
 	if (memcmp(k.mv_data, id, 32) == 0) {
 		*val = v;
@@ -1533,6 +1555,17 @@ int ndb_get_tsid(struct ndb_txn *txn, enum ndb_dbs db, const unsigned char *id,
 cleanup:
 	mdb_cursor_close(cur);
 	return success;
+}
+
+static int ndb_get_tsid(struct ndb_txn *txn, enum ndb_dbs db,
+			const unsigned char *id, MDB_val *val)
+{
+	struct ndb_tsid tsid;
+
+	// position at the most recent
+	ndb_tsid_high(&tsid, id);
+
+	return ndb_query_tsid(txn, db, &tsid, val);
 }
 
 static void *ndb_lookup_by_key(struct ndb_txn *txn, uint64_t key,
@@ -2268,22 +2301,219 @@ static int ndb_write_note_id_index(struct ndb_txn *txn, struct ndb_note *note,
 	return 1;
 }
 
-/*
-static int ndb_filter_query(struct ndb *ndb, struct ndb_filter *filter)
+static int ndb_filter_group_add_filters(struct ndb_filter_group *,
+					struct ndb_filter *filters,
+					int num_filters)
 {
+	int i;
+
+	for (i = 0; i < num_filters; i++) {
+		if (!ndb_filter_group_add(group, &filters[i]))
+			return 0;
+	}
+
+	return 1;
 }
 
-static int ndb_filter_cursors(struct ndb_filter *filter, struct ndb_cursor)
+static int ndb_filter_int(struct filter *filter, enum ndb_filter_fieldtype typ,
+			  uint64_t *lim)
 {
+	int i;
+	struct ndb_filter_elements *els;
+
+	for (i = 0; i < filter->num_elements; i++) {
+		els = filter->elements[i];
+		if (els->field.type == typ) {
+			*lim = els->elements[0].integer;
+			return 1;
+		}
+	}
+
+	return 0;
 }
 
-int ndb_query(struct ndb *ndb, struct ndb_filter **filters, int num_filters)
+static int ndb_filter_get_limit(struct filter *filter, uint64_t *lim)
 {
-	struct ndb_filter_group group;
-	ndb_filter_group_init(&group);
-
+	return ndb_filter_int(filter, NDB_FILTER_LIMIT, lim);
 }
-*/
+
+static int ndb_filter_get_until(struct filter *filter, uint64_t *lim)
+{
+	return ndb_filter_int(filter, NDB_FILTER_UNTIL, lim);
+}
+
+static int ndb_filter_get_since(struct filter *filter, uint64_t *lim)
+{
+	return ndb_filter_int(filter, NDB_FILTER_SINCE, lim);
+}
+
+static int ndb_query_filter_id(MDB_cursor *cur, const unsigned char *id,
+			       uint64_t since, int *matched,
+			       struct ndb_u64_tsid *res)
+{
+	MDB_val k, v;
+	uint64_t note_id;
+	struct ndb_tsid_id tsid, *ptsid;
+
+	ndb_tsid_init(&tsid, id, since);
+
+	k.mv_data = &tsid;
+	k.mv_size = sizeof(tsid);
+
+	if (!ndb_cursor_start(cur, &k, &v))
+		return 0;
+
+	ptsid = (struct ndb_tsid *)k.mv_data;
+	note_id = *(uint64_t*)v.mv_data;
+
+	if (memcmp(id, ptsid->id, 32) == 0)
+		*matched |= 1 << NDB_FILTER_AUTHORS;
+	else
+		return 1;
+	
+	// get the note because we need it to match against the filter
+	if (!(note = ndb_get_note_by_key(txn, note_id, NULL)))
+		return 1;
+
+	// Sure this particular lookup matched the index query, but does it
+	// match the entire filter? Check! We also pass in things we've already
+	// matched via the filter so we don't have to check again. This can be
+	// pretty important for filters with a large number of entries.
+	if (ndb_filter_matches_with(filter, note, *matched)) {
+		// we will be returning this
+		ndb_u64_tsid_init(res, note_id, ptsid->timestamp);
+	}
+
+	return 2;
+}
+
+static inline int push_query_result(struct cursor *res,
+				    struct ndb_query_result *res)
+{
+	return cursor_push(res, (unsigned char*)res, sizeof(*res));
+}
+
+static int compare_query_results(void *pa, void *pb)
+{
+	struct ndb_query_result *a, *b;
+
+	a = (struct ndb_query_result *)pa;
+	b = (struct ndb_query_result *)pb;
+
+	if (a->note->created_at == b->note->created_at) {
+		return memcmp(a->id, b->id, 32);
+	} else if (a->note->created_at > b->note->created_at) {
+		return 1;
+	} else {
+		return -1;
+	}
+}
+
+static int ndb_query_filter(struct ndb_txn *txn, struct ndb_filter *filter,
+			    struct ndb_query_result *results, int capacity,
+			    int *results_out)
+{
+	struct ndb_filter_elements *els;
+	struct ndb_tsid tsid, *ptsid;
+	struct ndb_query_result res;
+	struct ndb_note *note;
+	struct cursor result_arr;
+	uint64_t subid, limit, since, until, note_id;
+	int left, i, k, rc, num_cursors;
+	MDB_cursor *cur;
+	MDB_val k, v;
+
+
+	num_cursors = 0;
+	since = UINT64_MAX;
+	until = UINT64_MAX;
+
+	ndb_filter_get_limit(filter, &limit);
+	ndb_filter_get_since(filter, &since);
+	ndb_filter_get_until(filter, &until);
+
+	limit = min(capacity, limit);
+	make_cursor((unsigned char *)results,
+		    ((unsigned char *)results) + limit * sizeof(*results),
+		    &results_arr);
+
+	for (i = 0; i < filter->num_elements; i++) {
+		if (results_arr.p >= results_arr.end)
+			goto done;
+
+		els = &filter->elements[i];
+		switch (els->field.type) {
+		case NDB_FILTER_IDS:
+			int matched = 0;
+			db = txn->lmdb->dbs[NDB_DB_NOTE_ID];
+			if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur)))
+				return 0;
+
+			// for each id in our ids filter, find in the db
+			for (k = 0; k < els->count; k++) {
+				if (results_arr.p >= results_arr.end)
+					goto done:
+
+				id = els->elements[k].id;
+				if (!(rc = ndb_query_filter_id(cur, id, since,
+							       &matched,
+							       &res))) {
+					// there was a fatal error
+					return 0;
+				}
+
+				// no match, just try next id
+				if (rc == 1)
+					continue;
+
+				// rc > 1, matched!
+				if (!push_query_result(&results_arr, &res,
+							sizeof(res))) {
+					// this should never happen, but if
+					// it fails to push that means there
+					// are no more result to push,
+					// so just return
+					goto done;
+				}
+
+				// look for more ids... continue!
+			}
+
+			mdb_cursor_close(cur);
+			break;
+		case NDB_FILTER_AUTHORS:
+			break;
+		case NDB_FILTER_KINDS:
+			break;
+		case NDB_FILTER_GENERIC:
+			break;
+		case NDB_FILTER_SINCE:
+		case NDB_FILTER_UNTIL:
+		case NDB_FILTER_LIMIT:
+			break;
+		}
+	}
+
+done:
+	*results_out = cursor_count(&results_arr, sizeof(*results));
+	return 1;
+}
+
+int ndb_query(struct ndb_txn *txn, struct ndb_filter *filters, int num_filters,
+	      struct ndb_query_result *results, int result_capacity)
+{
+	int i, out;
+
+	for (i = 0; i < num_filters; i++) {
+		if (!ndb_query_filter(txn, &filters[i], results,
+				      result_capacity, &out)) {
+			return 0;
+		}
+
+	}
+
+	return 1;
+}
 
 static int ndb_write_note_kind_index(struct ndb_txn *txn, struct ndb_note *note,
 				     uint64_t note_key)

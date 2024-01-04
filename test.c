@@ -1141,6 +1141,37 @@ static void test_fast_strchr()
 	assert(fast_strchr(testStr6, 'm', strlen(testStr6)) == testStr6 + 38);
 }
 
+static void test_query()
+{
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct filter filter, *f = &filter;
+	struct ndb_config config;
+	uint64_t subid, note_id;
+	ndb_default_config(&config);
+
+	const unsigned char id[] = {
+	  0x03, 0x36, 0x94, 0x8b, 0xdf, 0xbf, 0x5f, 0x93, 0x98, 0x02, 0xeb, 0xa0,
+	  0x3a, 0xa7, 0x87, 0x35, 0xc8, 0x28, 0x25, 0x21, 0x1e, 0xec, 0xe9, 0x87,
+	  0xa6, 0xd2, 0xe2, 0x0e, 0x3c, 0xff, 0xf9, 0x30
+	};
+
+	const char *ev = "[\"EVENT\",\"s\",{\"id\": \"0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930\",\"pubkey\": \"aeadd3bf2fd92e509e137c9e8bdf20e99f286b90be7692434e03c015e1d3bbfe\",\"created_at\": 1704401597,\"kind\": 1,\"tags\": [],\"content\": \"hello\",\"sig\": \"232395427153b693e0426b93d89a8319324d8657e67d23953f014a22159d2127b4da20b95644b3e34debd5e20be0401c283e7308ccb63c1c1e0f81cac7502f09\"}]";
+
+	assert(ndb_init(&ndb, test_db, &config));
+
+	ndb_filter_init(f);
+	ndb_filter_start_field(f, NDB_FILTER_ID);
+	ndb_filter_add_id_element(f, id);
+	ndb_filter_end_field(f);
+
+	assert((subid = ndb_subscribe(ndb, f, 1)));
+	assert(ndb_process_event(ndb, ev, strlen(ev)));
+	assert(ndb_wait_for_notes(ndb, subid, &note_id, 1));
+
+	ndb_query
+}
+
 static void test_fulltext()
 {
 	struct ndb *ndb;
