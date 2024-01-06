@@ -91,10 +91,15 @@ static void print_stats(struct ndb_stat *stat)
 int ndb_print_search_keys(struct ndb_txn *txn);
 int ndb_print_kind_keys(struct ndb_txn *txn);
 
+static void print_note(struct ndb_note *note)
+{
+	printf("note[%d]: \"%s\"\n", ndb_note_kind(note), ndb_note_content(note));
+}
+
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
-	int i, flags, limit;
+	int i, flags, limit, count;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
 	struct ndb_text_search_results results;
@@ -166,6 +171,41 @@ int main(int argc, char *argv[])
 		}
 
 		print_stats(&stat);
+	} else if (argc >= 3 && !strcmp(argv[1], "query")) {
+		struct ndb_filter filter, *f = &filter;
+		ndb_filter_init(f);
+
+		argv += 2;
+		argc -= 2;
+
+		for (i = 0; argc && i < 2; i++) {
+			if (!strcmp(argv[0], "-k")) {
+				ndb_filter_start_field(f, NDB_FILTER_KINDS);
+				ndb_filter_add_int_element(f, atoll(argv[1]));
+				ndb_filter_end_field(f);
+				argv += 2;
+				argc -= 2;
+			} else if (!strcmp(argv[0], "-l")) {
+				limit = atol(argv[1]);
+				ndb_filter_start_field(f, NDB_FILTER_LIMIT);
+				ndb_filter_add_int_element(f, limit);
+				ndb_filter_end_field(f);
+				argv += 2;
+				argc -= 2;
+			}
+		}
+
+		struct ndb_query_result results[500];
+		ndb_begin_query(ndb, &txn);
+		ndb_query(&txn, f, 1, results, 500, &count);
+
+		fprintf(stderr, "%d results\n", count);
+		for (i = 0; i < count; i++) {
+			print_note(results[i].note);
+		}
+
+		ndb_end_query(&txn);
+
 	} else if (argc == 3 && !strcmp(argv[1], "import")) {
 		if (!strcmp(argv[2], "-")) {
 			ndb_process_events_stream(ndb, stdin);
