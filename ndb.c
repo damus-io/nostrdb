@@ -94,7 +94,7 @@ int ndb_print_kind_keys(struct ndb_txn *txn);
 
 static void print_note(struct ndb_note *note)
 {
-	printf("note[%d]: \"%s\"\n", ndb_note_kind(note), ndb_note_content(note));
+	printf("note[%d-%d]: \"%s\"\n", ndb_note_kind(note), ndb_note_created_at(note), ndb_note_content(note));
 }
 
 int main(int argc, char *argv[])
@@ -179,7 +179,7 @@ int main(int argc, char *argv[])
 		argv += 2;
 		argc -= 2;
 
-		for (i = 0; argc && i < 2; i++) {
+		for (i = 0; argc && i < 3; i++) {
 			if (!strcmp(argv[0], "-k")) {
 				ndb_filter_start_field(f, NDB_FILTER_KINDS);
 				ndb_filter_add_int_element(f, atoll(argv[1]));
@@ -190,6 +190,12 @@ int main(int argc, char *argv[])
 				limit = atol(argv[1]);
 				ndb_filter_start_field(f, NDB_FILTER_LIMIT);
 				ndb_filter_add_int_element(f, limit);
+				ndb_filter_end_field(f);
+				argv += 2;
+				argc -= 2;
+			} else if (!strcmp(argv[0], "-u")) {
+				ndb_filter_start_field(f, NDB_FILTER_UNTIL);
+				ndb_filter_add_int_element(f, atoll(argv[1]));
 				ndb_filter_end_field(f);
 				argv += 2;
 				argc -= 2;
