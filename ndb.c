@@ -15,6 +15,7 @@ static int usage()
 	printf("commands\n\n");
 	printf("	stat\n");
 	printf("	search [--oldest-first] [--limit 42] <fulltext query>\n");
+	printf("	query [-k 1] [-l 42]\n");
 	printf("	import <line-delimited json file>\n\n");
 	printf("settings\n\n");
 	printf("	--skip-verification  skip signature validation\n");
