@@ -68,7 +68,7 @@ static void test_filters()
 
 	// can't start if we've already started
 	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS) == 0);
-	assert(ndb_filter_start_field(f, NDB_FILTER_GENERIC) == 0);
+	assert(ndb_filter_start_field(f, NDB_FILTER_TAGS) == 0);
 	ndb_filter_end_field(f);
 
 	// should be sorted after end
@@ -91,7 +91,7 @@ static void test_filters()
 	ndb_filter_reset(f);
 
 	// now try generic matches
-	assert(ndb_filter_start_generic_field(f, 't'));
+	assert(ndb_filter_start_tag_field(f, 't'));
 	assert(ndb_filter_add_str_element(f, "grownostr"));
 	ndb_filter_end_field(f);
 	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
