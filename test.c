@@ -19,6 +19,7 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
+int ndb_print_kind_keys(struct ndb_txn *txn);
 static const char *test_dir = "./testdata/db";
 
 static NdbProfile_table_t lookup_profile(struct ndb_txn *txn, uint64_t pk)

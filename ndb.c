@@ -89,6 +89,7 @@ static void print_stats(struct ndb_stat *stat)
 }
 
 int ndb_print_search_keys(struct ndb_txn *txn);
+int ndb_print_kind_keys(struct ndb_txn *txn);
 
 int main(int argc, char *argv[])
 {
@@ -176,6 +177,10 @@ int main(int argc, char *argv[])
 	} else if (argc == 2 && !strcmp(argv[1], "print-search-keys")) {
 		ndb_begin_query(ndb, &txn);
 		ndb_print_search_keys(&txn);
+		ndb_end_query(&txn);
+	} else if (argc == 2 && !strcmp(argv[1], "print-kind-keys")) {
+		ndb_begin_query(ndb, &txn);
+		ndb_print_kind_keys(&txn);
 		ndb_end_query(&txn);
 	} else {
 		return usage();
