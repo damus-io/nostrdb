@@ -1,1 +1,4 @@
 subscription polling
+execution plan for tags query
+execution plan for created_at query
+note kind index rebuild migration
