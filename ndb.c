@@ -2,6 +2,7 @@
 
 #include "nostrdb.h"
 #include "print_util.h"
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -94,13 +95,19 @@ int ndb_print_kind_keys(struct ndb_txn *txn);
 
 static void print_note(struct ndb_note *note)
 {
-	printf("note[%d-%d]: \"%s\"\n", ndb_note_kind(note), ndb_note_created_at(note), ndb_note_content(note));
+	printf("%d\t%d\t%s",
+		ndb_note_kind(note),
+		ndb_note_created_at(note),
+		ndb_note_content(note));
+
+	printf("\n");
 }
 
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
 	int i, flags, limit, count;
+	long nanos;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
 	struct ndb_text_search_results results;
@@ -109,6 +116,7 @@ int main(int argc, char *argv[])
 	unsigned char *data;
 	size_t data_len;
 	struct ndb_config config;
+	struct timespec t1, t2;
 	struct ndb_text_search_config search_config;
 	ndb_default_config(&config);
 	ndb_default_text_search_config(&search_config);
@@ -202,11 +210,16 @@ int main(int argc, char *argv[])
 			}
 		}
 
-		struct ndb_query_result results[500];
+		struct ndb_query_result results[10000];
 		ndb_begin_query(ndb, &txn);
-		ndb_query(&txn, f, 1, results, 500, &count);
 
-		fprintf(stderr, "%d results\n", count);
+		clock_gettime(CLOCK_MONOTONIC, &t1);
+		ndb_query(&txn, f, 1, results, 10000, &count);
+		clock_gettime(CLOCK_MONOTONIC, &t2);
+
+		nanos = (t2.tv_sec - t1.tv_sec) * (long)1e9 + (t2.tv_nsec - t1.tv_nsec);
+
+		fprintf(stderr, "%d results in %f ms\n", count, nanos/1000000.0);
 		for (i = 0; i < count; i++) {
 			print_note(results[i].note);
 		}
