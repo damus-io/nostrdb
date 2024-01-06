@@ -16,7 +16,7 @@ static int usage()
 	printf("commands\n\n");
 	printf("	stat\n");
 	printf("	search [--oldest-first] [--limit 42] <fulltext query>\n");
-	printf("	query [-k 1] [-l 42]\n");
+	printf("	query [-k 42] [-k 1337] [-l 42]\n");
 	printf("	import <line-delimited json file>\n\n");
 	printf("settings\n\n");
 	printf("	--skip-verification  skip signature validation\n");
@@ -106,7 +106,7 @@ static void print_note(struct ndb_note *note)
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
-	int i, flags, limit, count;
+	int i, flags, limit, count, current_field;
 	long nanos;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
@@ -186,28 +186,44 @@ int main(int argc, char *argv[])
 
 		argv += 2;
 		argc -= 2;
+		current_field = 0;
 
 		for (i = 0; argc && i < 3; i++) {
 			if (!strcmp(argv[0], "-k")) {
-				ndb_filter_start_field(f, NDB_FILTER_KINDS);
+				if (current_field != NDB_FILTER_KINDS)
+					ndb_filter_start_field(f, NDB_FILTER_KINDS);
+				current_field = NDB_FILTER_KINDS;
 				ndb_filter_add_int_element(f, atoll(argv[1]));
-				ndb_filter_end_field(f);
 				argv += 2;
 				argc -= 2;
 			} else if (!strcmp(argv[0], "-l")) {
 				limit = atol(argv[1]);
+				if (current_field) {
+					ndb_filter_end_field(f);
+					current_field = 0;
+				}
 				ndb_filter_start_field(f, NDB_FILTER_LIMIT);
+				current_field = NDB_FILTER_LIMIT;
 				ndb_filter_add_int_element(f, limit);
 				ndb_filter_end_field(f);
 				argv += 2;
 				argc -= 2;
 			} else if (!strcmp(argv[0], "-u")) {
+				if (current_field) {
+					ndb_filter_end_field(f);
+					current_field = 0;
+				}
 				ndb_filter_start_field(f, NDB_FILTER_UNTIL);
 				ndb_filter_add_int_element(f, atoll(argv[1]));
 				ndb_filter_end_field(f);
 				argv += 2;
 				argc -= 2;
 			}
+		}
+
+		if (current_field) {
+			ndb_filter_end_field(f);
+			current_field = 0;
 		}
 
 		struct ndb_query_result results[10000];

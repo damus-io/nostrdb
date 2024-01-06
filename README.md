@@ -39,6 +39,7 @@ commands
 
 	stat
 	search [--oldest-first] [--limit 42] <fulltext query>
+	query [-k 42] [-k 1337] [-l 42]
 	import <line-delimited json file>
 
 settings
