@@ -10,6 +10,12 @@ test
 *.zst
 *.o
 libnostrdb.a
+perf.data
+perf.folded
+perf.data.old
+perf.out
+ndb.svg
+flamegraph.html
 testdata/many-events.json
 testdata/db/ndb-v0.tar
 testdata/db/v0
