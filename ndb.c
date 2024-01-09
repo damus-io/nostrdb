@@ -92,6 +92,7 @@ static void print_stats(struct ndb_stat *stat)
 
 int ndb_print_search_keys(struct ndb_txn *txn);
 int ndb_print_kind_keys(struct ndb_txn *txn);
+int ndb_print_tag_keys(struct ndb_txn *txn);
 
 static void print_note(struct ndb_note *note)
 {
@@ -188,7 +189,7 @@ int main(int argc, char *argv[])
 		argc -= 2;
 		current_field = 0;
 
-		for (i = 0; argc && i < 3; i++) {
+		for (i = 0; argc && i < 100; i++) {
 			if (!strcmp(argv[0], "-k")) {
 				if (current_field != NDB_FILTER_KINDS)
 					ndb_filter_start_field(f, NDB_FILTER_KINDS);
@@ -215,6 +216,16 @@ int main(int argc, char *argv[])
 				}
 				ndb_filter_start_field(f, NDB_FILTER_UNTIL);
 				ndb_filter_add_int_element(f, atoll(argv[1]));
+				ndb_filter_end_field(f);
+				argv += 2;
+				argc -= 2;
+			} else if (!strcmp(argv[0], "-t")) {
+				if (current_field) {
+					ndb_filter_end_field(f);
+					current_field = 0;
+				}
+				ndb_filter_start_tag_field(f, 't');
+				ndb_filter_add_str_element(f, argv[1]);
 				ndb_filter_end_field(f);
 				argv += 2;
 				argc -= 2;
@@ -257,6 +268,10 @@ int main(int argc, char *argv[])
 	} else if (argc == 2 && !strcmp(argv[1], "print-kind-keys")) {
 		ndb_begin_query(ndb, &txn);
 		ndb_print_kind_keys(&txn);
+		ndb_end_query(&txn);
+	} else if (argc == 2 && !strcmp(argv[1], "print-tag-keys")) {
+		ndb_begin_query(ndb, &txn);
+		ndb_print_tag_keys(&txn);
 		ndb_end_query(&txn);
 	} else {
 		return usage();

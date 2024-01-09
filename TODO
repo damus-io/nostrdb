@@ -3,3 +3,4 @@ execution plan for tags query
 execution plan for created_at query
 note kind index rebuild migration
 (A) filter from json
+tags index migration

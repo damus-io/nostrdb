@@ -1142,6 +1142,43 @@ static void test_fast_strchr()
 	assert(fast_strchr(testStr6, 'm', strlen(testStr6)) == testStr6 + 38);
 }
 
+static void test_tag_query()
+{
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_filter filters[1], *f = &filters[0];
+	struct ndb_config config;
+	struct ndb_query_result results[4];
+	int count, cap;
+	uint64_t subid, note_ids[1];
+	ndb_default_config(&config);
+
+	cap = sizeof(results) / sizeof(results[0]);
+
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	const char *ev = "[\"EVENT\",\"s\",{\"id\": \"7fd6e4286e595b60448bf69d8ec4a472c5ad14521555813cdfce1740f012aefd\",\"pubkey\": \"b85beab689aed6a10110cc3cdd6e00ac37a2f747c4e60b18a31f4352a5bfb6ed\",\"created_at\": 1704762185,\"kind\": 1,\"tags\": [[\"t\",\"hashtag\"]],\"content\": \"hi\",\"sig\": \"5b05669af5a322730731b13d38667464ea3b45bef1861e26c99ef1815d7e8d557a76e06afa5fffa1dcd207402b92ae7dda6ef411ea515df2bca58d74e6f2772e\"}]";
+
+	f = &filters[0];
+	ndb_filter_init(f);
+	ndb_filter_start_tag_field(f, 't');
+	ndb_filter_add_str_element(f, "hashtag");
+	ndb_filter_end_field(f);
+
+	assert((subid = ndb_subscribe(ndb, f, 1)));
+	assert(ndb_process_event(ndb, ev, strlen(ev)));
+	ndb_wait_for_notes(ndb, subid, note_ids, 1);
+
+	ndb_begin_query(ndb, &txn);
+
+	assert(ndb_query(&txn, f, 1, results, cap, &count));
+	assert(count == 1);
+	assert(!strcmp(ndb_note_content(results[0].note), "hi"));
+
+	ndb_end_query(&txn);
+	ndb_destroy(ndb);
+}
+
 static void test_query()
 {
 	struct ndb *ndb;
@@ -1178,7 +1215,6 @@ static void test_query()
 	const char *ev4 = "[\"EVENT\",\"s\",{\"id\": \"8a2057c13c1c57b536eab78e6c55428732d33b6b5b234c1f5eab2b5918c37fa1\",\"pubkey\": \"303b5851504da5caa14142e9e2e1b1b60783c48d6f137c205019d46d09244c26\",\"created_at\": 1704408730,\"kind\": 2,\"tags\": [],\"content\": \"hmm\",\"sig\": \"e7cd3029042d41964192411929cade59592840af766da6420077ccc57a61405312db6ca879150db01f53c3b81c477cec5d6bd49f9dc10937267cacf7e5c784b3\"}]";
 
 	assert(ndb_init(&ndb, test_dir, &config));
-
 
 	f = &filters[0];
 	ndb_filter_init(f);
@@ -1340,6 +1376,7 @@ static void test_subscriptions()
 
 int main(int argc, const char *argv[]) {
 	test_query();
+	test_tag_query();
 	test_parse_content();
 	test_url_parsing();
 	test_subscriptions();
