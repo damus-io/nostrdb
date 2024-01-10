@@ -156,7 +156,7 @@ int main(int argc, char *argv[])
 				ndb_text_search_config_set_order(&search_config, NDB_ORDER_ASCENDING);
 				argv++;
 				argc--;
-			} else if (!strcmp(argv[2], "--limit")) {
+			} else if (!strcmp(argv[2], "--limit") || !strcmp(argv[2], "-l")) {
 				limit = atoi(argv[3]);
 				ndb_text_search_config_set_limit(&search_config, limit);
 				argv += 2;
@@ -165,7 +165,13 @@ int main(int argc, char *argv[])
 		}
 
 		ndb_begin_query(ndb, &txn);
+		clock_gettime(CLOCK_MONOTONIC, &t1);
 		ndb_text_search(&txn, argv[2], &results, &search_config);
+		clock_gettime(CLOCK_MONOTONIC, &t2);
+
+		nanos = (t2.tv_sec - t1.tv_sec) * (long)1e9 + (t2.tv_nsec - t1.tv_nsec);
+
+		fprintf(stderr, "%d results in %f ms\n", results.num_results, nanos/1000000.0);
 
 		// print results for now
 		for (i = 0; i < results.num_results; i++) {
