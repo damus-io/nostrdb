@@ -47,7 +47,7 @@ distclean: clean
 	rm -rf deps
 
 tags:
-	find . -name '*.c' -or -name '*.h' | xargs ctags
+	find src -name '*.c' -or -name '*.h' | xargs ctags
 
 configurator: src/configurator.c
 	$(CC) $< -o $@
