@@ -70,6 +70,7 @@ static void test_filters()
 	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS) == 0);
 	assert(ndb_filter_start_field(f, NDB_FILTER_TAGS) == 0);
 	ndb_filter_end_field(f);
+	ndb_filter_end(f);
 
 	// should be sorted after end
 	assert(current->elements[0].integer == 2);
@@ -88,7 +89,8 @@ static void test_filters()
 	assert(ndb_filter_matches(f, note));
 
 	// don't free, just reset data pointers
-	ndb_filter_reset(f);
+	ndb_filter_destroy(f);
+	ndb_filter_init(f);
 
 	// now try generic matches
 	assert(ndb_filter_start_tag_field(f, 't'));
@@ -97,6 +99,7 @@ static void test_filters()
 	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
 	assert(ndb_filter_add_int_element(f, 3));
 	ndb_filter_end_field(f);
+	ndb_filter_end(f);
 
 	// shouldn't match the kind filter
 	assert(!ndb_filter_matches(f, note));
@@ -106,10 +109,12 @@ static void test_filters()
 	// now it should
 	assert(ndb_filter_matches(f, note));
 
-	ndb_filter_reset(f);
+	ndb_filter_destroy(f);
+	ndb_filter_init(f);
 	assert(ndb_filter_start_field(f, NDB_FILTER_AUTHORS));
 	assert(ndb_filter_add_id_element(f, ndb_note_pubkey(note)));
 	ndb_filter_end_field(f);
+	ndb_filter_end(f);
 	assert(f->current == NULL);
 	assert(ndb_filter_matches(f, note));
 
@@ -1164,6 +1169,7 @@ static void test_tag_query()
 	ndb_filter_start_tag_field(f, 't');
 	ndb_filter_add_str_element(f, "hashtag");
 	ndb_filter_end_field(f);
+	ndb_filter_end(f);
 
 	assert((subid = ndb_subscribe(ndb, f, 1)));
 	assert(ndb_process_event(ndb, ev, strlen(ev)));
@@ -1222,6 +1228,7 @@ static void test_query()
 	ndb_filter_add_id_element(f, id);
 	ndb_filter_add_id_element(f, id2);
 	ndb_filter_end_field(f);
+	ndb_filter_end(f);
 
 	assert((subid = ndb_subscribe(ndb, f, 1)));
 
@@ -1238,13 +1245,15 @@ static void test_query()
 	assert(count == 2);
 	assert(0 == memcmp(ndb_note_id(results[0].note), id2, 32));
 
-	ndb_filter_reset(f);
+	ndb_filter_destroy(f);
+	ndb_filter_init(f);
 	ndb_filter_start_field(f, NDB_FILTER_KINDS);
 	ndb_filter_add_int_element(f, 2);
 	ndb_filter_end_field(f);
 	ndb_filter_start_field(f, NDB_FILTER_LIMIT);
 	ndb_filter_add_int_element(f, 2);
 	ndb_filter_end_field(f);
+	ndb_filter_end(f);
 
 	count = 0;
 	assert(ndb_query(&txn, f, 1, results, cap, &count));
@@ -1358,6 +1367,7 @@ static void test_subscriptions()
 	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
 	assert(ndb_filter_add_int_element(f, 1337));
 	ndb_filter_end_field(f);
+	ndb_filter_end(f);
 
 	assert((subid = ndb_subscribe(ndb, f, 1)));
 
