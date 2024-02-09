@@ -62,9 +62,9 @@ static void test_filters()
 	assert(ndb_filter_add_int_element(f, 1337));
 	assert(ndb_filter_add_int_element(f, 2));
 
-	current = f->current;
-	assert(f->current->count == 2);
-	assert(f->current->field.type == NDB_FILTER_KINDS);
+	current = ndb_filter_current_element(f);
+	assert(current->count == 2);
+	assert(current->field.type == NDB_FILTER_KINDS);
 
 	// can't start if we've already started
 	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS) == 0);
@@ -73,8 +73,8 @@ static void test_filters()
 	ndb_filter_end(f);
 
 	// should be sorted after end
-	assert(current->elements[0].integer == 2);
-	assert(current->elements[1].integer == 1337);
+	assert(current->elements[0] == 2);
+	assert(current->elements[1] == 1337);
 
 	// try matching the filter
 	assert(ndb_filter_matches(f, note));
@@ -115,7 +115,7 @@ static void test_filters()
 	assert(ndb_filter_add_id_element(f, ndb_note_pubkey(note)));
 	ndb_filter_end_field(f);
 	ndb_filter_end(f);
-	assert(f->current == NULL);
+	assert(f->current == -1);
 	assert(ndb_filter_matches(f, note));
 
 	ndb_filter_destroy(f);
@@ -1225,8 +1225,9 @@ static void test_query()
 	f = &filters[0];
 	ndb_filter_init(f);
 	ndb_filter_start_field(f, NDB_FILTER_IDS);
-	ndb_filter_add_id_element(f, id);
 	ndb_filter_add_id_element(f, id2);
+	ndb_filter_add_id_element(f, id);
+	assert(ndb_filter_current_element(f)->count == 2);
 	ndb_filter_end_field(f);
 	ndb_filter_end(f);
 
@@ -1258,6 +1259,7 @@ static void test_query()
 	count = 0;
 	assert(ndb_query(&txn, f, 1, results, cap, &count));
 	ndb_print_kind_keys(&txn);
+	printf("count %d\n", count);
 	assert(count == 2);
 	assert(!strcmp(ndb_note_content(results[0].note), "hmm"));
 	assert(!strcmp(ndb_note_content(results[1].note), "what"));
