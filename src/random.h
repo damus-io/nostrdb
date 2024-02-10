@@ -20,6 +20,10 @@
 #include <windows.h>
 #include <ntstatus.h>
 #include <bcrypt.h>
+#elif defined(__ANDROID__)
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
 #elif defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
 #include <sys/random.h>
 #elif defined(__OpenBSD__)
