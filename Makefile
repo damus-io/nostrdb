@@ -18,6 +18,14 @@ C_BINDINGS_COMMON=$(BINDINGS)/c/flatbuffers_common_builder.h $(BINDINGS)/c/flatb
 C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE) $(C_BINDINGS_META)
 BIN=ndb
 
+# Detect operating system
+UNAME_S := $(shell uname -s)
+
+# macOS-specific flags
+ifeq ($(UNAME_S),Darwin)
+    LDFLAGS += -framework Security
+endif
+
 CHECKDATA=testdata/db/v0/data.mdb
 
 all: $(BIN) lib bench
@@ -31,7 +39,7 @@ libnostrdb.a: $(OBJS)
 lib: libnostrdb.a
 
 ndb: ndb.c $(DEPS)
-	$(CC) $(CFLAGS) ndb.c $(LDS) -o $@
+	$(CC) $(CFLAGS) ndb.c $(LDS) $(LDFLAGS) -o $@
 
 bindings: bindings-swift bindings-rust bindings-c
 
@@ -179,6 +187,6 @@ testdata/db/.dir:
 	touch testdata/db/.dir
 
 test: test.c $(DEPS) testdata/db/.dir
-	$(CC) $(CFLAGS) test.c $(LDS) -o $@
+	$(CC) $(CFLAGS) test.c $(LDS) $(LDFLAGS) -o $@
 
 .PHONY: tags clean fake
