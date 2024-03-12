@@ -160,6 +160,33 @@ static void test_encode_decode_invoice()
 	test_invoice_encoding(desc);
 }
 
+// Test the created_at query plan via a contact-list query
+static void test_timeline_query()
+{
+	struct ndb *ndb;
+	struct ndb_filter filter;
+	struct ndb_config config;
+	struct ndb_txn txn;
+	struct ndb_query_result results[10];
+	int count;
+	ndb_default_config(&config);
+
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	ndb_filter_init(&filter);
+	ndb_filter_start_field(&filter, NDB_FILTER_AUTHORS);
+#include "testdata/author-filter.c"
+	ndb_filter_end_field(&filter);
+	ndb_filter_end(&filter);
+
+	ndb_begin_query(ndb, &txn);
+	assert(ndb_query(&txn, &filter, 1, results,
+			 sizeof(results)/sizeof(results[0]), &count));
+	ndb_end_query(&txn);
+
+	assert(count == 10);
+}
+
 // Test fetched_at profile records. These are saved when new profiles are
 // processed, or the last time we've fetched the profile.
 static void test_fetched_at()
@@ -1417,6 +1444,8 @@ int main(int argc, const char *argv[]) {
 
 	// note fetching
 	test_fetch_last_noteid();
+
+	test_timeline_query();
 
 	// fulltext
 	test_fulltext();
