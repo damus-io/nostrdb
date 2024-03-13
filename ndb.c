@@ -2,6 +2,7 @@
 
 #include "nostrdb.h"
 #include "print_util.h"
+#include "hex.h"
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +17,7 @@ static int usage()
 	printf("commands\n\n");
 	printf("	stat\n");
 	printf("	search [--oldest-first] [--limit 42] <fulltext query>\n");
-	printf("	query [-k 42] [-k 1337] [-l 42]\n");
+	printf("	query [-k 42] [-k 1337] [-l 42] [-a abcdef -a bcdef ...]\n");
 	printf("	import <line-delimited json file>\n\n");
 	printf("settings\n\n");
 	printf("	--skip-verification  skip signature validation\n");
@@ -107,7 +108,7 @@ static void print_note(struct ndb_note *note)
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
-	int i, flags, limit, count, current_field;
+	int i, flags, limit, count, current_field, len;
 	long nanos;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
@@ -119,6 +120,7 @@ int main(int argc, char *argv[])
 	struct ndb_config config;
 	struct timespec t1, t2;
 	struct ndb_text_search_config search_config;
+	unsigned char tmp_id[32];
 	ndb_default_config(&config);
 	ndb_default_text_search_config(&search_config);
 	ndb_config_set_mapsize(&config, 1024ULL * 1024ULL * 1024ULL * 1024ULL /* 1 TiB */);
@@ -195,7 +197,7 @@ int main(int argc, char *argv[])
 		argc -= 2;
 		current_field = 0;
 
-		for (i = 0; argc && i < 100; i++) {
+		for (i = 0; argc && i < 1000; i++) {
 			if (!strcmp(argv[0], "-k")) {
 				if (current_field != NDB_FILTER_KINDS)
 					ndb_filter_start_field(f, NDB_FILTER_KINDS);
@@ -235,6 +237,24 @@ int main(int argc, char *argv[])
 				ndb_filter_end_field(f);
 				argv += 2;
 				argc -= 2;
+			} else if (!strcmp(argv[0], "-a")) {
+				if (current_field != NDB_FILTER_AUTHORS)
+					ndb_filter_start_field(f, NDB_FILTER_AUTHORS);
+				current_field = NDB_FILTER_AUTHORS;
+
+				len = strlen(argv[1]);
+				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
+					fprintf(stderr, "invalid hex pubkey\n");
+					return 42; 
+				}
+
+				if (!ndb_filter_add_id_element(f, tmp_id)) {
+					fprintf(stderr, "too many author pubkeys\n");
+					return 43;
+				}
+
+				argv += 2;
+				argc -= 2;
 			}
 		}
 
@@ -247,7 +267,9 @@ int main(int argc, char *argv[])
 		ndb_begin_query(ndb, &txn);
 
 		clock_gettime(CLOCK_MONOTONIC, &t1);
-		ndb_query(&txn, f, 1, results, 10000, &count);
+		if (!ndb_query(&txn, f, 1, results, 10000, &count)) {
+			fprintf(stderr, "query error\n");
+		}
 		clock_gettime(CLOCK_MONOTONIC, &t2);
 
 		nanos = (t2.tv_sec - t1.tv_sec) * (long)1e9 + (t2.tv_nsec - t1.tv_nsec);
