@@ -44,7 +44,6 @@ static void print_search(struct ndb_txn *txn, struct ndb_search *search)
 	printf("\n");
 }
 
-
 static void test_filters()
 {
 	struct ndb_filter filter, *f;
@@ -1408,6 +1407,11 @@ static void test_subscriptions()
 
 	assert((note = ndb_get_note_by_key(&txn, note_id, NULL)));
 	assert(!strcmp(ndb_note_content(note), "test"));
+
+	// unsubscribe
+	assert(ndb_num_subscriptions(ndb) == 1);
+	assert(ndb_unsubscribe(ndb, subid));
+	assert(ndb_num_subscriptions(ndb) == 0);
 
 	ndb_end_query(&txn);
 	ndb_destroy(ndb);
