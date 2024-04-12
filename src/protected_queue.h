@@ -12,12 +12,13 @@
 #ifndef PROT_QUEUE_H
 #define PROT_QUEUE_H
 
-#include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 #include "cursor.h"
 #include "util.h"
+#include "thread.h"
+
 
 /* 
  * The prot_queue structure represents a thread-safe queue that can hold
