@@ -18,6 +18,10 @@ static int usage()
 	printf("	stat\n");
 	printf("	search [--oldest-first] [--limit 42] <fulltext query>\n");
 	printf("	query [-k 42] [-k 1337] [-l 42] [-a abcdef -a bcdef ...]\n");
+	printf("	profile <pubkey>\n");
+	printf("	print-search-keys\n");
+	printf("	print-kind-keys\n");
+	printf("	print-tag-keys\n");
 	printf("	import <line-delimited json file>\n\n");
 	printf("settings\n\n");
 	printf("	--skip-verification  skip signature validation\n");
@@ -108,7 +112,7 @@ static void print_note(struct ndb_note *note)
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
-	int i, flags, limit, count, current_field, len;
+	int i, flags, limit, count, current_field, len, res;
 	long nanos;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
@@ -121,6 +125,14 @@ int main(int argc, char *argv[])
 	struct timespec t1, t2;
 	struct ndb_text_search_config search_config;
 	unsigned char tmp_id[32];
+
+	// profiles
+	const char *pk_str;
+	void *ptr;
+	size_t profile_len;
+	uint64_t key;
+
+	res = 0;
 	ndb_default_config(&config);
 	ndb_default_text_search_config(&search_config);
 	ndb_config_set_mapsize(&config, 1024ULL * 1024ULL * 1024ULL * 1024ULL /* 1 TiB */);
@@ -185,7 +197,8 @@ int main(int argc, char *argv[])
 		ndb_end_query(&txn);
 	} else if (argc == 2 && !strcmp(argv[1], "stat")) {
 		if (!ndb_stat(ndb, &stat)) {
-			return 3;
+			res = 3;
+			goto cleanup;
 		}
 
 		print_stats(&stat);
@@ -245,12 +258,14 @@ int main(int argc, char *argv[])
 				len = strlen(argv[1]);
 				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
 					fprintf(stderr, "invalid hex pubkey\n");
-					return 42; 
+					res = 42;
+					goto cleanup;
 				}
 
 				if (!ndb_filter_add_id_element(f, tmp_id)) {
 					fprintf(stderr, "too many author pubkeys\n");
-					return 43;
+					res = 43;
+					goto cleanup;
 				}
 
 				argv += 2;
@@ -301,9 +316,29 @@ int main(int argc, char *argv[])
 		ndb_begin_query(ndb, &txn);
 		ndb_print_tag_keys(&txn);
 		ndb_end_query(&txn);
+	}  else if (argc == 3 && !strcmp(argv[1], "profile")) {
+		pk_str = argv[2];
+		if (!hex_decode(pk_str, strlen(pk_str), tmp_id, sizeof(tmp_id))) {
+			fprintf(stderr, "failed to decode hex pubkey '%s'\n", pk_str);
+			res = 88;
+			goto cleanup;
+		}
+		ndb_begin_query(ndb, &txn);
+		if (!(ptr = ndb_get_profile_by_pubkey(&txn, tmp_id, &profile_len, &key))) {
+			ndb_end_query(&txn);
+			fprintf(stderr, "profile not found\n");
+			res = 89;
+			goto cleanup;
+		}
+		ndb_end_query(&txn);
+		print_hex(ptr, profile_len);
+		printf("\n");
 	} else {
+		ndb_destroy(ndb);
 		return usage();
 	}
 
+cleanup:
 	ndb_destroy(ndb);
+	return res;
 }
