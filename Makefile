@@ -165,7 +165,7 @@ testdata/many-events.json: testdata/many-events.json.zst
 	zstd -d $<
 
 bench: bench-ingest-many.c $(DEPS) 
-	$(CC) $(CFLAGS) $< $(LDS) -o $@
+	$(CC) $(CFLAGS) $< $(LDS) $(LDFLAGS) -o $@
 
 perf.out: fake
 	perf script > $@
