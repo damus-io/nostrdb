@@ -50,7 +50,7 @@ static int threadpool_init(struct threadpool *tp, int num_threads,
 			return 0;
 		}
 
-		if (!prot_queue_init(&t->inbox, t->qmem, q_elem_size * q_num_elems, q_elem_size)) {
+		if (!prot_queue_init(&t->inbox, t->qmem, q_elem_size * q_num_elems, q_elem_size,1 )) {
 			fprintf(stderr, "threadpool_init: couldn't init queue. buffer alignment is wrong.");
 			return 0;
 		}

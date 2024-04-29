@@ -40,7 +40,7 @@ static const int THREAD_QUEUE_BATCH = 4096;
 #define MAX_FILTERS    16
 
 // the maximum size of inbox queues
-static const int DEFAULT_QUEUE_SIZE = 1000000;
+static const int DEFAULT_QUEUE_SIZE = 100;
 
 
 // increase if we need bigger filters
@@ -163,7 +163,6 @@ struct ndb_writer {
 	struct ndb_lmdb *lmdb;
 	struct ndb_monitor *monitor;
 
-	void *queue_buf;
 	int queue_buflen;
 	pthread_t thread_id;
 
@@ -3973,15 +3972,15 @@ static int ndb_writer_init(struct ndb_writer *writer, struct ndb_lmdb *lmdb,
 	writer->lmdb = lmdb;
 	writer->monitor = monitor;
 	writer->queue_buflen = sizeof(struct ndb_writer_msg) * DEFAULT_QUEUE_SIZE;
-	writer->queue_buf = malloc(writer->queue_buflen);
-	if (writer->queue_buf == NULL) {
+	void *buf = malloc(writer->queue_buflen);
+	if (buf == NULL) {
 		fprintf(stderr, "ndb: failed to allocate space for writer queue");
 		return 0;
 	}
 
 	// init the writer queue.
-	prot_queue_init(&writer->inbox, writer->queue_buf,
-			writer->queue_buflen, sizeof(struct ndb_writer_msg));
+	prot_queue_init(&writer->inbox, buf,
+			writer->queue_buflen, sizeof(struct ndb_writer_msg), 1);
 
 	// spin up the writer thread
 	if (pthread_create(&writer->thread_id, NULL, ndb_writer_thread, writer))
@@ -4036,8 +4035,7 @@ static int ndb_writer_destroy(struct ndb_writer *writer)
 
 	// cleanup
 	prot_queue_destroy(&writer->inbox);
-
-	free(writer->queue_buf);
+	free(writer->inbox.buf);
 
 	return 1;
 }
@@ -5962,11 +5960,10 @@ uint64_t ndb_subscribe(struct ndb *ndb, struct ndb_filter *filters, int num_filt
 	if (!ndb_filter_group_add_filters(&sub->group, filters, num_filters))
 		return 0;
 	
-	// 500k ought to be enough for anyone
-	buflen = sizeof(uint64_t) * 65536;
+	buflen = sizeof(uint64_t) * 100;
 	buf = malloc(buflen);
 
-	if (!prot_queue_init(&sub->inbox, buf, buflen, sizeof(uint64_t))) {
+	if (!prot_queue_init(&sub->inbox, buf, buflen, sizeof(uint64_t), 1)) {
 		fprintf(stderr, "failed to push prot queue\n");
 		return 0;
 	}

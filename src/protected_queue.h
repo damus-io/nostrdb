@@ -19,6 +19,12 @@
 #include "cursor.h"
 #include "util.h"
 
+#ifdef DEBUG
+#define ndb_debug(...) printf(__VA_ARGS__)
+#else
+#define ndb_debug(...) (void)0
+#endif
+
 /* 
  * The prot_queue structure represents a thread-safe queue that can hold
  * generic data elements.
@@ -27,6 +33,7 @@ struct prot_queue {
 	unsigned char *buf;
 	size_t buflen;
 
+	int resizable;
 	int head;
 	int tail;
 	int count;
@@ -47,7 +54,7 @@ struct prot_queue {
  * Returns 1 if successful, 0 otherwise.
  */
 static inline int prot_queue_init(struct prot_queue* q, void* buf,
-				  size_t buflen, int elem_size)
+				  size_t buflen, int elem_size, int resizable)
 {
 	// buffer elements must fit nicely in the buffer
 	if (buflen == 0 || buflen % elem_size != 0)
@@ -59,6 +66,7 @@ static inline int prot_queue_init(struct prot_queue* q, void* buf,
 	q->buf = buf;
 	q->buflen = buflen;
 	q->elem_size = elem_size;
+	q->resizable = resizable;
 
 	pthread_mutex_init(&q->mutex, NULL);
 	pthread_cond_init(&q->cond, NULL);
@@ -73,6 +81,23 @@ static inline int prot_queue_init(struct prot_queue* q, void* buf,
 static inline size_t prot_queue_capacity(struct prot_queue *q) {
 	return q->buflen / q->elem_size;
 }
+
+static int prot_queue_enlarge(struct prot_queue* q, int min_count)
+{
+	int cap, newcap;
+	if (!q->resizable)
+		return 0;
+	cap = prot_queue_capacity(q);
+	newcap = cap * 1.5 + min_count;
+	ndb_debug("increasing queue capacity from %d to %d\n", cap, newcap);
+	q->buflen = newcap * q->elem_size;
+	assert((q->buflen % q->elem_size) == 0);
+	q->buf = realloc(q->buf, q->buflen);
+	if (!q->buf)
+		return 0;
+	return 1;
+}
+
 
 /* 
  * Push an element onto the queue.
@@ -91,8 +116,11 @@ static int prot_queue_push(struct prot_queue* q, void *data)
 	cap = prot_queue_capacity(q);
 	if (q->count == cap) {
 		// only signal if the push was sucessful
-		pthread_mutex_unlock(&q->mutex);
-		return 0;
+		if (!prot_queue_enlarge(q, 1)) {
+			pthread_mutex_unlock(&q->mutex);
+			return 0;
+		}
+		cap = prot_queue_capacity(q);
 	}
 
 	memcpy(&q->buf[q->tail * q->elem_size], data, q->elem_size);
@@ -122,9 +150,11 @@ static int prot_queue_push_all(struct prot_queue* q, void *data, int count)
 	pthread_mutex_lock(&q->mutex);
 
 	cap = prot_queue_capacity(q);
-	if (q->count + count > cap) {
-		pthread_mutex_unlock(&q->mutex);
-		return 0; // Return failure if the queue is full
+	if (q->count + count >= cap) {
+		if (!(cap = prot_queue_enlarge(q, count))) {
+			pthread_mutex_unlock(&q->mutex);
+			return 0; // couldn't allocate more space. explode.
+		}
 	}
 
 	first_copy_count = min(count, cap - q->tail); // Elements until the end of the buffer

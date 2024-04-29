@@ -1045,7 +1045,7 @@ static void test_queue_init_pop_push() {
 	int data;
 
 	// Initialize
-	assert(prot_queue_init(&q, buffer, sizeof(buffer), sizeof(int)) == 1);
+	assert(prot_queue_init(&q, buffer, sizeof(buffer), sizeof(int), 0) == 1);
 
 	// Push and Pop
 	data = 5;
@@ -1085,7 +1085,7 @@ static void test_queue_thread_safety() {
 	int buffer[TEST_BUF_SIZE];
 	pthread_t threads[2];
 
-	assert(prot_queue_init(&q, buffer, sizeof(buffer), sizeof(int)) == 1);
+	assert(prot_queue_init(&q, buffer, sizeof(buffer), sizeof(int), 0) == 1);
 
 	// Create threads
 	for (int i = 0; i < 2; i++) {
@@ -1108,7 +1108,7 @@ static void test_queue_boundary_conditions() {
     int data;
 
     // Initialize
-    assert(prot_queue_init(&q, buffer, sizeof(buffer), sizeof(int)) == 1);
+    assert(prot_queue_init(&q, buffer, sizeof(buffer), sizeof(int), 0) == 1);
 
     // Push to full
     for (int i = 0; i < TEST_BUF_SIZE; i++) {
