@@ -101,13 +101,32 @@ int ndb_print_tag_keys(struct ndb_txn *txn);
 
 static void print_note(struct ndb_note *note)
 {
-	printf("%d\t%d\t%s",
-		ndb_note_kind(note),
-		ndb_note_created_at(note),
-		ndb_note_content(note));
-
-	printf("\n");
+	static char buf[5000000];
+	if (!ndb_note_json(note, buf, sizeof(buf))) {
+		print_hex_stream(stderr, ndb_note_id(note), 32);
+		fprintf(stderr, " is too big to print! >5mb");
+		return;
+	}
+	puts(buf);
 }
+
+static void ndb_print_text_search_result(struct ndb_txn *txn,
+		struct ndb_text_search_result *r)
+{
+	size_t len;
+	struct ndb_note *note;
+
+	//ndb_print_text_search_key(&r->key);
+
+	if (!(note = ndb_get_note_by_key(txn, r->key.note_id, &len))) {
+		fprintf(stderr,": note not found");
+		return;
+	}
+
+	//fprintf(stderr,"\n");
+	print_note(note);
+}
+
 
 int main(int argc, char *argv[])
 {
@@ -190,7 +209,7 @@ int main(int argc, char *argv[])
 		// print results for now
 		for (i = 0; i < results.num_results; i++) {
 			result = &results.results[i];
-			printf("[%02d] ", i+1);
+			//fprintf(stderr, "[%02d] ", i+1);
 			ndb_print_text_search_result(&txn, result);
 		}
 
