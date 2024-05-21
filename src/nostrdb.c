@@ -57,6 +57,29 @@ static const int DEFAULT_QUEUE_SIZE = 1000000;
 #define NDB_PARSED_TAGS         (1 << 6)
 #define NDB_PARSED_ALL          (NDB_PARSED_ID|NDB_PARSED_PUBKEY|NDB_PARSED_SIG|NDB_PARSED_CREATED_AT|NDB_PARSED_KIND|NDB_PARSED_CONTENT|NDB_PARSED_TAGS)
 
+struct db_val_type {
+    enum ndb_val_type types[2];
+};
+
+
+// the various key and value types in our DB! see `struct ndb_val`
+static struct db_val_type DB_VAL_TYPES[] = {
+    [NDB_DB_META]               = {NDB_VAL_NOTE_ID,         NDB_VAL_NOTE_META},
+    [NDB_DB_NDB_META]           = {NDB_VAL_META_KEY,        NDB_VAL_VERSION},
+    [NDB_DB_NOTE]               = {NDB_VAL_NOTE_KEY,        NDB_VAL_NOTE},
+    [NDB_DB_NOTE_BLOCKS]        = {NDB_VAL_NOTE_KEY,        NDB_VAL_NOTE_BLOCKS},
+    [NDB_DB_NOTE_ID]            = {NDB_VAL_TSID,            NDB_VAL_NOTE_KEY},
+    [NDB_DB_NOTE_KIND]          = {NDB_VAL_U64_TSID,        NDB_VAL_NOTE_KEY},
+    [NDB_DB_NOTE_TAGS]          = {NDB_VAL_TAG_INDEX_KEY,   NDB_VAL_NOTE_KEY},
+    [NDB_DB_NOTE_TEXT]          = {NDB_VAL_TEXT_SEARCH_KEY, NDB_VAL_NOTHING},
+    [NDB_DB_PROFILE]            = {NDB_VAL_PROFILE_KEY,     NDB_VAL_PROFILE},
+    [NDB_DB_PROFILE_LAST_FETCH] = {NDB_VAL_PUBKEY,          NDB_VAL_TIMESTAMP},
+    [NDB_DB_PROFILE_PK]         = {NDB_VAL_TSID,            NDB_VAL_PROFILE_KEY},
+    [NDB_DB_PROFILE_SEARCH]     = {NDB_VAL_SEARCH_KEY,      NDB_VAL_PROFILE_KEY},
+    [NDB_DBS]                   = {NDB_VAL_NOTHING,         NDB_VAL_NOTHING}
+};
+
+
 typedef int (*ndb_migrate_fn)(struct ndb *);
 typedef int (*ndb_word_parser_fn)(void *, const char *word, int word_len,
 				  int word_index);
@@ -105,6 +128,23 @@ struct ndb_note {
 };
 
 #pragma pack(pop)
+
+// this state is needed to recover cursor indices for a set of filters. to
+// resume a query across transactions, we just need to save and restore
+// `index_values` via serialization to resume the query.
+//
+// the owned semantics will be tricky, so let's just make this very obvious
+// on the rust side.
+//
+// queries are resumable across transactions as long as the filter
+struct ndb_query {
+	struct ndb_cursor cursors[MAX_FILTERS];
+	struct ndb_val index_values[MAX_FILTERS];
+	enum ndb_query_plan plans[MAX_FILTERS];
+	struct ndb_filter *filters;
+	int num_filters;
+	struct ndb_query_results results;
+};
 
 
 struct ndb_migration {
@@ -224,17 +264,19 @@ enum ndb_query_plan {
 	NDB_PLAN_TAGS,
 };
 
-// A clustered key with an id and a timestamp
-struct ndb_tsid {
-	unsigned char id[32];
-	uint64_t timestamp;
-};
+static ndb_db ndb_query_plan_db(enum ndb_query_plan plan)
+{
+	switch (plan) {
+	case NDB_PLAN_KINDS: return NDB_DB_NOTE_KIND;
+	case NDB_PLAN_IDS: return NDB_DB_NOTE_ID;
+	case NDB_PLAN_AUTHORS: return NDB_DB_NOTE;
+	case NDB_PLAN_CREATED: return NDB_DB_NOTE;
+	case NDB_PLAN_TAGS: return NDB_DB_NOTE_TAGS;
+	}
 
-// A u64 + timestamp id. Just using this for kinds at the moment.
-struct ndb_u64_tsid {
-	uint64_t u64; // kind, etc
-	uint64_t timestamp;
-};
+	assert(!"unknown query plan");
+	return NDB_DB_NOTE;
+}
 
 struct ndb_word
 {
@@ -1723,18 +1765,18 @@ int ndb_write_last_profile_fetch(struct ndb *ndb, const unsigned char *pubkey,
 // When doing cursor scans from greatest to lowest, this function positions the
 // cursor at the first element before descending. MDB_SET_RANGE puts us right
 // after the first element, so we have to go back one.
-static int ndb_cursor_start(MDB_cursor *cur, MDB_val *k, MDB_val *v)
+static int ndb_cursor_start(struct ndb_cursor *cursor, struct ndb_val *k, struct ndb_val *v)
 {
 	// Position cursor at the next key greater than or equal to the
 	// specified key
-	if (mdb_cursor_get(cur, k, v, MDB_SET_RANGE)) {
+	if (!ndb_cursor_get(cursor, k, v, MDB_SET_RANGE)) {
 		// Failed :(. It could be the last element?
-		if (mdb_cursor_get(cur, k, v, MDB_LAST))
+		if (!ndb_cursor_get(cursor, k, v, MDB_LAST))
 			return 0;
 	} else {
 		// if set range worked and our key exists, it should be
 		// the one right before this one
-		if (mdb_cursor_get(cur, k, v, MDB_PREV))
+		if (!ndb_cursor_get(cursor, k, v, MDB_PREV))
 			return 0;
 	}
 
@@ -1742,7 +1784,7 @@ static int ndb_cursor_start(MDB_cursor *cur, MDB_val *k, MDB_val *v)
 }
 
 // get some value based on a clustered id key
-int ndb_get_tsid(struct ndb_txn *txn, enum ndb_dbs db, const unsigned char *id,
+int ndb_get_tsid(struct ndb_txn *txn, enum ndb_db db, const unsigned char *id,
 		 MDB_val *val)
 {
 	MDB_val k, v;
@@ -1775,7 +1817,7 @@ cleanup:
 }
 
 static void *ndb_lookup_by_key(struct ndb_txn *txn, uint64_t key,
-			       enum ndb_dbs store, size_t *len)
+			       enum ndb_db store, size_t *len)
 {
 	MDB_val k, v;
 
@@ -1793,8 +1835,8 @@ static void *ndb_lookup_by_key(struct ndb_txn *txn, uint64_t key,
 	return v.mv_data;
 }
 
-static void *ndb_lookup_tsid(struct ndb_txn *txn, enum ndb_dbs ind,
-			     enum ndb_dbs store, const unsigned char *pk,
+static void *ndb_lookup_tsid(struct ndb_txn *txn, enum ndb_db ind,
+			     enum ndb_db store, const unsigned char *pk,
 			     size_t *len, uint64_t *primkey)
 {
 	MDB_val k, v;
@@ -1833,7 +1875,7 @@ struct ndb_note *ndb_get_note_by_id(struct ndb_txn *txn, const unsigned char *id
 }
 
 static inline uint64_t ndb_get_indexkey_by_id(struct ndb_txn *txn,
-					      enum ndb_dbs db,
+					      enum ndb_db db,
 					      const unsigned char *id)
 {
 	MDB_val k;
@@ -2591,24 +2633,30 @@ static void ndb_query_result_init(struct ndb_query_result *res,
 	};
 }
 
+size_t ndb_query_result_count(struct ndb_query_results *results)
+{
+	return cursor_count(&results->cur, sizeof(struct ndb_query_result));
+}
+
+
 static int query_is_full(struct ndb_query_results *results, int limit)
 {
 	if (results->cur.p >= results->cur.end)
 		return 1;
 
-	return cursor_count(&results->cur, sizeof(struct ndb_query_result)) >= limit;
+	return ndb_query_result_count(results) >= limit;
 }
 
-static int ndb_query_plan_execute_ids(struct ndb_txn *txn,
+static int ndb_query_plan_execute_ids(struct ndb_cursor *cursor,
 				      struct ndb_filter *filter,
 				      struct ndb_query_results *results,
 				      int limit
 				      )
 {
 	MDB_cursor *cur;
-	MDB_dbi db;
 	MDB_val k, v;
-	int matched, rc, i;
+	int matched, i;
+	struct ndb_txn *txn = cursor->txn;
 	struct ndb_filter_elements *ids;
 	struct ndb_note *note;
 	struct ndb_query_result res;
@@ -2618,17 +2666,8 @@ static int ndb_query_plan_execute_ids(struct ndb_txn *txn,
 	unsigned char *id;
 
 	matched = 0;
-	until = UINT64_MAX;
-
-	if (!(ids = ndb_filter_get_elems(filter, NDB_FILTER_IDS)))
-		return 0;
-
-	if ((pint = ndb_filter_get_int(filter, NDB_FILTER_UNTIL)))
-		until = *pint;
 
 	db = txn->lmdb->dbs[NDB_DB_NOTE_ID];
-	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur)))
-		return 0;
 
 	// for each id in our ids filter, find in the db
 	for (i = 0; i < ids->count; i++) {
@@ -2638,8 +2677,7 @@ static int ndb_query_plan_execute_ids(struct ndb_txn *txn,
 		id = ndb_filter_get_id_element(filter, ids, i);
 		ndb_tsid_init(&tsid, (unsigned char *)id, until);
 
-		k.mv_data = &tsid;
-		k.mv_size = sizeof(tsid);
+		ndb_cursor_set_index(cursor, tsid, sizeof(tsid))
 
 		if (!ndb_cursor_start(cur, &k, &v))
 			continue;
@@ -2710,52 +2748,31 @@ static int ndb_encode_tag_key(unsigned char *buf, int buf_size,
 	return writer.p - writer.start;
 }
 
-static int ndb_query_plan_execute_created_at(struct ndb_txn *txn,
+static int ndb_query_plan_execute_created_at(struct ndb_cursor *cur,
 					     struct ndb_filter *filter,
 					     struct ndb_query_results *results,
 					     int limit)
 {
 	MDB_dbi db;
-	MDB_val k, v;
-	MDB_cursor *cur;
-	int rc;
+	struct ndb_val k, v;
+	struct ndb_txn *txn = cur->txn;
 	struct ndb_note *note;
-	struct ndb_tsid key, *pkey;
+	struct ndb_tsid key;
 	uint64_t *pint, until, since, note_id;
 	size_t note_size;
 	struct ndb_query_result res;
 	unsigned char high_key[32] = {0xFF};
 
-	db = txn->lmdb->dbs[NDB_DB_NOTE_ID];
-
-	until = UINT64_MAX;
-	if ((pint = ndb_filter_get_int(filter, NDB_FILTER_UNTIL)))
-		until = *pint;
-
-	since = 0;
-	if ((pint = ndb_filter_get_int(filter, NDB_FILTER_SINCE)))
-		since = *pint;
-
-	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur)))
-		return 0;
-
-	// if we have until, start there, otherwise just use max
-	ndb_tsid_init(&key, high_key, until);
-	k.mv_data = &key;
-	k.mv_size = sizeof(key);
-
-	if (!ndb_cursor_start(cur, &k, &v))
-		return 1;
-
 	while (!query_is_full(results, limit)) {
-		pkey = (struct ndb_tsid *)k.mv_data;
-		note_id = *(uint64_t*)v.mv_data;
-		assert(v.mv_size == 8);
+		assert(k.type == NDB_VAL_TSID);
+		assert(k.size == sizeof(struct ndb_tsid));
+		assert(v.type == NDB_VAL_NOTE_ID);
+		assert(v.size == 8);
 
 		// TODO(perf): if we are only looking for IDs and have no other
 		// condition, then we can use the ID in the index without
 		// looking up the note. For now we always look up the note
-		if (!(note = ndb_get_note_by_key(txn, note_id, &note_size)))
+		if (!(note = ndb_get_note_by_key(txn, *v.note_id, &note_size)))
 			goto next;
 
 		// does this entry match our filter?
@@ -2766,19 +2783,18 @@ static int ndb_query_plan_execute_created_at(struct ndb_txn *txn,
 		if (pkey->timestamp < since)
 			break;
 
-		ndb_query_result_init(&res, note, (uint64_t)note_size, note_id);
+		ndb_query_result_init(&res, note, (uint64_t)note_size, *v.note_id);
 		if (!push_query_result(results, &res))
 			break;
 next:
-		if (mdb_cursor_get(cur, &k, &v, MDB_PREV))
+		if (ndb_cursor_get(cur, &k, &v, MDB_PREV))
 			break;
 	}
 
-	mdb_cursor_close(cur);
 	return 1;
 }
 
-static int ndb_query_plan_execute_tags(struct ndb_txn *txn,
+static int ndb_query_plan_execute_tags(struct ndb_cursor *cursor,
 				       struct ndb_filter *filter,
 				       struct ndb_query_results *results,
 				       int limit)
@@ -2786,10 +2802,11 @@ static int ndb_query_plan_execute_tags(struct ndb_txn *txn,
 	MDB_cursor *cur;
 	MDB_dbi db;
 	MDB_val k, v;
-	int len, taglen, rc, i;
+	int len, taglen, i;
 	uint64_t *pint, until, note_id;
 	size_t note_size;
 	unsigned char key_buffer[255];
+	struct ndb_txn *txn = cursor->txn;
 	struct ndb_note *note;
 	struct ndb_filter_elements *tags;
 	unsigned char *tag;
@@ -2804,9 +2821,6 @@ static int ndb_query_plan_execute_tags(struct ndb_txn *txn,
 	if ((pint = ndb_filter_get_int(filter, NDB_FILTER_UNTIL)))
 		until = *pint;
 
-	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur)))
-		return 0;
-
 	for (i = 0; i < tags->count; i++) {
 		tag = ndb_filter_get_id_element(filter, tags, i);
 
@@ -2820,9 +2834,6 @@ static int ndb_query_plan_execute_tags(struct ndb_txn *txn,
 
 		k.mv_data = key_buffer;
 		k.mv_size = len;
-
-		if (!ndb_cursor_start(cur, &k, &v))
-			continue;
 
 		// for each id in our ids filter, find in the db
 		while (!query_is_full(results, limit)) {
@@ -2855,52 +2866,55 @@ next:
 		}
 	}
 
-	mdb_cursor_close(cur);
 	return 1;
 }
 
-static int ndb_query_plan_execute_kinds(struct ndb_txn *txn,
+static int ndb_query_plan_execute_kinds(struct ndb_cursor *cursor,
 					struct ndb_filter *filter,
 					struct ndb_query_results *results,
-					int limit)
+					int limit,
+					int resuming)
 {
 	MDB_cursor *cur;
 	MDB_dbi db;
 	MDB_val k, v;
+	struct ndb_txn *txn = cursor->txn;
 	struct ndb_note *note;
 	struct ndb_u64_tsid tsid, *ptsid;
 	struct ndb_filter_elements *kinds;
 	struct ndb_query_result res;
 	uint64_t kind, note_id, until, *pint;
 	size_t note_size;
-	int i, rc;
-
-	// we should have kinds in a kinds filter!
-	if (!(kinds = ndb_filter_get_elems(filter, NDB_FILTER_KINDS)))
-		return 0;
-
-	until = UINT64_MAX;
-	if ((pint = ndb_filter_get_int(filter, NDB_FILTER_UNTIL)))
-		until = *pint;
-
-	db = txn->lmdb->dbs[NDB_DB_NOTE_KIND];
-
-	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur)))
-		return 0;
+	int i;
 
 	for (i = 0; i < kinds->count; i++) {
 		if (query_is_full(results, limit))
 			break;
 
-		kind = kinds->elements[i];
-		ndb_debug("kind %" PRIu64 "\n", kind);
-		ndb_u64_tsid_init(&tsid, kind, until);
+		if (!resuming) {
+			// we should have kinds in a kinds filter!
+			if (!(kinds = ndb_filter_get_elems(filter, NDB_FILTER_KINDS)))
+				return 0;
 
-		k.mv_data = &tsid;
-		k.mv_size = sizeof(tsid);
+			until = UINT64_MAX;
+			if ((pint = ndb_filter_get_int(filter, NDB_FILTER_UNTIL)))
+				until = *pint;
 
-		if (!ndb_cursor_start(cur, &k, &v))
-			continue;
+			// START at what?
+			kind = kinds->elements[i];
+			ndb_debug("kind %" PRIu64 "\n", kind);
+			ndb_u64_tsid_init(&tsid, kind, until);
+
+			k.mv_data = &tsid;
+			k.mv_size = sizeof(tsid);
+
+			if (!ndb_cursor_start(cur, &k, &v))
+				continue;
+		} else {
+			if (!ndb_cursor_get(cur, &k, &v, NDB_GET_CURRENT))
+				return 1;
+
+		}
 
 		// for each id in our ids filter, find in the db
 		while (!query_is_full(results, limit)) {
@@ -2967,11 +2981,8 @@ static const char *ndb_query_plan_name(int plan_id)
 	return "unknown";
 }
 
-static int ndb_query_filter(struct ndb_txn *txn, struct ndb_filter *filter,
-			    struct ndb_query_result *res, int capacity,
-			    int *results_out)
+static int ndb_query_filter(struct ndb_query *query, int filter)
 {
-	struct ndb_query_results results;
 	uint64_t limit, *pint;
 	enum ndb_query_plan plan;
 	limit = capacity;
@@ -2982,29 +2993,30 @@ static int ndb_query_filter(struct ndb_txn *txn, struct ndb_filter *filter,
 	limit = min(capacity, limit);
 	make_cursor((unsigned char *)res,
 		    ((unsigned char *)res) + limit * sizeof(*res),
-		    &results.cur);
+		    &query->results.cur);
 
 	plan = ndb_filter_plan(filter);
+
 	ndb_debug("using query plan '%s'\n", ndb_query_plan_name(plan));
 	switch (plan) {
 	// We have a list of ids, just open a cursor and jump to each once
 	case NDB_PLAN_IDS:
-		if (!ndb_query_plan_execute_ids(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_ids(cursor, filter, &query->results, limit))
 			return 0;
 		break;
 
 	// We have just kinds, just scan the kind index
 	case NDB_PLAN_KINDS:
-		if (!ndb_query_plan_execute_kinds(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_kinds(cursor, filter, &query->results, limit, resuming))
 			return 0;
 		break;
 
 	case NDB_PLAN_TAGS:
-		if (!ndb_query_plan_execute_tags(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_tags(cursor, filter, &query->results, limit))
 			return 0;
 		break;
 	case NDB_PLAN_CREATED:
-		if (!ndb_query_plan_execute_created_at(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_created_at(cursor, filter, &query->results, limit))
 			return 0;
 		break;
 	case NDB_PLAN_AUTHORS:
@@ -3012,34 +3024,132 @@ static int ndb_query_filter(struct ndb_txn *txn, struct ndb_filter *filter,
 		return 0;
 	}
 
-	*results_out = cursor_count(&results.cur, sizeof(*res));
 	return 1;
 }
 
-int ndb_query(struct ndb_txn *txn, struct ndb_filter *filters, int num_filters,
-	      struct ndb_query_result *results, int result_capacity, int *count)
+static int ndb_query_init(struct ndb_query *query,
+			  struct ndb_query_result *results,
+			  int result_capacity,
+			  struct ndb_filter *filters,
+			  int num_filters)
 {
-	int i, out;
-	struct ndb_query_result *p = results;
+	if (num_filters > MAX_FILTERS)
+		return 0;
+
+	query->results = results;
+	query->result_capacity = result_capacity;
+	query->filters = filters;
+	query->num_filters = num_filters;
+	query->num_results = 0;
+}
+
+
+// open the cursors for a query. determine the query plan for each filter, and
+// save it in the query struct. These will be used for selecting the correct
+// plan for each cursor.
+static int ndb_query_open_cursors(struct ndb_query *query, struct ndb_txn *txn)
+{
+	int i;
+	enum ndb_db db;
+	enum ndb_query_plan plan;
+	struct ndb_filter *filter;
+	struct ndb_cursor *cursor;
+
+	for (i = 0; i < query->num_filters; i++) {
+		filter = &query->filters[i];
+		cursor = &query->cursor[i];
+		plan = ndb_filter_plan(filter);
+		db = ndb_query_plan_db(plan);
+		query->plans[i] = plan;
+
+		if (!ndb_cursor_open(cursor, txn, db))
+			return 0;
+	}
+
+	return 1;
+
+}
+
+// position a query at a specific location for each cursor. This allows us
+// to save and resume query states across transactions
+static int ndb_query_position_cursors(struct ndb_query *query,
+				      struct ndb_val *vals, int num_vals)
+{
+	if (num_vals != query->num_filters)
+		return 0;
+
+	for (i = 0; i < num_vals; i++) {
+		query->index_values[i] = *vals[i];
+	}
+}
+
+// instead of restoring from some previous state, load the initial position
+// from filter fields such as until/since
+static int ndb_query_init_cursor_positions(struct ndb_query *query)
+{
+	for (i = 0; i < query->num_filters; i++) {
+		until = UINT64_MAX;
+		if ((pint = ndb_filter_get_int(filter, NDB_FILTER_UNTIL)))
+			until = *pint;
+
+		since = 0;
+		if ((pint = ndb_filter_get_int(filter, NDB_FILTER_SINCE)))
+			since = *pint;
+	}
+
+}
+
+static void ndb_query_close_cursors(struct ndb_query *query)
+{
+	int i;
+	for (i = 0; i < query->num_filters; i++)
+		ndb_cursor_close(&query->cursor[i]);
+}
+
+int ndb_query_begin(struct ndb_query *query, struct ndb_filter *filters,
+		    int num_filters, struct ndb_query_result *results,
+		    int result_capacity)
+{
+	if (!ndb_query_init(query, results, result_capacity, filters, num_filters))
+		return 0;
+
+	return ndb_query_open_cursors(query);
+}
+
+int ndb_query(struct ndb_txn *txn, struct ndb_filter *filters, int num_filters,
+	      struct ndb_query_result *results, int result_capacity)
+{
+	int res;
+	struct ndb_query query;
+
+	if (!ndb_query_begin(&query, filters, num_filters, results, result_capacity))
+		return 0;
+
+	res = ndb_query_resume(query);
+
+	ndb_query_close_cursors(query);
+
+	return res;
+}
+
+int ndb_query_resume(struct ndb_query *query)
+{
+	int i, out, resuming;
 
 	out = 0;
-	*count = 0;
+	query->results.p = query->results.start;
 
 	for (i = 0; i < num_filters; i++) {
-		if (!ndb_query_filter(txn, &filters[i], p,
-				      result_capacity, &out)) {
+		if (!ndb_query_filter(query, i))
 			return 0;
-		}
 
-		*count += out;
-		p += out;
-		result_capacity -= out;
-		if (result_capacity <= 0)
+		if (query_is_full(&query->results))
 			break;
 	}
 
 	// sort results
-	qsort(results, *count, sizeof(*results), compare_query_results);
+	qsort(query->results.start, *count, sizeof(struct ndb_query_result), compare_query_results);
+
 	return 1;
 }
 
@@ -5833,7 +5943,7 @@ const char *ndb_kind_name(enum ndb_common_kind ck)
 	return "unknown";
 }
 
-const char *ndb_db_name(enum ndb_dbs db)
+const char *ndb_db_name(enum ndb_db db)
 {
 	switch (db) {
 		case NDB_DB_NOTE:
@@ -6046,3 +6156,46 @@ uint64_t ndb_subscribe(struct ndb *ndb, struct ndb_filter *filters, int num_filt
 
 	return subid;
 }
+
+
+int ndb_cursor_open(struct ndb_cursor *cursor, struct ndb_txn *txn, enum ndb_db db)
+{
+	MDB_cursor *cur;
+	cursor->txn = txn;
+	
+	if ((rc = mdb_cursor_open(txn->mdb_txn, txn->lmdb.dbs[db], &cur)))
+		return 0;
+
+	cursor->cur = cur;
+	cursor->started = 0;
+
+	return 1;
+}
+
+void ndb_cursor_close(struct ndb_cursor *cursor)
+{
+	mdb_cursor_close((MDB_cursor*)cursor->cur);
+}
+
+static void ndb_val_from_mdb_val(MDB_val *mdb_val, struct ndb_val *val, enum ndb_db db, int is_val)
+{
+	val->type = DB_VAL_TYPES[db].types[is_val];
+	val->size = mdb_val->mv_size;
+	val->data = mdb_val->mv_data;
+}
+
+int ndb_cursor_get(struct ndb_cursor *cursor, struct ndb_val *key, struct ndb_val *val, enum ndb_cursor_op op)
+{
+	MDB_val k, v;
+
+	if (mdb_cursor_get(cursor->cur, &k, &v, (MDB_cursor_op)op))
+		return 0;
+
+	if (key)
+		ndb_val_from_mdb_val(&k, key, cursor->db, 0);
+	if (val)
+		ndb_val_from_mdb_val(&v, val, cursor->db, 1);
+
+	return 1;
+}
+

@@ -27,6 +27,7 @@ struct ndb_blocks;
 struct ndb_block;
 struct ndb_note;
 struct ndb_tag;
+struct ndb_cursor;
 struct ndb_tags;
 struct ndb_lmdb;
 union ndb_packed_str;
@@ -73,7 +74,6 @@ struct ndb_id_cb {
 	void *data;
 };
 
-// required to keep a read 
 struct ndb_txn {
 	struct ndb_lmdb *lmdb;
 	void *mdb_txn;
@@ -168,7 +168,7 @@ enum ndb_search_order {
 	NDB_ORDER_ASCENDING,
 };
 
-enum ndb_dbs {
+enum ndb_db {
 	NDB_DB_NOTE,
 	NDB_DB_META,
 	NDB_DB_PROFILE,
@@ -421,8 +421,117 @@ struct ndb_query_result {
 	uint64_t note_id;
 };
 
+struct ndb_profile_result {
+	struct ndb_search_key *key;
+	uint64_t profile_key;
+};
+
+// A clustered key with an id and a timestamp
+struct ndb_tsid {
+	unsigned char id[32];
+	uint64_t timestamp;
+};
+
+// A u64 + timestamp id. Just using this for kinds at the moment.
+struct ndb_u64_tsid {
+	uint64_t u64; // kind, etc
+	uint64_t timestamp;
+};
+
+// types of various values in the database 
+enum ndb_val_type {
+	NDB_VAL_NOTHING,
+	NDB_VAL_GENERIC,
+	NDB_VAL_TSID,
+	NDB_VAL_U64_TSID,
+	NDB_VAL_NOTE,
+	NDB_VAL_NOTE_KEY,
+	NDB_VAL_PROFILE,
+	NDB_VAL_PROFILE_KEY,
+	NDB_VAL_SEARCH_KEY,
+	NDB_VAL_META_KEY,
+	NDB_VAL_VERSION,
+	NDB_VAL_NOTE_ID,
+	NDB_VAL_PUBKEY,
+	NDB_VAL_TIMESTAMP,
+	NDB_VAL_TEXT_SEARCH_KEY
+};
+
+// typesafe wrapper around the profile flatbuffer root
+// this struct should never have more than one entry
+struct ndb_profile {
+	void *flatbuffer_root;
+};
+
+// various ndb values interpreted from the database. any data in the database
+// should be able to be reflected in this type (eventually). This value was
+// introduced so that we can have interpretable database values when traversing
+// with cursors
+struct ndb_val {
+	enum ndb_val_type type;
+	size_t size;
+	union {
+		void *data;
+		struct ndb_tsid *tsid;
+		struct ndb_u64_tsid *u64_tsid;
+		struct ndb_profile profile;
+		struct ndb_note *note;
+		unsigned char *note_id; // 32 byte note id
+		uint64_t *profile_key;
+		uint64_t *note_key;
+		uint64_t *meta_key;
+		uint64_t *version;
+		unsigned char *text_search_key;
+		struct ndb_search_key *search;
+	};
+};
+
+struct ndb_cursor {
+	void *cur; // MDB_cursor
+	enum ndb_db db; // what db are we in?
+	struct ndb_txn *txn;
+};
+
 struct ndb_query_results {
 	struct cursor cur;
+};
+
+// copied over from LMDB
+//
+/** @brief Cursor Get operations.
+ *
+ *	This is the set of all operations for retrieving data
+ *	using a cursor.
+ */
+enum ndb_cursor_op {
+	NDB_FIRST,				/**< Position at first key/data item */
+	NDB_FIRST_DUP,			/**< Position at first data item of current key.
+								Only for #NDB_DUPSORT */
+	NDB_GET_BOTH,			/**< Position at key/data pair. Only for #NDB_DUPSORT */
+	NDB_GET_BOTH_RANGE,		/**< position at key, nearest data. Only for #NDB_DUPSORT */
+	NDB_GET_CURRENT,		/**< Return key/data at current cursor position */
+	NDB_GET_MULTIPLE,		/**< Return up to a page of duplicate data items
+								from current cursor position. Move cursor to prepare
+								for #NDB_NEXT_MULTIPLE. Only for #NDB_DUPFIXED */
+	NDB_LAST,				/**< Position at last key/data item */
+	NDB_LAST_DUP,			/**< Position at last data item of current key.
+								Only for #NDB_DUPSORT */
+	NDB_NEXT,				/**< Position at next data item */
+	NDB_NEXT_DUP,			/**< Position at next data item of current key.
+								Only for #NDB_DUPSORT */
+	NDB_NEXT_MULTIPLE,		/**< Return up to a page of duplicate data items
+								from next cursor position. Move cursor to prepare
+								for #NDB_NEXT_MULTIPLE. Only for #NDB_DUPFIXED */
+	NDB_NEXT_NODUP,			/**< Position at first data item of next key */
+	NDB_PREV,				/**< Position at previous data item */
+	NDB_PREV_DUP,			/**< Position at previous data item of current key.
+								Only for #NDB_DUPSORT */
+	NDB_PREV_NODUP,			/**< Position at last data item of previous key */
+	NDB_SET,				/**< Position at specified key */
+	NDB_SET_KEY,			/**< Position at specified key, return key + data */
+	NDB_SET_RANGE,			/**< Position at first key greater than or equal to specified key. */
+	NDB_PREV_MULTIPLE		/**< Position at previous page and return up to
+								a page of duplicate data items. Only for #NDB_DUPFIXED */
 };
 
 // CONFIG
@@ -455,14 +564,19 @@ void ndb_search_profile_end(struct ndb_search *search);
 int ndb_end_query(struct ndb_txn *);
 int ndb_write_last_profile_fetch(struct ndb *ndb, const unsigned char *pubkey, uint64_t fetched_at);
 uint64_t ndb_read_last_profile_fetch(struct ndb_txn *txn, const unsigned char *pubkey);
-void *ndb_get_profile_by_pubkey(struct ndb_txn *txn, const unsigned char *pubkey, size_t *len, uint64_t *primkey);
-void *ndb_get_profile_by_key(struct ndb_txn *txn, uint64_t key, size_t *len);
+struct ndb_profile *ndb_get_profile_by_pubkey(struct ndb_txn *txn, const unsigned char *pubkey, size_t *len, uint64_t *primkey);
+struct ndb_profile *ndb_get_profile_by_key(struct ndb_txn *txn, uint64_t key, size_t *len);
 uint64_t ndb_get_notekey_by_id(struct ndb_txn *txn, const unsigned char *id);
 uint64_t ndb_get_profilekey_by_pubkey(struct ndb_txn *txn, const unsigned char *id);
 struct ndb_note *ndb_get_note_by_id(struct ndb_txn *txn, const unsigned char *id, size_t *len, uint64_t *primkey);
 struct ndb_note *ndb_get_note_by_key(struct ndb_txn *txn, uint64_t key, size_t *len);
 void *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char *id, size_t *len);
 void ndb_destroy(struct ndb *);
+
+// CURSORS
+struct ndb_cursor *ndb_cursor_open(struct ndb_cursor *, struct ndb_txn *, enum ndb_db);
+void ndb_cursor_close(struct ndb_cursor *);
+int ndb_cursor_get(struct ndb_cursor *, struct ndb_val *key, struct ndb_val *val, enum ndb_cursor_op);
 
 // BUILDER
 int ndb_parse_json_note(struct ndb_json_parser *, struct ndb_note **);
@@ -542,7 +656,7 @@ struct ndb_str ndb_iter_tag_str(struct ndb_iterator *iter, int ind);
 struct ndb_str ndb_tag_str(struct ndb_note *note, struct ndb_tag *tag, int ind);
 
 // NAMES
-const char *ndb_db_name(enum ndb_dbs db);
+const char *ndb_db_name(enum ndb_db db);
 const char *ndb_kind_name(enum ndb_common_kind ck);
 enum ndb_common_kind ndb_kind_to_common_kind(int kind);
 
