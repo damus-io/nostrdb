@@ -231,8 +231,10 @@ int main(int argc, char *argv[])
 
 		for (i = 0; argc && i < 1000; i++) {
 			if (!strcmp(argv[0], "-k")) {
-				if (current_field != NDB_FILTER_KINDS)
+				if (current_field != NDB_FILTER_KINDS) {
+					ndb_filter_end_field(f);
 					ndb_filter_start_field(f, NDB_FILTER_KINDS);
+				}
 				current_field = NDB_FILTER_KINDS;
 				ndb_filter_add_int_element(f, atoll(argv[1]));
 				argv += 2;
