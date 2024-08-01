@@ -1,6 +1,7 @@
 
 
 #include "nostrdb.h"
+#include "lmdb.h"
 #include "print_util.h"
 #include "hex.h"
 #include <time.h>
@@ -97,7 +98,7 @@ static void print_stats(struct ndb_stat *stat)
 
 int ndb_print_search_keys(struct ndb_txn *txn);
 int ndb_print_kind_keys(struct ndb_txn *txn);
-int ndb_print_tag_keys(struct ndb_txn *txn);
+int ndb_print_tag_index(struct ndb_txn *txn);
 
 static void print_note(struct ndb_note *note)
 {
@@ -335,7 +336,7 @@ int main(int argc, char *argv[])
 		ndb_end_query(&txn);
 	} else if (argc == 2 && !strcmp(argv[1], "print-tag-keys")) {
 		ndb_begin_query(ndb, &txn);
-		ndb_print_tag_keys(&txn);
+		ndb_print_tag_index(&txn);
 		ndb_end_query(&txn);
 	}  else if (argc == 3 && !strcmp(argv[1], "profile")) {
 		pk_str = argv[2];
