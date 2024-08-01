@@ -866,6 +866,34 @@ static void test_parse_nevent() {
 	assert(ok == 3);
 }
 
+static void test_single_url_parsing() {
+	unsigned char buf[4096];
+	const char *content = "https://damus.io/notedeck";
+
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_str_block *str;
+	struct ndb_block_iterator iterator, *iter;
+
+	iter = &iterator;
+	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
+	assert(blocks->num_blocks == 1);
+
+	ndb_blocks_iterate_start(content, blocks, iter);
+	int i = 0;
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		str = ndb_block_str(block);
+		switch (++i) {
+		case 1:
+			assert(ndb_get_block_type(block) == BLOCK_URL);
+			assert(!strncmp(str->str, "https://damus.io/notedeck", str->len));
+			break;
+		}
+	}
+
+	assert(i == 1);
+}
+
 static void test_comma_url_parsing() {
 	unsigned char buf[4096];
 	const char *content = "http://example.com,http://example.com";
@@ -884,7 +912,7 @@ static void test_comma_url_parsing() {
 	while ((block = ndb_blocks_iterate_next(iter))) {
 		str = ndb_block_str(block);
 		switch (++i) {
-		case 1: 
+		case 1:
 			assert(ndb_get_block_type(block) == BLOCK_URL);
 			assert(!strncmp(str->str, "http://example.com", str->len));
 			break;
@@ -922,7 +950,7 @@ static void test_url_parsing() {
 	while ((block = ndb_blocks_iterate_next(iter))) {
 		str = ndb_block_str(block);
 		switch (++i) {
-		case 1: 
+		case 1:
 			assert(ndb_get_block_type(block) == BLOCK_URL);
 			assert(!strncmp(str->str, DAMUSIO, str->len));
 			break;
@@ -1417,7 +1445,70 @@ static void test_subscriptions()
 	ndb_destroy(ndb);
 }
 
+static void test_weird_note_corruption() {
+	struct ndb *ndb;
+	struct ndb_config config;
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_str_block *str;
+	struct ndb_block_iterator iterator, *iter = &iterator;
+	struct ndb_filter filter, *f = &filter;
+	uint64_t subid;
+	uint64_t note_id = 0;
+	struct ndb_txn txn;
+	struct ndb_note *note;
+	ndb_default_config(&config);
+
+	const char *ev = "[\"EVENT\",\"a\",{\"content\":\"https://damus.io/notedeck\",\"created_at\":1722537589,\"id\":\"1876ca8cd29afba5805e698cf04ac6611d50e5e5a22e1efb895816a4c5790a1b\",\"kind\":1,\"pubkey\":\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\",\"sig\":\"2478aac6e9e66e5a04938d54544928589b55d2a324a7229ef7e709903b5dd12dc9a279abf81ed5753692cd30f62213fd3e0adf8b835543616a60e2d7010f0627\",\"tags\":[[\"e\",\"423fdf3f6e438fded84fe496643008eada5c1db7ba80428521c2c098f1173b83\",\"\",\"root\"],[\"p\",\"406a61077fe67f0eda4be931572c522f937952ddb024c87673e3de6b37e9a98f\"]]}]";
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	assert((subid = ndb_subscribe(ndb, f, 1)));
+	assert(ndb_process_event(ndb, ev, strlen(ev)));
+
+	assert(ndb_wait_for_notes(ndb, subid, &note_id, 1) == 1);
+	assert(note_id > 0);
+	assert(ndb_begin_query(ndb, &txn));
+
+	assert((note = ndb_get_note_by_key(&txn, note_id, NULL)));
+	assert(!strcmp(ndb_note_content(note), "https://damus.io/notedeck"));
+	assert(ndb_note_content_length(note) == 25);
+
+	assert(ndb_num_subscriptions(ndb) == 1);
+	assert(ndb_unsubscribe(ndb, subid));
+	assert(ndb_num_subscriptions(ndb) == 0);
+
+	blocks = ndb_get_blocks_by_key(ndb, &txn, note_id);
+
+	ndb_blocks_iterate_start(ndb_note_content(note), blocks, iter);
+	//printf("url num blocks: %d\n", blocks->num_blocks);
+	assert(blocks->num_blocks == 1);
+	int i = 0;
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		str = ndb_block_str(block);
+		//printf("block (%d): %d:'%.*s'\n", ndb_get_block_type(block), str->len, str->len, str->str);
+		switch (++i) {
+		case 1:
+			assert(ndb_get_block_type(block) == BLOCK_URL);
+			assert(str->len == 25);
+			assert(!strncmp(str->str, "https://damus.io/notedeck", str->len));
+			break;
+		}
+	}
+	assert(i == 1);
+
+	ndb_end_query(&txn);
+	ndb_destroy(ndb);
+}
+
 int main(int argc, const char *argv[]) {
+	test_single_url_parsing();
+	test_weird_note_corruption();
 	test_query();
 	test_tag_query();
 	test_parse_content();
