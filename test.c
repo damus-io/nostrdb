@@ -866,6 +866,42 @@ static void test_parse_nevent() {
 	assert(ok == 3);
 }
 
+static void test_bech32_parsing() {
+	unsigned char buf[4096];
+	const char *content = "https://damus.io/notedeck nostr:note1thp5828zk5xujrcuwdppcjnwlz43altca6269demenja3vqm5m2qclq35h";
+
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_str_block *str;
+	struct ndb_block_iterator iterator, *iter;
+
+	iter = &iterator;
+	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
+	assert(blocks->num_blocks == 3);
+
+	ndb_blocks_iterate_start(content, blocks, iter);
+	int i = 0;
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		str = ndb_block_str(block);
+		switch (++i) {
+		case 1:
+			assert(ndb_get_block_type(block) == BLOCK_URL);
+			assert(!strncmp(str->str, "https://damus.io/notedeck", str->len));
+			break;
+		case 2:
+			assert(ndb_get_block_type(block) == BLOCK_TEXT);
+			assert(!strncmp(str->str, " ", str->len));
+			break;
+		case 3:
+			assert(ndb_get_block_type(block) == BLOCK_MENTION_BECH32);
+			assert(!strncmp(str->str, "note1thp5828zk5xujrcuwdppcjnwlz43altca6269demenja3vqm5m2qclq35h", str->len));
+			break;
+		}
+	}
+
+	assert(i == 3);
+}
+
 static void test_single_url_parsing() {
 	unsigned char buf[4096];
 	const char *content = "https://damus.io/notedeck";
@@ -1507,12 +1543,13 @@ static void test_weird_note_corruption() {
 }
 
 int main(int argc, const char *argv[]) {
+	test_bech32_parsing();
 	test_single_url_parsing();
+	test_url_parsing();
 	test_weird_note_corruption();
 	test_query();
 	test_tag_query();
 	test_parse_content();
-	test_url_parsing();
 	test_subscriptions();
 	test_comma_url_parsing();
 	test_varints();
