@@ -1546,8 +1546,8 @@ int main(int argc, const char *argv[]) {
 	test_bech32_parsing();
 	test_single_url_parsing();
 	test_url_parsing();
-	test_weird_note_corruption();
 	test_query();
+	test_weird_note_corruption();
 	test_tag_query();
 	test_parse_content();
 	test_subscriptions();
