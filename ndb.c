@@ -18,7 +18,7 @@ static int usage()
 	printf("commands\n\n");
 	printf("	stat\n");
 	printf("	search [--oldest-first] [--limit 42] <fulltext query>\n");
-	printf("	query [-k 42] [-k 1337] [-l 42] [-a abcdef -a bcdef ...]\n");
+	printf("	query [-k 42] [-k 1337] [-l 42] [-e abcdef...] [-a abcdef... -a bcdef...]\n");
 	printf("	profile <pubkey>\n");
 	printf("	print-search-keys\n");
 	printf("	print-kind-keys\n");
@@ -270,6 +270,30 @@ int main(int argc, char *argv[])
 				ndb_filter_start_tag_field(f, 't');
 				ndb_filter_add_str_element(f, argv[1]);
 				ndb_filter_end_field(f);
+				argv += 2;
+				argc -= 2;
+			} else if (!strcmp(argv[0], "-e")) {
+				if (current_field != 'e') {
+					if (!ndb_filter_start_tag_field(f, 'e')) {
+						fprintf(stderr, "field already started\n");
+						res = 44;
+						goto cleanup;
+					}
+				}
+				current_field = 'e';
+
+				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
+					fprintf(stderr, "invalid hex id\n");
+					res = 42;
+					goto cleanup;
+				}
+
+				if (!ndb_filter_add_id_element(f, tmp_id)) {
+					fprintf(stderr, "too many event ids\n");
+					res = 43;
+					goto cleanup;
+				}
+
 				argv += 2;
 				argc -= 2;
 			} else if (!strcmp(argv[0], "-a")) {
