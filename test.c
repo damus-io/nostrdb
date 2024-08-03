@@ -1592,8 +1592,8 @@ int main(int argc, const char *argv[]) {
 	test_single_url_parsing();
 	test_url_parsing();
 	test_query();
-	test_weird_note_corruption();
 	test_tag_query();
+	test_weird_note_corruption();
 	test_parse_content();
 	test_subscriptions();
 	test_comma_url_parsing();
