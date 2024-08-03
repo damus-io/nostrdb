@@ -120,6 +120,50 @@ static void test_filters()
 	ndb_filter_destroy(f);
 }
 
+static void test_filter_json()
+{
+	struct ndb_filter filter, *f = &filter;
+	char buf[1024];
+
+	unsigned char pk[32] = { 0x32, 0xe1, 0x82, 0x76, 0x35, 0x45, 0x0e, 0xbb, 0x3c, 0x5a, 0x7d, 0x12, 0xc1, 0xf8, 0xe7, 0xb2, 0xb5, 0x14, 0x43, 0x9a, 0xc1, 0x0a, 0x67, 0xee, 0xf3, 0xd9, 0xfd, 0x9c, 0x5c, 0x68, 0xe2, 0x45 };
+
+	unsigned char pk2[32] = {
+		0xd1, 0x2c, 0x17, 0xbd, 0xe3, 0x09, 0x4a, 0xd3, 0x2f, 0x4a, 0xb8, 0x62, 0xa6, 0xcc, 0x6f, 0x5c, 0x28, 0x9c, 0xfe, 0x7d, 0x58, 0x02, 0x27, 0x0b, 0xdf, 0x34, 0x90, 0x4d, 0xf5, 0x85, 0xf3, 0x49
+	};
+
+	ndb_filter_init(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_UNTIL));
+	assert(ndb_filter_add_int_element(f, 42));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+	assert(ndb_filter_json(f, buf, sizeof(buf)));
+	assert(!strcmp("{\"until\":42}", buf));
+	ndb_filter_destroy(f);
+
+	ndb_filter_init(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_UNTIL));
+	assert(ndb_filter_add_int_element(f, 42));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	assert(ndb_filter_add_int_element(f, 2));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+	assert(ndb_filter_json(f, buf, sizeof(buf)));
+	assert(!strcmp("{\"until\":42,\"kinds\":[1,2]}", buf));
+	ndb_filter_destroy(f);
+
+	ndb_filter_init(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_IDS));
+	assert(ndb_filter_add_id_element(f, pk));
+	assert(ndb_filter_add_id_element(f, pk2));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+	assert(ndb_filter_json(f, buf, sizeof(buf)));
+	assert(!strcmp("{\"ids\":[\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\",\"d12c17bde3094ad32f4ab862a6cc6f5c289cfe7d5802270bdf34904df585f349\"]}", buf));
+	ndb_filter_destroy(f);
+}
+
 static void test_invoice_encoding(const char *bolt11_str)
 {
 	unsigned char buf[4096];
@@ -1543,6 +1587,7 @@ static void test_weird_note_corruption() {
 }
 
 int main(int argc, const char *argv[]) {
+	test_filter_json();
 	test_bech32_parsing();
 	test_single_url_parsing();
 	test_url_parsing();
