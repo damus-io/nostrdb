@@ -239,6 +239,7 @@ struct ndb_filter_elements {
 	int count;
 
 	// this needs to be pointer size for reasons
+	// FIXME: what about on 32bit systems??
 	uint64_t elements[0];
 };
 
