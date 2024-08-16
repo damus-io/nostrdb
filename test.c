@@ -817,6 +817,84 @@ static void test_content_len()
 	free(buf);
 }
 
+static void test_parse_filter_json()
+{
+	int i;
+	unsigned char buffer[1024];
+	unsigned char *pid;
+	const char *str;
+	uint64_t val;
+	struct ndb_filter_elements *elems;
+
+	const unsigned char id_bytes[] = { 0x50, 0x04, 0xa0, 0x81, 0xe3, 0x97,
+		0xc6, 0xda, 0x9d, 0xc2, 0xf2, 0xd6, 0xb3, 0x13, 0x40, 0x06,
+		0xa9, 0xd0, 0xe8, 0xc1, 0xb4, 0x66, 0x89, 0xd9, 0xfe, 0x15,
+		0x0b, 0xb2, 0xf2, 0x1a, 0x20, 0x4d };
+
+	const unsigned char id2_bytes[] = { 0xb1, 0x69, 0xf5, 0x96, 0x96, 0x89,
+		0x17, 0xa1, 0xab, 0xeb, 0x42, 0x34, 0xd3, 0xcf, 0x3a, 0xa9,
+		0xba, 0xee, 0x21, 0x12, 0xe5, 0x89, 0x98, 0xd1, 0x7c, 0x6d,
+		0xb4, 0x16, 0xad, 0x33, 0xfe, 0x40 };
+
+#define HEX_ID "5004a081e397c6da9dc2f2d6b3134006a9d0e8c1b46689d9fe150bb2f21a204d"
+#define HEX_PK "b169f596968917a1abeb4234d3cf3aa9baee2112e58998d17c6db416ad33fe40"
+
+	static const char *json = "{\"ids\": [\"" HEX_ID "\", \"" HEX_PK "\"], \"kinds\": [1,2,3], \"limit\": 10, \"#e\":[\"" HEX_PK "\"], \"#t\": [\"hashtag\"]}";
+	struct ndb_filter filter, *f = &filter;
+	ndb_filter_init(f);
+
+	assert(ndb_filter_from_json(json, strlen(json), f, buffer, sizeof(buffer)));
+	assert(filter.finalized);
+
+	for (i = 0; i < filter.num_elements; i++) {
+		elems = ndb_filter_get_elements(f, i);
+
+		switch (i) {
+		case 0:
+			assert(elems->field.type == NDB_FILTER_IDS);
+			assert(elems->count == 2);
+
+			pid = ndb_filter_get_id_element(f, elems, 0);
+			assert(!memcmp(pid, id_bytes, 32));
+			pid = ndb_filter_get_id_element(f, elems, 1);
+			assert(!memcmp(pid, id2_bytes, 32));
+			break;
+		case 1:
+			assert(elems->field.type == NDB_FILTER_KINDS);
+			assert(elems->count == 3);
+			val = ndb_filter_get_int_element(elems, 0);
+			assert(val == 1);
+			val = ndb_filter_get_int_element(elems, 1);
+			assert(val == 2);
+			val = ndb_filter_get_int_element(elems, 2);
+			assert(val == 3);
+			break;
+
+		case 2:
+			assert(elems->field.type == NDB_FILTER_LIMIT);
+			val = ndb_filter_get_int_element(elems, 0);
+			assert(val == 10);
+			break;
+
+		case 3:
+			assert(elems->field.type == NDB_FILTER_TAGS);
+			assert(elems->field.tag == 'e');
+			pid = ndb_filter_get_id_element(f, elems, 0);
+			assert(pid != NULL);
+			assert(!memcmp(pid, id2_bytes, 32));
+			break;
+
+		case 4:
+			assert(elems->field.type == NDB_FILTER_TAGS);
+			assert(elems->field.tag == 't');
+			str = ndb_filter_get_string_element(f, elems, 0);
+			assert(!strcmp(str, "hashtag"));
+			break;
+		}
+	}
+
+}
+
 static void test_parse_json() {
 	char hex_id[32] = {0};
 	unsigned char buffer[1024];
@@ -1587,6 +1665,7 @@ static void test_weird_note_corruption() {
 }
 
 int main(int argc, const char *argv[]) {
+	test_parse_filter_json();
 	test_filter_json();
 	test_bech32_parsing();
 	test_single_url_parsing();
