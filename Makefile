@@ -192,4 +192,16 @@ testdata/db/.dir:
 test: test.c $(DEPS) testdata/db/.dir
 	$(CC) $(CFLAGS) test.c $(LDS) $(LDFLAGS) -o $@
 
-.PHONY: tags clean fake
+# Call this with CCAN_NEW="mod1 mod2..." to add new ccan modules.
+update-ccan:
+	mv ccan ccan.old
+	DIR=$$(pwd)/ccan; cd ../ccan && ./tools/create-ccan-tree -a $$DIR `cd $$DIR.old/ccan && find * -name _info | sed s,/_info,, | LC_ALL=C sort` $(CCAN_NEW)
+	mkdir -p ccan/tools/configurator
+	cp ../ccan/tools/configurator/configurator.c ../ccan/doc/configurator.1 ccan/tools/configurator/
+	$(MAKE) src/config.h
+	grep -v '^CCAN version:' ccan.old/README > ccan/README
+	echo CCAN version: `git -C ../ccan describe` >> ccan/README
+	$(RM) -r ccan/ccan/hash/ ccan/ccan/tal/talloc/	# Unnecessary deps
+	$(RM) -r ccan.old
+
+.PHONY: tags clean fake update-ccan
