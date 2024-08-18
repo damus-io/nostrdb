@@ -172,7 +172,7 @@ static void test_invoice_encoding(const char *bolt11_str)
 	struct ndb_invoice invoice;
 	struct bolt11 *bolt11;
 
-	bolt11 = bolt11_decode(NULL, bolt11_str, &fail);
+	bolt11 = bolt11_decode_minimal(NULL, bolt11_str, &fail);
 	make_cursor(buf, buf + sizeof(buf), &cur);
 
 	assert(fail == NULL);
