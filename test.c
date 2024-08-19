@@ -862,17 +862,17 @@ static void test_parse_filter_json()
 		case 1:
 			assert(elems->field.type == NDB_FILTER_KINDS);
 			assert(elems->count == 3);
-			val = ndb_filter_get_int_element(elems, 0);
+			val = *ndb_filter_get_int_element(elems, 0);
 			assert(val == 1);
-			val = ndb_filter_get_int_element(elems, 1);
+			val = *ndb_filter_get_int_element(elems, 1);
 			assert(val == 2);
-			val = ndb_filter_get_int_element(elems, 2);
+			val = *ndb_filter_get_int_element(elems, 2);
 			assert(val == 3);
 			break;
 
 		case 2:
 			assert(elems->field.type == NDB_FILTER_LIMIT);
-			val = ndb_filter_get_int_element(elems, 0);
+			val = *ndb_filter_get_int_element(elems, 0);
 			assert(val == 10);
 			break;
 
