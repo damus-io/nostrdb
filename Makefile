@@ -32,7 +32,9 @@ CHECKDATA=testdata/db/v0/data.mdb
 
 all: $(BIN) lib bench
 
-%.o: %.c $(HEADERS)
+$(OBJS): $(HEADERS)
+
+%.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 libnostrdb.a: $(OBJS)
