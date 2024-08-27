@@ -396,8 +396,8 @@ struct ndb_invoice {
 	uint64_t amount;
 	uint64_t timestamp;
 	uint64_t expiry;
-	char *description;
-	unsigned char *description_hash;
+	const char *description;
+	const unsigned char *description_hash;
 };
 
 struct ndb_invoice_block {

@@ -7,9 +7,10 @@
 #include "nostrdb.h"
 
 struct bolt11;
+struct rcur;
 
 // ENCODING
 int ndb_encode_invoice(struct cursor *cur, struct bolt11 *invoice);
-int ndb_decode_invoice(struct cursor *cur, struct ndb_invoice *invoice);
+bool ndb_decode_invoice(struct rcur *rcur, struct ndb_invoice *invoice);
 
 #endif /* NDB_INVOICE_H */

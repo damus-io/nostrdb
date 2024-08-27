@@ -60,13 +60,20 @@ static int pull_bech32_mention(const char *content, struct cursor *cur, struct n
 	return 1;
 }
 
-static int pull_invoice(const char *content, struct cursor *cur,
-			struct ndb_invoice_block *block)
+static bool pull_invoice(const char *content, struct cursor *cur,
+			 struct ndb_invoice_block *block)
 {
-	if (!pull_str_block(cur, content, &block->invstr))
-		return 0;
+	bool ret;
+	struct rcur rcur;
 
-	return ndb_decode_invoice(cur, &block->invoice);
+	if (!pull_str_block(cur, content, &block->invstr))
+		return false;
+
+	rcur = rcur_from_cursor(cur);
+	ret = ndb_decode_invoice(&rcur, &block->invoice);
+	*cur = cursor_from_rcur(&rcur);
+
+	return ret;
 }
 
 static int pull_block_type(struct cursor *cur, enum ndb_block_type *type)

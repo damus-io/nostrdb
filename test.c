@@ -169,6 +169,7 @@ static void test_invoice_encoding(const char *bolt11_str)
 	unsigned char buf[4096];
 	char *fail = NULL;
 	struct cursor cur;
+	struct rcur rcur;
 	struct ndb_invoice invoice;
 	struct bolt11 *bolt11;
 
@@ -177,8 +178,8 @@ static void test_invoice_encoding(const char *bolt11_str)
 
 	assert(fail == NULL);
 	assert(ndb_encode_invoice(&cur, bolt11));
-	cur.p = cur.start;
-	assert(ndb_decode_invoice(&cur, &invoice));
+	rcur = rcur_forbuf(cur.start, cur.end - cur.start);
+	assert(ndb_decode_invoice(&rcur, &invoice));
 
 	assert(bolt11->msat->millisatoshis == invoice.amount);
 	assert(bolt11->timestamp == invoice.timestamp);
