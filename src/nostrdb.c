@@ -3,6 +3,7 @@
 #include "jsmn.h"
 #include "hex.h"
 #include "cursor.h"
+#include "rcur.h"
 #include "random.h"
 #include "ccan/crypto/sha256/sha256.h"
 #include "bolt11/bolt11.h"
@@ -377,37 +378,32 @@ static int ndb_tag_key_compare(const MDB_val *a, const MDB_val *b)
 
 static int ndb_text_search_key_compare(const MDB_val *a, const MDB_val *b)
 {
-	struct cursor ca, cb;
+	struct rcur rcura, rcurb;
 	uint64_t sa, sb, nid_a, nid_b;
 	MDB_val a2, b2;
 
-	make_cursor(a->mv_data, a->mv_data + a->mv_size, &ca);
-	make_cursor(b->mv_data, b->mv_data + b->mv_size, &cb);
+	rcura = rcur_forbuf(a->mv_data, a->mv_size);
+	rcurb = rcur_forbuf(b->mv_data, b->mv_size);
 
 	// note_id
-	if (unlikely(!cursor_pull_varint(&ca, &nid_a) || !cursor_pull_varint(&cb, &nid_b)))
+	nid_a = rcur_pull_varint(&rcura);
+	nid_b = rcur_pull_varint(&rcurb);
+
+	// strings (cast away const)
+	a2.mv_data = (char *)rcur_pull_prefixed_str(&rcura, &a2.mv_size);
+	b2.mv_data = (char *)rcur_pull_prefixed_str(&rcurb, &b2.mv_size);
+
+	// We don't *have* to bail here, but memcmp on NULL is technically
+	// illegal, so we do.
+	if (!rcur_valid(&rcura) || !rcur_valid(&rcurb))
 		return 0;
-
-	// string size
-	if (unlikely(!cursor_pull_varint(&ca, &sa) || !cursor_pull_varint(&cb, &sb)))
-		return 0;
-
-	a2.mv_data = ca.p;
-	a2.mv_size = sa;
-
-	b2.mv_data = cb.p;
-	b2.mv_size = sb;
 
 	int cmp = mdb_cmp_memn(&a2, &b2);
 	if (cmp) return cmp;
 
-	// skip over string
-	ca.p += sa;
-	cb.p += sb;
-
 	// timestamp
-	if (unlikely(!cursor_pull_varint(&ca, &sa) || !cursor_pull_varint(&cb, &sb)))
-		return 0;
+	sa = rcur_pull_varint(&rcura);
+	sb = rcur_pull_varint(&rcurb);
 
 	if      (sa < sb) return -1;
 	else if (sa > sb) return 1;
@@ -417,8 +413,8 @@ static int ndb_text_search_key_compare(const MDB_val *a, const MDB_val *b)
 	else if (nid_a > nid_b) return 1;
 
 	// word index
-	if (unlikely(!cursor_pull_varint(&ca, &sa) || !cursor_pull_varint(&cb, &sb)))
-		return 0;
+	sa = rcur_pull_varint(&rcura);
+	sb = rcur_pull_varint(&rcurb);
 
 	if      (sa < sb) return -1;
 	else if (sa > sb) return 1;
