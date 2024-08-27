@@ -251,21 +251,22 @@ bool parse_nostr_bech32_str(struct rcur *bech32, enum nostr_bech32_type *type) {
 bool parse_nostr_bech32(unsigned char *buf, int buflen,
 			const char *bech32_str, size_t bech32_len,
 			struct nostr_bech32 *obj) {
-	const unsigned char *start;
+	const unsigned char *start = (const unsigned char *)bech32_str;
 	size_t parsed_len, u5_out_len, u8_out_len;
 	enum nostr_bech32_type type;
 	static const int MAX_PREFIX = 8;
 	struct cursor cur;
-	struct rcur bech32, u8;
+	struct rcur test, bech32, u8;
 
 	make_cursor(buf, buf + buflen, &cur);
-	bech32 = rcur_forbuf(bech32_str, bech32_len);
-	
-	start = bech32.p;
-	if (!parse_nostr_bech32_str(&bech32, &type))
+
+	// parse_nostr_bech32_str consumes the copy
+	test = bech32 = rcur_forbuf(start, bech32_len);
+
+	if (!parse_nostr_bech32_str(&test, &type))
 		return 0;
 
-	parsed_len = bech32.p - start;
+	parsed_len = rcur_bytes_remaining(rcur_between(&bech32, &test));
 
 	// some random sanity checking
 	if (parsed_len < 10 || parsed_len > 10000)

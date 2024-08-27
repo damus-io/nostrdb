@@ -13,9 +13,20 @@
 struct ndb_content_parser {
 	int bech32_strs;
 	struct cursor buffer;
+	const char *content_start;
 	struct rcur content;
 	struct ndb_blocks *blocks;
 };
+
+static struct ndb_str_block str_block_forrcur(struct rcur rcur)
+{
+	struct ndb_str_block strblock;
+	size_t len;
+
+	strblock.str = rcur_peek_remainder(&rcur, &len);
+	strblock.len = len;
+	return strblock;
+}
 
 /* Only updates rcur if it returns true */
 static bool parse_digit(struct rcur *rcur, int *digit)
@@ -71,18 +82,19 @@ static bool parse_if_hashtag(struct rcur *rcur, struct ndb_block *block)
 	struct rcur hashtag = *rcur;
 	size_t len;
 
+	/* Use hashtag to look ahead */
 	if (!rcur_skip_if_str_anycase(&hashtag, "#"))
 		return false;
 
 	c = rcur_pull_word(&hashtag, &len);
 	if (!c || is_whitespace(*c) || *c == '#')
 		return false;
-	
-	block->type = BLOCK_HASHTAG;
-	block->block.str.str = (const char *)rcur->p + 1;
-	block->block.str.len = hashtag.p - (rcur->p + 1);
 
-	*rcur = hashtag;
+	rcur_skip(rcur, 1);
+	block->type = BLOCK_HASHTAG;
+	block->block.str.len = len;
+	block->block.str.str = rcur_pull(rcur, len);
+
 	return true;
 }
 
@@ -120,7 +132,7 @@ static int push_bech32_mention(struct ndb_content_parser *p, struct ndb_str_bloc
 		goto fail;
 
 	// make sure to push the str block!
-	if (!push_str_block(&p->buffer, (const char*)p->content.start, bech32))
+	if (!push_str_block(&p->buffer, p->content_start, bech32))
 		goto fail;
 	//
 	// save a spot for the raw bech32 buffer size
@@ -177,7 +189,7 @@ static int push_invoice_str(struct ndb_content_parser *p, struct ndb_str_block *
 	start = p->buffer.p;
 
 	// push the text block just incase we don't care for the invoice
-	if (!push_str_block(&p->buffer, (const char*)p->content.start, str))
+	if (!push_str_block(&p->buffer, p->content_start, str))
 		return 0;
 
 	// push decoded invoice data for quick access
@@ -206,6 +218,15 @@ static int add_text_block(struct ndb_content_parser *p, const char *start, const
 	return push_block(p, &b);
 }
 
+static bool add_text_block_rcur(struct ndb_content_parser *p,
+				struct rcur rcur)
+{
+	const char *start;
+	size_t len;
+
+	start = rcur_peek_remainder(&rcur, &len);
+	return add_text_block(p, start, start + len);
+}
 
 int push_block(struct ndb_content_parser *p, struct ndb_block *block)
 {
@@ -219,7 +240,7 @@ int push_block(struct ndb_content_parser *p, struct ndb_block *block)
 	case BLOCK_HASHTAG:
 	case BLOCK_TEXT:
 	case BLOCK_URL:
-		if (!push_str_block(&p->buffer, (const char*)p->content.start,
+		if (!push_str_block(&p->buffer, p->content_start,
 			       &block->block.str))
 			goto fail;
 		break;
@@ -366,9 +387,7 @@ static bool parse_if_url(struct rcur *rcur,
 			 bool prev_was_open_bracket,
 			 struct ndb_block *block)
 {
-	struct rcur url = *rcur, path_rcur;
-	const unsigned char *host;
-	int host_len;
+	struct rcur url = *rcur, path, host, url_only;
 	enum nostr_bech32_type type;
 	
 	if (!rcur_skip_if_str_anycase(&url, "http"))
@@ -379,49 +398,47 @@ static bool parse_if_url(struct rcur *rcur,
 		return false;
 
 	// make sure to save the hostname. We will use this to detect damus.io links
-	host = url.p;
-
+	host = url;
 	if (!consume_url_host(&url))
 		return false;
-
-	// get the length of the host string
-	host_len = (int)(url.p - host);
+	host = rcur_between(&host, &url);
 
 	// save the current parse state so that we can continue from here when
 	// parsing the bech32 in the damus.io link if we have it
-	path_rcur = url;
+	path = url;
 	// skip leading /
-	rcur_skip(&path_rcur, 1);
+	rcur_skip(&path, 1);
 
 	consume_url_path(&url);
 
 	if (!consume_url_fragment(&url))
 		return false;
 
-	// smart parens: is entire URL surrounded by ()?
-	if (prev_was_open_bracket
-	    && url.p > rcur->start
-	    && url.p[-1] == ')') {
-		    url.p--;
-	}
+	// Now we've parsed, get url in buffer by itself.
+	url_only = rcur_between(rcur, &url);
 
-	// save the bech32 string pos in case we hit a damus.io link
-	block->block.str.str = (const char *)path_rcur.p;
+	// smart parens: is entire URL surrounded by ()?
+	// Ideally, we'd pass prev_was_open_bracket to consume_url_fragment
+	// and it would be smart.
+	if (prev_was_open_bracket)
+		rcur_trim_if_char(&url_only, ')');
 
 	// if we have a damus link, make it a mention
-	if (memeq(host, host_len, "damus.io", strlen("damus.io"))) {
-		if (parse_nostr_bech32_str(&path_rcur, &type)) {
-			block->block.str.len = path_rcur.p - path_rcur.start;
+	if (rcur_skip_if_match(&host, "damus.io", strlen("damus.io"))) {
+		struct rcur bech32 = path;
+		if (parse_nostr_bech32_str(&bech32, &type)) {
 			block->type = BLOCK_MENTION_BECH32;
-			return true;
+			block->block.str = str_block_forrcur(path);
+			goto got_url;
 		}
 	}
 
 	block->type = BLOCK_URL;
-	block->block.str.str = (const char *)rcur->p;
-	block->block.str.len = url.p - rcur->p;
+	block->block.str = str_block_forrcur(url_only);
 
-	*rcur = url;
+got_url:
+	/* We've processed the url, now increment rcur */
+	rcur_skip(rcur, rcur_bytes_remaining(url_only));
 	return true;
 }
 
@@ -441,9 +458,7 @@ static bool parse_if_invoice(struct rcur *rcur, struct ndb_block *block)
 		return false;
 
 	block->type = BLOCK_INVOICE;
-
-	block->block.str.str = (const char*)rcur->p;
-	block->block.str.len = invoice.p - rcur->p;
+	block->block.str = str_block_forrcur(rcur_between(rcur, &invoice));
 
 	*rcur = invoice;
 	return true;
@@ -452,20 +467,19 @@ static bool parse_if_invoice(struct rcur *rcur, struct ndb_block *block)
 /* Leaves rcur untouched if it returns false. */
 static bool parse_if_mention_bech32(struct rcur *rcur, struct ndb_block *block)
 {
-	struct rcur bech32 = *rcur;
+	struct rcur bech32 = *rcur, after_ignored;
 	enum nostr_bech32_type type;
 
 	/* Ignore these */
 	rcur_skip_if_str_anycase(&bech32, "@");
 	rcur_skip_if_str_anycase(&bech32, "nostr:");
 
-	block->block.str.str = (const char *)bech32.p;
-
+	after_ignored = bech32;
 	if (!parse_nostr_bech32_str(&bech32, &type))
 		return false;
 	
-	block->block.str.len = bech32.p - (unsigned char*)block->block.str.str;
 	block->type = BLOCK_MENTION_BECH32;
+	block->block.str = str_block_forrcur(rcur_between(&after_ignored, &bech32));
 
 	*rcur = bech32;
 	return true;
@@ -478,7 +492,7 @@ int ndb_parse_content(unsigned char *buf, int buf_size,
 	struct ndb_content_parser parser;
 	struct ndb_block block;
 	bool prev_was_open_bracket = false;
-	const unsigned char *start, *pre_mention, *blocks_start;
+	struct rcur start, pre_mention;
 	
 	make_cursor(buf, buf + buf_size, &parser.buffer);
 
@@ -486,7 +500,8 @@ int ndb_parse_content(unsigned char *buf, int buf_size,
 	*blocks_p = parser.blocks = (struct ndb_blocks *)buf;
 	parser.buffer.p += sizeof(struct ndb_blocks);
 
-	parser.content = rcur_forbuf(content, content_len);
+	parser.content_start = content;
+	parser.content = rcur_forbuf(parser.content_start, content_len);
 
 	parser.blocks->words = 0;
 	parser.blocks->num_blocks = 0;
@@ -494,7 +509,7 @@ int ndb_parse_content(unsigned char *buf, int buf_size,
 	parser.blocks->flags = 0;
 	parser.blocks->version = 1;
 
-	blocks_start = start = parser.content.p;
+	start = parser.content;
 
 	while (rcur_bytes_remaining(parser.content)) {
 		const char *c;
@@ -509,7 +524,7 @@ int ndb_parse_content(unsigned char *buf, int buf_size,
 		// new word
 		parser.blocks->words++;
 
-		pre_mention = parser.content.p;
+		pre_mention = parser.content;
 
 		switch (*c) {
 		case '#':
@@ -541,27 +556,28 @@ int ndb_parse_content(unsigned char *buf, int buf_size,
 
 	add_it:
 		// Add any text (e.g. whitespace) before this (noop if empty)
-		if (!add_text_block(&parser, (char *)start, (char *)pre_mention))
+		if (!add_text_block_rcur(&parser,
+					 rcur_between(&start, &pre_mention)))
 			return 0;
 		if (!push_block(&parser, &block))
 			return 0;
 
-		start = parser.content.p;
+		start = parser.content;
 	}
 
 	// Add any trailing text (noop if empty)
-	if (!add_text_block(&parser, (const char*)start, (const char *)parser.content.p))
+	if (!add_text_block_rcur(&parser, rcur_between(&start, &parser.content)))
 		return 0;
 
-	parser.blocks->blocks_size = parser.buffer.p - blocks_start;
+	parser.blocks->blocks_size = parser.buffer.p - buf;
 
 	//
 	// pad to 8-byte alignment
 	//
 	if (!cursor_align(&parser.buffer, 8))
 		return 0;
-	assert((parser.buffer.p - parser.buffer.start) % 8 == 0);
-	parser.blocks->total_size = parser.buffer.p - parser.buffer.start;
+	assert((parser.buffer.p - buf) % 8 == 0);
+	parser.blocks->total_size = parser.buffer.p - buf;
 
 	return 1;
 }
