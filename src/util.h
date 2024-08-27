@@ -1,6 +1,7 @@
 
 #ifndef NDB_UTIL_H
 #define NDB_UTIL_H
+#include <stdlib.h>
 
 static inline int min(int a, int b) {
     return a < b ? a : b;
