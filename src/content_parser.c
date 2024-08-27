@@ -501,24 +501,11 @@ static int parse_mention_bech32(struct cursor *cur, struct ndb_block *block) {
 	return 1;
 }
 
-static int add_text_then_block(struct ndb_content_parser *p,
-			       struct ndb_block *block,
-			       unsigned char **start,
-			       const unsigned char *pre_mention)
-{
-	if (!add_text_block(p, (const char *)*start, (const char*)pre_mention))
-		return 0;
-	
-	*start = (unsigned char*)p->content.p;
-	
-	return push_block(p, block);
-}
-
 int ndb_parse_content(unsigned char *buf, int buf_size,
 		      const char *content, int content_len,
 		      struct ndb_blocks **blocks_p)
 {
-	int cp, c;
+	int c;
 	struct ndb_content_parser parser;
 	struct ndb_block block;
 
@@ -540,42 +527,61 @@ int ndb_parse_content(unsigned char *buf, int buf_size,
 	parser.blocks->version = 1;
 
 	blocks_start = start = parser.content.p;
-	while (parser.content.p < parser.content.end) {
-		cp = peek_char(&parser.content, -1);
-		c  = peek_char(&parser.content, 0);
+
+	while (!cursor_eof(&parser.content)) {
+		// Skip whitespace.
+		while (is_whitespace(peek_char(&parser.content, 0))
+		       && cursor_skip(&parser.content, 1));
+
+		if (cursor_eof(&parser.content))
+			break;
 		
 		// new word
-		if (is_whitespace(cp) && !is_whitespace(c))
-			parser.blocks->words++;
-		
+		parser.blocks->words++;
+
 		pre_mention = parser.content.p;
-		if (cp == -1 || is_left_boundary(cp) || c == '#') {
-			if (c == '#' && (parse_mention_index(&parser.content, &block) || parse_hashtag(&parser.content, &block))) {
-				if (!add_text_then_block(&parser, &block, &start, pre_mention))
-					return 0;
-				continue;
-			} else if ((c == 'h' || c == 'H') && parse_url(&parser.content, &block)) {
-				if (!add_text_then_block(&parser, &block, &start, pre_mention))
-					return 0;
-				continue;
-			} else if ((c == 'l' || c == 'L') && parse_invoice(&parser.content, &block)) {
-				if (!add_text_then_block(&parser, &block, &start, pre_mention))
-					return 0;
-				continue;
-			} else if ((c == 'n' || c == '@') && parse_mention_bech32(&parser.content, &block)) {
-				if (!add_text_then_block(&parser, &block, &start, pre_mention))
-					return 0;
-				continue;
-			}
+		c  = peek_char(&parser.content, 0);
+
+		switch (c) {
+		case '#':
+			if (parse_mention_index(&parser.content, &block) || parse_hashtag(&parser.content, &block))
+				goto add_it;
+			break;
+
+		case 'h':			
+		case 'H':
+			if (parse_url(&parser.content, &block))
+				goto add_it;
+			break;
+
+		case 'l':
+		case 'L':
+			if (parse_invoice(&parser.content, &block))
+				goto add_it;
+			break;
+
+		case 'n':
+		case '@':
+			if (parse_mention_bech32(&parser.content, &block))
+				goto add_it;
+			break;
 		}
-		
-		parser.content.p++;
-	}
-	
-	if (parser.content.p - start > 0) {
-		if (!add_text_block(&parser, (const char*)start, (const char *)parser.content.p))
+		cursor_skip(&parser.content, 1);
+		continue;
+
+	add_it:
+		// Add any text (e.g. whitespace) before this (noop if empty)
+		if (!add_text_block(&parser, (char *)start, (char *)pre_mention))
 			return 0;
+		if (!push_block(&parser, &block))
+			return 0;
+
+		start = parser.content.p;
 	}
+
+	// Add any trailing text (noop if empty)
+	if (!add_text_block(&parser, (const char*)start, (const char *)parser.content.p))
+		return 0;
 
 	parser.blocks->blocks_size = parser.buffer.p - blocks_start;
 
