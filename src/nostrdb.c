@@ -3175,42 +3175,27 @@ static int ndb_write_word_to_index(struct ndb_txn *txn, const char *word,
 // break a string into individual words for querying or for building the
 // fulltext search index. This is callback based so we don't need to
 // build up an intermediate structure
-static int ndb_parse_words(struct cursor *cur, void *ctx, ndb_word_parser_fn fn)
+static void ndb_parse_words(struct rcur *rcur, void *ctx, ndb_word_parser_fn fn)
 {
-	int word_len, words;
+	size_t word_len, words;
 	const char *word;
 
 	words = 0;
+	/* Skip any leading whitespace and punctuation */
+	while (rcur_pull_whitespace(rcur) || rcur_pull_punctuation(rcur));
 
-	while (cur->p < cur->end) {
-		consume_whitespace_or_punctuation(cur);
-		if (cur->p >= cur->end)
-			break;
-		word = (const char *)cur->p;
-
-		if (!consume_until_boundary(cur))
-			break;
-
-		// start of word or end
-		word_len = cur->p - (unsigned char *)word;
-		if (word_len == 0 && cur->p >= cur->end)
-			break;
-
-		if (word_len == 0) {
-			if (!cursor_skip(cur, 1))
-				break;
-			continue;
-		}
-
+	while ((word = rcur_pull_word(rcur, &word_len)) != NULL) {
 		//ndb_debug("writing word index '%.*s'\n", word_len, word);
 
 		if (!fn(ctx, word, word_len, words))
 			continue;
 
 		words++;
-	}
 
-	return 1;
+		/* Skip next whitespace and punctuation */
+		while (rcur_pull_whitespace(rcur)
+		       || rcur_pull_punctuation(rcur));
+	}
 }
 
 struct ndb_word_writer_ctx
@@ -3241,7 +3226,7 @@ static int ndb_write_note_fulltext_index(struct ndb_txn *txn,
 					 struct ndb_note *note,
 					 uint64_t note_id)
 {
-	struct cursor cur;
+	struct rcur rcur;
 	unsigned char *content;
 	struct ndb_str str;
 	struct ndb_word_writer_ctx ctx;
@@ -3253,13 +3238,13 @@ static int ndb_write_note_fulltext_index(struct ndb_txn *txn,
 
 	content = (unsigned char *)str.str;
 
-	make_cursor(content, content + note->content_length, &cur);
+	rcur = rcur_forbuf(content, note->content_length);
 
 	ctx.txn = txn;
 	ctx.note = note;
 	ctx.note_id = note_id;
 
-	ndb_parse_words(&cur, &ctx, ndb_fulltext_word_writer);
+	ndb_parse_words(&rcur, &ctx, ndb_fulltext_word_writer);
 
 	return 1;
 }
@@ -3473,7 +3458,7 @@ int ndb_text_search(struct ndb_txn *txn, const char *query,
 	struct ndb_search_words search_words;
 	//struct ndb_text_search_key search_key;
 	struct ndb_word *search_word;
-	struct cursor cur;
+	struct rcur rcur;
 	ndb_text_search_key_order_fn key_order_fn;
 	MDB_dbi text_db;
 	MDB_cursor *cursor;
@@ -3499,9 +3484,10 @@ int ndb_text_search(struct ndb_txn *txn, const char *query,
 	// end search config
 
 	text_db = txn->lmdb->dbs[NDB_DB_NOTE_TEXT];
-	make_cursor((unsigned char *)query, (unsigned char *)query + strlen(query), &cur);
 
-	ndb_parse_words(&cur, &search_words, ndb_parse_search_words);
+	rcur = rcur_forstr(query);
+
+	ndb_parse_words(&rcur, &search_words, ndb_parse_search_words);
 	if (search_words.num_words == 0)
 		return 0;
 
