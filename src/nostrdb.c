@@ -422,50 +422,29 @@ static int ndb_text_search_key_compare(const MDB_val *a, const MDB_val *b)
 	return 0;
 }
 
-static inline int ndb_unpack_text_search_key_noteid(
-		struct cursor *cur, uint64_t *note_id)
+static uint64_t ndb_unpack_text_search_key_noteid(struct rcur *rcur)
 {
-	if (!cursor_pull_varint(cur, note_id))
-		return 0;
-
-	return 1;
+	return rcur_pull_varint(rcur);
 }
 
 // faster peek of just the string instead of unpacking everything
 // this is used to quickly discard range query matches if there is no
 // common prefix
-static inline int ndb_unpack_text_search_key_string(struct cursor *cur,
-						    const char **str,
-						    int *str_len)
+static const char *ndb_unpack_text_search_key_string(struct rcur *rcur,
+						     size_t *str_len)
 {
-	uint64_t len;
-
-	if (!cursor_pull_varint(cur, &len))
-		return 0;
-
-	*str_len = len;
-
-	*str = (const char *)cur->p;
-
-	if (!cursor_skip(cur, *str_len))
-		return 0;
-
-	return 1;
+	return rcur_pull_prefixed_str(rcur, str_len);
 }
 
 // should be called after ndb_unpack_text_search_key_string. It continues
 // the unpacking of a text search key if we've already started it.
-static inline int
-ndb_unpack_remaining_text_search_key(struct cursor *cur,
+static bool
+ndb_unpack_remaining_text_search_key(struct rcur *rcur,
 				     struct ndb_text_search_key *key)
 {
-	if (!cursor_pull_varint(cur, &key->timestamp))
-		return 0;
-
-	if (!cursor_pull_varint(cur, &key->word_index))
-		return 0;
-
-	return 1;
+	key->timestamp = rcur_pull_varint(rcur);
+	key->word_index = rcur_pull_varint(rcur);
+	return rcur_valid(rcur);
 }
 
 // unpack a fulltext search key
@@ -473,19 +452,14 @@ ndb_unpack_remaining_text_search_key(struct cursor *cur,
 // full version of string + unpack remaining. This is split up because text
 // searching only requires to pull the string for prefix searching, and the
 // remaining is optional
-static inline int ndb_unpack_text_search_key(unsigned char *p, int len,
-				      struct ndb_text_search_key *key)
+static bool ndb_unpack_text_search_key(unsigned char *p, int len,
+				       struct ndb_text_search_key *key)
 {
-	struct cursor c;
-	make_cursor(p, p + len, &c);
+	struct rcur rcur = rcur_forbuf(p, len);
 
-	if (!ndb_unpack_text_search_key_noteid(&c, &key->note_id))
-		return 0;
-
-	if (!ndb_unpack_text_search_key_string(&c, &key->str, &key->str_len))
-		return 0;
-
-	return ndb_unpack_remaining_text_search_key(&c, key);
+	key->note_id = ndb_unpack_text_search_key_noteid(&rcur);
+	key->str = ndb_unpack_text_search_key_string(&rcur, &key->str_len);
+	return ndb_unpack_remaining_text_search_key(&rcur, key);
 }
 
 // Copies only lowercase characters to the destination string and fills the rest with null bytes.
@@ -3367,13 +3341,11 @@ static int ndb_text_search_next_word(MDB_cursor *cursor, MDB_cursor_op op,
 	struct ndb_text_search_result *result,
 	MDB_cursor_op order_op)
 {
-	struct cursor key_cursor;
+	struct rcur key_cursor;
 	//struct ndb_text_search_key search_key;
 	MDB_val v;
 	int retries;
 	retries = -1;
-
-	make_cursor(k->mv_data, k->mv_data + k->mv_size, &key_cursor);
 
 	// When op is MDB_SET_RANGE, this initializes the search. Position
 	// the cursor at the next key greater than or equal to the specified
@@ -3402,9 +3374,10 @@ retry:
 	printf("\n");
 	*/
 
-	make_cursor(k->mv_data, k->mv_data + k->mv_size, &key_cursor);
+	key_cursor = rcur_forbuf(k->mv_data, k->mv_size);
 
-	if (unlikely(!ndb_unpack_text_search_key_noteid(&key_cursor, &result->key.note_id))) {
+	result->key.note_id = ndb_unpack_text_search_key_noteid(&key_cursor);
+	if (unlikely(!result->key.note_id)) {
 		fprintf(stderr, "UNUSUAL: failed to unpack text search key note_id\n");
 		return 0;
 	}
@@ -3422,14 +3395,12 @@ retry:
 	// unpack just the string to check the prefix. We don't
 	// need to unpack the entire key if the prefix doesn't
 	// match
-	if (!ndb_unpack_text_search_key_string(&key_cursor,
-					       &result->key.str,
-					       &result->key.str_len)) {
-		// this should never happen
-		fprintf(stderr, "UNUSUAL: failed to unpack text search key string\n");
+	result->key.str = ndb_unpack_text_search_key_string(&key_cursor,
+							    &result->key.str_len);
+	if (unlikely(!result->key.str)) {
+		fprintf(stderr, "UNUSUAL: failed to unpack text search key note_id\n");
 		return 0;
 	}
-
 	if (!ndb_prefix_matches(result, search_word)) {
 		/*
 		printf("result prefix '%.*s' didn't match search word '%.*s'\n",

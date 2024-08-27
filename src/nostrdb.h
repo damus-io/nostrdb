@@ -294,7 +294,7 @@ struct ndb_stat {
 // see `ndb_make_text_search_key` for how the packed version is constructed
 struct ndb_text_search_key
 {
-	int str_len;
+	size_t str_len;
 	const char *str;
 	uint64_t timestamp;
 	uint64_t note_id;
