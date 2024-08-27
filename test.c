@@ -1235,22 +1235,22 @@ static void test_queue_init_pop_push() {
 
 	// Push and Pop
 	data = 5;
-	assert(prot_queue_push(&q, &data) == 1);
+	assert(prot_queue_try_push(&q, &data) == true);
 	prot_queue_pop(&q, &data);
 	assert(data == 5);
 
 	// Push to full, and then fail to push
 	for (int i = 0; i < TEST_BUF_SIZE; i++) {
-		assert(prot_queue_push(&q, &i) == 1);
+		assert(prot_queue_try_push(&q, &i) == true);
 	}
-//	assert(prot_queue_push(&q, &data) == 0);  // Should fail as queue is full
+	assert(prot_queue_try_push(&q, &data) == false);  // Should fail as queue is full
 
 	// Pop to empty, and then fail to pop
 	for (int i = 0; i < TEST_BUF_SIZE; i++) {
-		assert(prot_queue_try_pop_all(&q, &data, 1) == 1);
+		assert(prot_queue_try_pop_many(&q, &data, 1) == 1);
 		assert(data == i);
 	}
-	assert(prot_queue_try_pop_all(&q, &data, 1) == 0);  // Should fail as queue is empty
+	assert(prot_queue_try_pop_many(&q, &data, 1) == 0);  // Should fail as queue is empty
 }
 
 // This function will be used by threads to test thread safety.
@@ -1285,7 +1285,7 @@ static void test_queue_thread_safety() {
 
 	// After all operations, the queue should be empty
 	int data;
-	assert(prot_queue_try_pop_all(&q, &data, 1) == 0);
+	assert(prot_queue_try_pop_many(&q, &data, 1) == 0);
 }
 
 static void test_queue_boundary_conditions() {
@@ -1298,35 +1298,35 @@ static void test_queue_boundary_conditions() {
 
     // Push to full
     for (int i = 0; i < TEST_BUF_SIZE; i++) {
-        assert(prot_queue_push(&q, &i) == 1);
+        assert(prot_queue_try_push(&q, &i) == 1);
     }
 
     // Try to push to a full queue
     int old_head = q.head;
     int old_tail = q.tail;
-    int old_count = q.count;
-//    assert(prot_queue_push(&q, &data) == 0);
+    int old_bytes = q.bytes;
+    assert(prot_queue_try_push(&q, &data) == 0);
     
     // Assert the queue's state has not changed
     assert(old_head == q.head);
     assert(old_tail == q.tail);
-    assert(old_count == q.count);
+    assert(old_bytes == q.bytes);
 
     // Pop to empty
     for (int i = 0; i < TEST_BUF_SIZE; i++) {
-        assert(prot_queue_try_pop_all(&q, &data, 1) == 1);
+        assert(prot_queue_try_pop_many(&q, &data, 1) == 1);
     }
 
     // Try to pop from an empty queue
     old_head = q.head;
     old_tail = q.tail;
-    old_count = q.count;
-    assert(prot_queue_try_pop_all(&q, &data, 1) == 0);
+    old_bytes = q.bytes;
+    assert(prot_queue_try_pop_many(&q, &data, 1) == 0);
     
     // Assert the queue's state has not changed
     assert(old_head == q.head);
     assert(old_tail == q.tail);
-    assert(old_count == q.count);
+    assert(old_bytes == q.bytes);
 }
 
 static void test_fast_strchr()

@@ -1,153 +1,125 @@
 #include "protected_queue.h"
 
-/* 
- * Push an element onto the queue.
- * Params:
- * q    - Pointer to the queue.
- * data - Pointer to the data element to be pushed.
- *
- * Blocks if no space is available.
- */
-int prot_queue_push(struct prot_queue* q, void *data)
+static void copy_bytes_in(struct prot_queue *q,
+			  const void *src,
+			  size_t bytes)
 {
-	int cap;
+	/* If it wraps, we do it in two parts */
+	if (unlikely(q->tail + bytes > q->buflen)) {
+		size_t part1 = q->buflen - q->tail;
+		memcpy(q->buf + q->tail, src, part1);
+		q->tail = 0;
+		q->bytes += part1;
+		src = (const char *)src + part1;
+		bytes -= part1;
+	}
+	memcpy(q->buf + q->tail, src, bytes);
+	q->tail += bytes;
+	q->bytes += bytes;
+}
 
+static void copy_bytes_out(struct prot_queue *q,
+			   void *dst,
+			   size_t bytes)
+{
+	/* If it wraps, we do it in two parts */
+	if (unlikely(q->head + bytes > q->buflen)) {
+		size_t part1 = q->buflen - q->head;
+		memcpy(dst, q->buf + q->head, part1);
+		q->head = 0;
+		q->bytes -= part1;
+		dst = (char *)dst + part1;
+		bytes -= part1;
+	}
+	memcpy(dst, q->buf + q->head, bytes);
+	q->head += bytes;
+	q->bytes -= bytes;
+}
+
+static bool push(struct prot_queue* q, const void *data, size_t len,
+		 bool block)
+{
 	pthread_mutex_lock(&q->mutex);
 
 	// Wait until there's room.
-	while ((cap = prot_queue_capacity(q)) == q->count)
+	while (q->bytes + len > q->buflen) {
+		if (!block) {
+			pthread_mutex_unlock(&q->mutex);
+			return false;
+		}
 		pthread_cond_wait(&q->cond_removed, &q->mutex);
+	}
 
-	memcpy(&q->buf[q->tail * q->elem_size], data, q->elem_size);
-	q->tail = (q->tail + 1) % cap;
-	q->count++;
+	copy_bytes_in(q, data, len);
 
 	pthread_cond_signal(&q->cond_added);
 	pthread_mutex_unlock(&q->mutex);
-	return 1;
+	return true;
 }
 
-/*
- * Push multiple elements onto the queue.
- * Params:
- * q      - Pointer to the queue.
- * data   - Pointer to the data elements to be pushed.
- * count  - Number of elements to push.
- *
- * Returns the number of elements successfully pushed, 0 if the queue is full or if there is not enough contiguous space.
- */
-int prot_queue_push_all(struct prot_queue* q, void *data, int count)
+static size_t pull(struct prot_queue* q,
+		   void *data,
+		   size_t min_len, size_t max_len,
+		   bool block)
 {
-	int cap;
-	int first_copy_count, second_copy_count;
-
-	cap = prot_queue_capacity(q);
-	assert(count <= cap);
+	size_t len;
 	pthread_mutex_lock(&q->mutex);
 
-	while (q->count + count > cap)
-		pthread_cond_wait(&q->cond_removed, &q->mutex);
-
-	first_copy_count = min(count, cap - q->tail); // Elements until the end of the buffer
-	second_copy_count = count - first_copy_count; // Remaining elements if wrap around
-
-	memcpy(&q->buf[q->tail * q->elem_size], data, first_copy_count * q->elem_size);
-	q->tail = (q->tail + first_copy_count) % cap;
-
-	if (second_copy_count > 0) {
-		// If there is a wrap around, copy the remaining elements
-		memcpy(&q->buf[q->tail * q->elem_size], (char *)data + first_copy_count * q->elem_size, second_copy_count * q->elem_size);
-		q->tail = (q->tail + second_copy_count) % cap;
-	}
-
-	q->count += count;
-
-	pthread_cond_signal(&q->cond_added); // Signal a waiting thread
-	pthread_mutex_unlock(&q->mutex);
-
-	return count;
-}
-
-/* 
- * Try to pop an element from the queue without blocking.
- * Params:
- * q    - Pointer to the queue.
- * data - Pointer to where the popped data will be stored.
- * Returns 1 if successful, 0 if the queue is empty.
- */
-int prot_queue_try_pop_all(struct prot_queue *q, void *data, int max_items) {
-	int items_to_pop, items_until_end;
-
-	pthread_mutex_lock(&q->mutex);
-
-	if (q->count == 0) {
-		pthread_mutex_unlock(&q->mutex);
-		return 0;
-	}
-
-	items_until_end = (q->buflen - q->head * q->elem_size) / q->elem_size;
-	items_to_pop = min(q->count, max_items);
-	items_to_pop = min(items_to_pop, items_until_end);
-
-	memcpy(data, &q->buf[q->head * q->elem_size], items_to_pop * q->elem_size);
-	q->head = (q->head + items_to_pop) % prot_queue_capacity(q);
-	q->count -= items_to_pop;
-
-	pthread_cond_signal(&q->cond_removed); // Signal a waiting thread
-	pthread_mutex_unlock(&q->mutex);
-	return items_to_pop;
-}
-
-/* 
- * Wait until we have elements, and then pop multiple elements from the queue
- * up to the specified maximum.
- *
- * Params:
- * q		 - Pointer to the queue.
- * buffer	 - Pointer to the buffer where popped data will be stored.
- * max_items - Maximum number of items to pop from the queue.
- * Returns the actual number of items popped.
- */
-int prot_queue_pop_all(struct prot_queue *q, void *dest, int max_items) {
-	pthread_mutex_lock(&q->mutex);
-
-	// Wait until there's at least one item to pop
-	while (q->count == 0) {
+	// Wait until there's enough contents.
+	while (q->bytes < min_len) {
+		if (!block)  {
+			pthread_mutex_unlock(&q->mutex);
+			return false;
+		}
 		pthread_cond_wait(&q->cond_added, &q->mutex);
 	}
 
-	int items_until_end = (q->buflen - q->head * q->elem_size) / q->elem_size;
-	int items_to_pop = min(q->count, max_items);
-	items_to_pop = min(items_to_pop, items_until_end);
-
-	memcpy(dest, &q->buf[q->head * q->elem_size], items_to_pop * q->elem_size);
-	q->head = (q->head + items_to_pop) % prot_queue_capacity(q);
-	q->count -= items_to_pop;
+	len = q->bytes;
+	if (len > max_len)
+		len = max_len;
+	copy_bytes_out(q, data, len);
 
 	pthread_cond_signal(&q->cond_removed);
 	pthread_mutex_unlock(&q->mutex);
-
-	return items_to_pop;
+	return len;
 }
 
-/* 
- * Pop an element from the queue. Blocks if the queue is empty.
- * Params:
- * q    - Pointer to the queue.
- * data - Pointer to where the popped data will be stored.
- */
-void prot_queue_pop(struct prot_queue *q, void *data) {
-	pthread_mutex_lock(&q->mutex);
+/* Push an element onto the queue.  Blocks if it needs to */
+void prot_queue_push(struct prot_queue* q, const void *data)
+{
+	prot_queue_push_many(q, data, 1);
+}
 
-	while (q->count == 0)
-		pthread_cond_wait(&q->cond_added, &q->mutex);
+/* Push elements onto the queue.  Blocks if it needs to */
+void prot_queue_push_many(struct prot_queue* q,
+			  const void *data,
+			  size_t count)
+{
+	push(q, data, count * q->elem_size, true);
+}
 
-	memcpy(data, &q->buf[q->head * q->elem_size], q->elem_size);
-	q->head = (q->head + 1) % prot_queue_capacity(q);
-	q->count--;
+/* Push an element onto the queue.  Returns false if it would block. */
+bool prot_queue_try_push(struct prot_queue* q, const void *data)
+{
+	return push(q, data, q->elem_size, false);
+}
 
-	pthread_cond_signal(&q->cond_removed);
-	pthread_mutex_unlock(&q->mutex);
+size_t prot_queue_try_pop_many(struct prot_queue *q, void *data,
+			       size_t max_items)
+{
+	return pull(q, data, q->elem_size, max_items * q->elem_size, false)
+		/ q->elem_size;
+}
+
+size_t prot_queue_pop_many(struct prot_queue *q, void *data, size_t max_items)
+{
+	return pull(q, data, q->elem_size, max_items * q->elem_size, true)
+		/ q->elem_size;
+}
+
+void prot_queue_pop(struct prot_queue *q, void *data)
+{
+	pull(q, data, q->elem_size, q->elem_size, true);
 }
 
 /* 

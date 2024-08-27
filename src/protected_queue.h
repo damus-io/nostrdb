@@ -1,5 +1,5 @@
 /*
- *    This header file provides a thread-safe queue implementation for generic
+v *    This header file provides a thread-safe queue implementation for generic
  *    data elements. It uses POSIX threads (pthreads) to ensure thread safety.
  *    The queue allows for pushing and popping elements, with the ability to
  *    block or non-block on pop operations. Users are responsible for providing
@@ -24,13 +24,17 @@
  * generic data elements.
  */
 struct prot_queue {
+	/* These don't change */
 	unsigned char *buf;
 	size_t buflen;
-
-	int head;
-	int tail;
-	int count;
 	int elem_size;
+
+	/* These do: you must hold mutex!  Offsets in *bytes* */
+	size_t head;
+	size_t tail;
+	/* This seems redundant, but it isn't: head == tail means either
+	 * full, or empty! */
+	size_t bytes;
 
 	pthread_mutex_t mutex;
 	/* Added */
@@ -52,13 +56,12 @@ struct prot_queue {
 static inline int prot_queue_init(struct prot_queue* q, void* buf,
 				  size_t buflen, int elem_size)
 {
-	// buffer elements must fit nicely in the buffer
-	if (buflen == 0 || buflen % elem_size != 0)
-		assert(!"queue elements don't fit nicely");
+	if (buflen < elem_size)
+		assert(!"What is this, a queue for ants?");
 
 	q->head = 0;
 	q->tail = 0;
-	q->count = 0;
+	q->bytes = 0;
 	q->buf = buf;
 	q->buflen = buflen;
 	q->elem_size = elem_size;
@@ -70,35 +73,23 @@ static inline int prot_queue_init(struct prot_queue* q, void* buf,
 	return 1;
 }
 
-/* 
- * Return the capacity of the queue.
- * q    - Pointer to the queue.
- */
-static inline size_t prot_queue_capacity(struct prot_queue *q) {
-	return q->buflen / q->elem_size;
-}
+/* Push an element onto the queue.  Blocks if it needs to */
+void prot_queue_push(struct prot_queue* q, const void *data);
 
-int prot_queue_push(struct prot_queue* q, void *data);
+/* Push elements onto the queue.  Blocks if it needs to */
+void prot_queue_push_many(struct prot_queue* q, const void *data, size_t count);
 
-/*
- * Push multiple elements onto the queue.
- * Params:
- * q      - Pointer to the queue.
- * data   - Pointer to the data elements to be pushed.
- * count  - Number of elements to push.
- *
- * Returns the number of elements successfully pushed, 0 if the queue is full or if there is not enough contiguous space.
- */
-int prot_queue_push_all(struct prot_queue* q, void *data, int count);
+/* Push an element onto the queue.  Returns false if it would block. */
+bool prot_queue_try_push(struct prot_queue* q, const void *data);
 
 /* 
  * Try to pop an element from the queue without blocking.
  * Params:
  * q    - Pointer to the queue.
  * data - Pointer to where the popped data will be stored.
- * Returns 1 if successful, 0 if the queue is empty.
+ * Returns number popped (<= max_items)
  */
-int prot_queue_try_pop_all(struct prot_queue *q, void *data, int max_items);
+size_t prot_queue_try_pop_many(struct prot_queue *q, void *data, size_t max_items);
 
 /* 
  * Wait until we have elements, and then pop multiple elements from the queue
@@ -108,9 +99,9 @@ int prot_queue_try_pop_all(struct prot_queue *q, void *data, int max_items);
  * q		 - Pointer to the queue.
  * buffer	 - Pointer to the buffer where popped data will be stored.
  * max_items - Maximum number of items to pop from the queue.
- * Returns the actual number of items popped.
+ * Returns the actual number of items popped (> 0).
  */
-int prot_queue_pop_all(struct prot_queue *q, void *dest, int max_items);
+size_t prot_queue_pop_many(struct prot_queue *q, void *data, size_t max_items);
 
 /* 
  * Pop an element from the queue. Blocks if the queue is empty.

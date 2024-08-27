@@ -1560,7 +1560,8 @@ struct ndb_writer_msg {
 static inline int ndb_writer_queue_msg(struct ndb_writer *writer,
 				       struct ndb_writer_msg *msg)
 {
-	return prot_queue_push(&writer->inbox, msg);
+	prot_queue_push(&writer->inbox, msg);
+	return 1;
 }
 
 static int ndb_migrate_utf8_profile_names(struct ndb *ndb)
@@ -1670,7 +1671,8 @@ static inline int ndb_writer_queue_msgs(struct ndb_writer *writer,
 					struct ndb_writer_msg *msgs,
 					int num_msgs)
 {
-	return prot_queue_push_all(&writer->inbox, msgs, num_msgs);
+	prot_queue_push_many(&writer->inbox, msgs, num_msgs);
+	return 1;
 }
 
 static int ndb_writer_queue_note(struct ndb_writer *writer,
@@ -1682,7 +1684,8 @@ static int ndb_writer_queue_note(struct ndb_writer *writer,
 	msg.note.note = note;
 	msg.note.note_len = note_len;
 
-	return prot_queue_push(&writer->inbox, &msg);
+	prot_queue_push(&writer->inbox, &msg);
+	return 1;
 }
 
 static void ndb_writer_last_profile_fetch(struct ndb_txn *txn,
@@ -3797,11 +3800,8 @@ static void ndb_notify_subscriptions(struct ndb_monitor *monitor,
 			if (ndb_filter_group_matches(&sub->group, note)) {
 				ndb_debug("pushing note\n");
 
-				if (!prot_queue_push(&sub->inbox, &written->note_id)) {
-					ndb_debug("couldn't push note to subscriber");
-				} else {
-					pushed++;
-				}
+				prot_queue_push(&sub->inbox, &written->note_id);
+				pushed++;
 			} else {
 				ndb_debug("not pushing note\n");
 			}
@@ -3838,7 +3838,7 @@ static void *ndb_writer_thread(void *data)
 	while (!done) {
 		txn.mdb_txn = NULL;
 		num_notes = 0;
-		popped = prot_queue_pop_all(&writer->inbox, msgs, THREAD_QUEUE_BATCH);
+		popped = prot_queue_pop_many(&writer->inbox, msgs, THREAD_QUEUE_BATCH);
 		ndb_debug("writer popped %d items\n", popped);
 
 		any_note = 0;
@@ -3969,7 +3969,7 @@ static void *ndb_ingester_thread(void *data)
 		to_write = 0;
 		any_event = 0;
 
-		popped = prot_queue_pop_all(&thread->inbox, msgs, THREAD_QUEUE_BATCH);
+		popped = prot_queue_pop_many(&thread->inbox, msgs, THREAD_QUEUE_BATCH);
 		ndb_debug("ingester popped %d items\n", popped);
 
 		for (i = 0; i < popped; i++) {
@@ -4081,7 +4081,7 @@ static int ndb_writer_destroy(struct ndb_writer *writer)
 
 	// kill thread
 	msg.type = NDB_WRITER_QUIT;
-	if (!prot_queue_push(&writer->inbox, &msg)) {
+	if (!prot_queue_try_push(&writer->inbox, &msg)) {
 		// queue is too full to push quit message. just kill it.
 		pthread_exit(&writer->thread_id);
 	} else {
@@ -6414,7 +6414,7 @@ int ndb_poll_for_notes(struct ndb *ndb, uint64_t subid, uint64_t *note_ids,
 	if (!(sub = ndb_find_subscription(ndb, subid, NULL)))
 		return 0;
 
-	return prot_queue_try_pop_all(&sub->inbox, note_ids, note_id_capacity);
+	return prot_queue_try_pop_many(&sub->inbox, note_ids, note_id_capacity);
 }
 
 int ndb_wait_for_notes(struct ndb *ndb, uint64_t subid, uint64_t *note_ids,
@@ -6429,7 +6429,7 @@ int ndb_wait_for_notes(struct ndb *ndb, uint64_t subid, uint64_t *note_ids,
 	if (!(sub = ndb_find_subscription(ndb, subid, NULL)))
 		return 0;
 
-	return prot_queue_pop_all(&sub->inbox, note_ids, note_id_capacity);
+	return prot_queue_pop_many(&sub->inbox, note_ids, note_id_capacity);
 }
 
 int ndb_unsubscribe(struct ndb *ndb, uint64_t subid)

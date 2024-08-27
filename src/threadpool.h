@@ -73,14 +73,16 @@ static inline struct thread *threadpool_next_thread(struct threadpool *tp)
 static inline int threadpool_dispatch(struct threadpool *tp, void *msg)
 {
 	struct thread *t = threadpool_next_thread(tp);
-	return prot_queue_push(&t->inbox, msg);
+	prot_queue_push(&t->inbox, msg);
+	return 1;
 }
 
 static inline int threadpool_dispatch_all(struct threadpool *tp, void *msgs,
 					  int num_msgs)
 {
 	struct thread *t = threadpool_next_thread(tp);
-	return prot_queue_push_all(&t->inbox, msgs, num_msgs);
+	prot_queue_push_many(&t->inbox, msgs, num_msgs);
+	return 1;
 }
 
 static inline void threadpool_destroy(struct threadpool *tp)
@@ -89,7 +91,7 @@ static inline void threadpool_destroy(struct threadpool *tp)
 
 	for (int i = 0; i < tp->num_threads; i++) {
 		t = &tp->pool[i];
-		if (!prot_queue_push(&t->inbox, tp->quit_msg)) {
+		if (!prot_queue_try_push(&t->inbox, tp->quit_msg)) {
 			pthread_exit(&t->thread_id);
 		} else {
 			pthread_join(t->thread_id, NULL);
