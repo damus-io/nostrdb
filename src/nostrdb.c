@@ -6480,7 +6480,7 @@ uint64_t ndb_subscribe(struct ndb *ndb, struct ndb_filter *filters, int num_filt
 		return 0;
 
 	// 500k ought to be enough for anyone
-	buflen = sizeof(uint64_t) * 65536;
+	buflen = sizeof(uint64_t) * 1;
 	buf = malloc(buflen);
 
 	if (!prot_queue_init(&sub->inbox, buf, buflen, sizeof(uint64_t))) {

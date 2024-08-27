@@ -33,7 +33,10 @@ struct prot_queue {
 	int elem_size;
 
 	pthread_mutex_t mutex;
-	pthread_cond_t cond;
+	/* Added */
+	pthread_cond_t cond_added;
+	/* Removed */
+	pthread_cond_t cond_removed;
 };
 
 
@@ -61,7 +64,8 @@ static inline int prot_queue_init(struct prot_queue* q, void* buf,
 	q->elem_size = elem_size;
 
 	pthread_mutex_init(&q->mutex, NULL);
-	pthread_cond_init(&q->cond, NULL);
+	pthread_cond_init(&q->cond_added, NULL);
+	pthread_cond_init(&q->cond_removed, NULL);
 
 	return 1;
 }
@@ -80,7 +84,7 @@ static inline size_t prot_queue_capacity(struct prot_queue *q) {
  * q    - Pointer to the queue.
  * data - Pointer to the data element to be pushed.
  *
- * Returns 1 if successful, 0 if the queue is full.
+ * Blocks if no space is available.
  */
 static int prot_queue_push(struct prot_queue* q, void *data)
 {
@@ -88,20 +92,16 @@ static int prot_queue_push(struct prot_queue* q, void *data)
 
 	pthread_mutex_lock(&q->mutex);
 
-	cap = prot_queue_capacity(q);
-	if (q->count == cap) {
-		// only signal if the push was sucessful
-		pthread_mutex_unlock(&q->mutex);
-		return 0;
-	}
+	// Wait until there's room.
+	while ((cap = prot_queue_capacity(q)) == q->count)
+		pthread_cond_wait(&q->cond_removed, &q->mutex);
 
 	memcpy(&q->buf[q->tail * q->elem_size], data, q->elem_size);
 	q->tail = (q->tail + 1) % cap;
 	q->count++;
 
-	pthread_cond_signal(&q->cond);
+	pthread_cond_signal(&q->cond_added);
 	pthread_mutex_unlock(&q->mutex);
-
 	return 1;
 }
 
@@ -119,13 +119,12 @@ static int prot_queue_push_all(struct prot_queue* q, void *data, int count)
 	int cap;
 	int first_copy_count, second_copy_count;
 
+	cap = prot_queue_capacity(q);
+	assert(count <= cap);
 	pthread_mutex_lock(&q->mutex);
 
-	cap = prot_queue_capacity(q);
-	if (q->count + count > cap) {
-		pthread_mutex_unlock(&q->mutex);
-		return 0; // Return failure if the queue is full
-	}
+	while (q->count + count > cap)
+		pthread_cond_wait(&q->cond_removed, &q->mutex);
 
 	first_copy_count = min(count, cap - q->tail); // Elements until the end of the buffer
 	second_copy_count = count - first_copy_count; // Remaining elements if wrap around
@@ -141,7 +140,7 @@ static int prot_queue_push_all(struct prot_queue* q, void *data, int count)
 
 	q->count += count;
 
-	pthread_cond_signal(&q->cond); // Signal a waiting thread
+	pthread_cond_signal(&q->cond_added); // Signal a waiting thread
 	pthread_mutex_unlock(&q->mutex);
 
 	return count;
@@ -172,6 +171,7 @@ static inline int prot_queue_try_pop_all(struct prot_queue *q, void *data, int m
 	q->head = (q->head + items_to_pop) % prot_queue_capacity(q);
 	q->count -= items_to_pop;
 
+	pthread_cond_signal(&q->cond_removed); // Signal a waiting thread
 	pthread_mutex_unlock(&q->mutex);
 	return items_to_pop;
 }
@@ -191,7 +191,7 @@ static int prot_queue_pop_all(struct prot_queue *q, void *dest, int max_items) {
 
 	// Wait until there's at least one item to pop
 	while (q->count == 0) {
-		pthread_cond_wait(&q->cond, &q->mutex);
+		pthread_cond_wait(&q->cond_added, &q->mutex);
 	}
 
 	int items_until_end = (q->buflen - q->head * q->elem_size) / q->elem_size;
@@ -202,6 +202,7 @@ static int prot_queue_pop_all(struct prot_queue *q, void *dest, int max_items) {
 	q->head = (q->head + items_to_pop) % prot_queue_capacity(q);
 	q->count -= items_to_pop;
 
+	pthread_cond_signal(&q->cond_removed);
 	pthread_mutex_unlock(&q->mutex);
 
 	return items_to_pop;
@@ -217,12 +218,13 @@ static inline void prot_queue_pop(struct prot_queue *q, void *data) {
 	pthread_mutex_lock(&q->mutex);
 
 	while (q->count == 0)
-		pthread_cond_wait(&q->cond, &q->mutex);
+		pthread_cond_wait(&q->cond_added, &q->mutex);
 
 	memcpy(data, &q->buf[q->head * q->elem_size], q->elem_size);
 	q->head = (q->head + 1) % prot_queue_capacity(q);
 	q->count--;
 
+	pthread_cond_signal(&q->cond_removed);
 	pthread_mutex_unlock(&q->mutex);
 }
 
@@ -233,7 +235,8 @@ static inline void prot_queue_pop(struct prot_queue *q, void *data) {
  */
 static inline void prot_queue_destroy(struct prot_queue* q) {
 	pthread_mutex_destroy(&q->mutex);
-	pthread_cond_destroy(&q->cond);
+	pthread_cond_destroy(&q->cond_added);
+	pthread_cond_destroy(&q->cond_removed);
 }
 
 #endif // PROT_QUEUE_H
