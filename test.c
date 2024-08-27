@@ -1665,6 +1665,8 @@ static void test_weird_note_corruption() {
 }
 
 int main(int argc, const char *argv[]) {
+	// GCC's warn_unused_result is fascist bullshit.
+	if (system("rm -rf testdata/db/*.mdb"));
 	test_parse_filter_json();
 	test_filter_json();
 	test_bech32_parsing();
