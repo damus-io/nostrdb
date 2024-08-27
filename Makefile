@@ -2,10 +2,10 @@ CFLAGS = -Wall -Wno-misleading-indentation -Wno-unused-function -Werror -O2 -g -
 BOLT11_HDRS := src/bolt11/amount.h src/bolt11/bech32.h src/bolt11/bech32_util.h src/bolt11/bolt11.h src/bolt11/debug.h src/bolt11/error.h src/bolt11/hash_u5.h src/bolt11/node_id.h src/bolt11/overflows.h
 CCAN_SRCS := ccan/ccan/utf8/utf8.c ccan/ccan/tal/tal.c ccan/ccan/tal/str/str.c ccan/ccan/list/list.c ccan/ccan/mem/mem.c ccan/ccan/crypto/sha256/sha256.c ccan/ccan/take/take.c
 CCAN_HDRS := ccan/ccan/utf8/utf8.h ccan/ccan/container_of/container_of.h ccan/ccan/check_type/check_type.h ccan/ccan/str/str.h ccan/ccan/tal/str/str.h ccan/ccan/tal/tal.h ccan/ccan/list/list.h ccan/ccan/structeq/structeq.h ccan/ccan/typesafe_cb/typesafe_cb.h ccan/ccan/short_types/short_types.h ccan/ccan/mem/mem.h ccan/ccan/likely/likely.h ccan/ccan/alignof/alignof.h ccan/ccan/crypto/sha256/sha256.h ccan/ccan/array_size/array_size.h ccan/ccan/endian/endian.h ccan/ccan/take/take.h ccan/ccan/build_assert/build_assert.h ccan/ccan/cppmagic/cppmagic.h
-HEADERS = deps/lmdb/lmdb.h deps/secp256k1/include/secp256k1.h src/nostrdb.h src/cursor.h src/hex.h src/jsmn.h src/config.h src/random.h src/memchr.h src/cpu.h src/nostr_bech32.h src/block.h src/str_block.h $(C_BINDINGS) $(CCAN_HDRS) $(BOLT11_HDRS)
+HEADERS = deps/lmdb/lmdb.h deps/secp256k1/include/secp256k1.h src/nostrdb.h src/cursor.h src/hex.h src/jsmn.h src/config.h src/random.h src/memchr.h src/cpu.h src/nostr_bech32.h src/block.h src/str_block.h src/rcur.h $(C_BINDINGS) $(CCAN_HDRS) $(BOLT11_HDRS)
 FLATCC_SRCS=deps/flatcc/src/runtime/json_parser.c deps/flatcc/src/runtime/verifier.c deps/flatcc/src/runtime/builder.c deps/flatcc/src/runtime/emitter.c deps/flatcc/src/runtime/refmap.c
 BOLT11_SRCS = src/bolt11/bolt11.c src/bolt11/bech32.c src/bolt11/amount.c src/bolt11/hash_u5.c
-SRCS = src/nostrdb.c src/invoice.c src/nostr_bech32.c src/content_parser.c src/block.c $(BOLT11_SRCS) $(FLATCC_SRCS) $(CCAN_SRCS)
+SRCS = src/nostrdb.c src/invoice.c src/nostr_bech32.c src/content_parser.c src/block.c src/rcur.c $(BOLT11_SRCS) $(FLATCC_SRCS) $(CCAN_SRCS)
 LDS = $(OBJS) $(ARS) 
 OBJS = $(SRCS:.c=.o)
 DEPS = $(OBJS) $(HEADERS) $(ARS)
