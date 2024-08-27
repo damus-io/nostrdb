@@ -323,28 +323,26 @@ static int consume_url_fragment(struct cursor *cur)
 	return consume_until_end_url(cur, 1);
 }
 
-static int consume_url_path(struct cursor *cur)
+static void consume_url_path(struct cursor *cur)
 {
 	int c;
 
 	if ((c = peek_char(cur, 0)) < 0)
-		return 1;
+		return;
 
 	if (c != '/') {
-		return 1;
+		return;
 	}
 
 	while (cur->p < cur->end) {
 		c = *cur->p;
 
 		if (c == '?' || c == '#' || is_final_url_char(cur->p, cur->end)) {
-			return 1;
+			return;
 		}
 
 		cur->p++;
 	}
-
-	return 1;
 }
 
 static int consume_url_host(struct cursor *cur)
@@ -412,10 +410,7 @@ static int parse_url(struct cursor *cur, struct ndb_block *block) {
 	// skip leading /
 	cursor_skip(&path_cur, 1);
 
-	if (!consume_url_path(cur)) {
-		cur->p = start;
-		return 0;
-	}
+	consume_url_path(cur);
 
 	if (!consume_url_fragment(cur)) {
 		cur->p = start;
