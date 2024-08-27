@@ -17,19 +17,16 @@ const void *rcur_pull(struct rcur *rcur, size_t len)
 	rcur_fail(rcur);
 	return NULL;
     }
-    rcur->p += len;
-    return rcur->p - len;
+    rcur->cur += len;
+    rcur->len -= len;
+    return p;
 }
 
 /* Access the remaining bytes.  Returns NULL and *len=0 if invalid. */
 const void *rcur_peek_remainder(const struct rcur *rcur, size_t *len)
 {
-    if (!rcur_valid(rcur)) {
-	*len = 0;
-	return NULL;
-    }
-    *len = rcur->end - rcur->p;
-    return rcur->p;
+    *len = rcur->len;
+    return rcur->cur;
 }
 
 bool rcur_copy(struct rcur *rcur, void *dst, size_t len)
@@ -247,7 +244,7 @@ bool rcur_trim_if_char(struct rcur *rcur, char c)
 
         p = rcur_peek_remainder(rcur, &len);
         if (len > 0 && p[len-1] == c) {
-                rcur->p--;
+                rcur->len--;
                 return true;
         }
         return false;

@@ -13,20 +13,20 @@
 #include <inttypes.h>
 
 struct rcur {
-    const unsigned char *start, *p, *end;
+    const unsigned char *cur;
+    size_t len;
 };
 
 /* Is this valid?  Pulling too much (or invalid values) sets this true */
 static inline bool rcur_valid(const struct rcur *rcur)
 {
-    return unlikely(rcur->p != NULL);
+    return unlikely(rcur->cur != NULL);
 }
 
+/* How many bytes left to pull?  0 if invalid */
 static inline size_t rcur_bytes_remaining(struct rcur rcur)
 {
-    if (!rcur_valid(&rcur))
-        return 0;
-    return rcur.end - rcur.p;
+    return rcur.len;
 }
 
 /* Pull @len bytes from rcur, if space available.
@@ -49,7 +49,8 @@ const void *rcur_peek(const struct rcur *rcur, size_t len);
 /* Mark this rcur invalid: return false for convenience. */
 static inline bool COLD rcur_fail(struct rcur *rcur)
 {
-    rcur->p = NULL;
+    rcur->cur = NULL;
+    rcur->len = 0;
     return false;
 }
 
@@ -57,9 +58,9 @@ static inline bool COLD rcur_fail(struct rcur *rcur)
 static inline struct rcur rcur_forbuf(const void *buf, size_t len)
 {
     struct rcur rcur;
-    rcur.start = buf;
-    rcur.end = buf + len;
-    rcur.p = buf;
+    rcur.cur = buf;
+    rcur.len = len;
+
     return rcur;
 }
 
@@ -67,9 +68,9 @@ static inline struct rcur rcur_forbuf(const void *buf, size_t len)
 static inline struct rcur rcur_forstr(const char *str)
 {
     struct rcur rcur;
-    rcur.start = (const unsigned char *)str;
-    rcur.end = rcur.start + strlen(str);
-    rcur.p = rcur.start;
+    rcur.cur = (const unsigned char *)str;
+    rcur.len = strlen(str);
+
     return rcur;
 }
 
@@ -77,12 +78,13 @@ static inline struct rcur rcur_forstr(const char *str)
 static inline struct rcur rcur_pull_slice(struct rcur *rcur, size_t len)
 {
     struct rcur slice;
+    const unsigned char *p;
 
-    slice.start = slice.p = rcur_pull(rcur, len);
-    if (rcur_valid(&slice))
-	slice.end = slice.start + len;
+    p = rcur_pull(rcur, len);
+    if (likely(p))
+        slice = rcur_forbuf(p, len);
     else
-	slice.end = slice.start;
+        rcur_fail(&slice);
     return slice;
 }
 
@@ -91,11 +93,11 @@ static inline struct rcur rcur_between(const struct rcur *orig,
                                        const struct rcur *newer)
 {
     struct rcur rcur;
-    assert(newer->start == orig->start);
 
     if (rcur_valid(newer)) {
-        assert(newer->p >= orig->p);
-        rcur = rcur_forbuf(orig->p, newer->p - orig->p);
+        assert(newer->cur >= orig->cur);
+        assert(newer->cur + newer->len <= orig->cur + orig->len);
+        rcur = rcur_forbuf(orig->cur, newer->cur - orig->cur);
     } else {
         rcur_fail(&rcur);
     }
@@ -139,26 +141,4 @@ bool rcur_skip_if_match(struct rcur *rcur, const void *p, size_t len);
 /* Skpi over if this matches string (case insentive) */
 bool rcur_skip_if_str_anycase(struct rcur *rcur, const char *str);
 
-/* FIXME: shim code */
-static inline struct cursor cursor_from_rcur(const struct rcur *rcur)
-{
-	struct cursor cur;
-
-	cur.start = (unsigned char *)rcur->start;
-	cur.end = (unsigned char *)rcur->end;
-	cur.p = (unsigned char *)rcur->p;
-
-	return cur;
-}
-
-static inline struct rcur rcur_from_cursor(const struct cursor *cur)
-{
-	struct rcur rcur;
-
-	rcur.start = cur->start;
-	rcur.end = cur->end;
-	rcur.p = cur->p;
-
-	return rcur;
-}
 #endif /* JB55_RCUR_H */
