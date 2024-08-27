@@ -10,8 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "cursor.h"
-
 struct ndb_content_parser {
 	int bech32_strs;
 	struct cursor buffer;
@@ -112,10 +110,13 @@ static int push_bech32_mention(struct ndb_content_parser *p, struct ndb_str_bloc
 	size_t u5_out_len, u8_out_len;
 	static const int MAX_PREFIX = 8;
 	char prefix[9] = {0};
+	struct rcur strcur;
 
 	start = p->buffer.p;
 
-	if (!parse_nostr_bech32_type(bech32->str, &type))
+	strcur = rcur_forstr(bech32->str);
+	type = parse_nostr_bech32_type(&strcur);
+	if (!rcur_valid(&strcur))
 		goto fail;
 
 	// make sure to push the str block!
@@ -409,9 +410,8 @@ static bool parse_if_url(struct rcur *rcur,
 
 	// if we have a damus link, make it a mention
 	if (memeq(host, host_len, "damus.io", strlen("damus.io"))) {
-		struct cursor path_cur = cursor_from_rcur(&path_rcur);
-		if (parse_nostr_bech32_str(&path_cur, &type)) {
-			block->block.str.len = path_cur.p - path_cur.start;
+		if (parse_nostr_bech32_str(&path_rcur, &type)) {
+			block->block.str.len = path_rcur.p - path_rcur.start;
 			block->type = BLOCK_MENTION_BECH32;
 			return true;
 		}
@@ -454,7 +454,6 @@ static bool parse_if_mention_bech32(struct rcur *rcur, struct ndb_block *block)
 {
 	struct rcur bech32 = *rcur;
 	enum nostr_bech32_type type;
-	struct cursor cursor;
 
 	/* Ignore these */
 	rcur_skip_if_str_anycase(&bech32, "@");
@@ -462,14 +461,13 @@ static bool parse_if_mention_bech32(struct rcur *rcur, struct ndb_block *block)
 
 	block->block.str.str = (const char *)bech32.p;
 
-	cursor = cursor_from_rcur(&bech32);
-	if (!parse_nostr_bech32_str(&cursor, &type))
+	if (!parse_nostr_bech32_str(&bech32, &type))
 		return false;
 	
-	block->block.str.len = cursor.p - (unsigned char*)block->block.str.str;
+	block->block.str.len = bech32.p - (unsigned char*)block->block.str.str;
 	block->type = BLOCK_MENTION_BECH32;
 
-	*rcur = rcur_from_cursor(&cursor);
+	*rcur = bech32;
 	return true;
 }
 

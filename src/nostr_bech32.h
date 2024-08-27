@@ -11,17 +11,20 @@
 #include <stdio.h>
 #include "str_block.h"
 #include "nostrdb.h"
-#include "cursor.h"
 
-int parse_nostr_bech32_str(struct cursor *bech32, enum nostr_bech32_type *type);
-int parse_nostr_bech32_type(const char *prefix, enum nostr_bech32_type *type);
+struct rcur;
 
-int parse_nostr_bech32_buffer(struct cursor *cur, enum nostr_bech32_type type,
-			      struct nostr_bech32 *obj);
+bool parse_nostr_bech32_str(struct rcur *bech32, enum nostr_bech32_type *type);
 
-int parse_nostr_bech32(unsigned char *buf, int buflen,
-		       const char *bech32_str, size_t bech32_len,
-		       struct nostr_bech32 *obj);
+/* Check rcur_valid(typestr) to determine if it failed */
+enum nostr_bech32_type parse_nostr_bech32_type(struct rcur *typestr);
+
+bool parse_nostr_bech32_buffer(struct rcur *rcur, enum nostr_bech32_type type,
+			       struct nostr_bech32 *obj);
+
+bool parse_nostr_bech32(unsigned char *buf, int buflen,
+			const char *bech32_str, size_t bech32_len,
+			struct nostr_bech32 *obj);
 
 /*
 int parse_nostr_bech32(const char *bech32, size_t input_len,

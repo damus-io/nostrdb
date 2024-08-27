@@ -2,6 +2,7 @@
 
 #include "nostrdb.h"
 #include "block.h"
+#include "rcur.h"
 #include <stdlib.h>
 
 int push_str_block(struct cursor *buf, const char *content, struct ndb_str_block *block) {
@@ -36,7 +37,7 @@ static int pull_nostr_bech32_type(struct cursor *cur, enum nostr_bech32_type *ty
 static int pull_bech32_mention(const char *content, struct cursor *cur, struct ndb_mention_bech32_block *block) {
 	uint16_t size;
 	unsigned char *start;
-	struct cursor bech32;
+	struct rcur bech32;
 
 	if (!pull_str_block(cur, content, &block->str))
 		return 0;
@@ -47,7 +48,7 @@ static int pull_bech32_mention(const char *content, struct cursor *cur, struct n
 	if (!pull_nostr_bech32_type(cur, &block->bech32.type))
 		return 0;
 
-	make_cursor(cur->p, cur->p + size, &bech32);
+	bech32 = rcur_forbuf(cur->p, size);
 
 	start = cur->p;
 
