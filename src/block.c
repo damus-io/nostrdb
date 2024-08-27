@@ -106,24 +106,14 @@ enum ndb_block_type ndb_get_block_type(struct ndb_block *block) {
 void ndb_blocks_iterate_start(const char *content, struct ndb_blocks *blocks, struct ndb_block_iterator *iter) {
 	iter->blocks = blocks;
 	iter->content = content;
-	iter->p = blocks->blocks;
+	iter->rcur = rcur_forbuf(blocks->blocks, iter->blocks->blocks_size);
 }
 
 struct ndb_block *ndb_blocks_iterate_next(struct ndb_block_iterator *iter)
 {
-	struct rcur rcur;
-
-	/* FIXME: why not make iter an rcur? */
-	rcur = rcur_forbuf(iter->blocks->blocks, iter->blocks->blocks_size);
-	rcur.p = iter->p;
-
-	if (!rcur_bytes_remaining(rcur))
+	if (!pull_block(iter->content, &iter->rcur, &iter->block))
 		return NULL;
 
-	if (!pull_block(iter->content, &rcur, &iter->block))
-		return NULL;
-
-	iter->p = rcur.p;
 	return &iter->block;
 }
 

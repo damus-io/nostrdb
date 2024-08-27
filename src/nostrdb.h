@@ -3,6 +3,7 @@
 
 #include <inttypes.h>
 #include "cursor.h"
+#include "rcur.h"
 
 // maximum number of filters allowed in a filter group
 #define NDB_PACKED_STR     0x1
@@ -419,7 +420,7 @@ struct ndb_block_iterator {
 	const char *content;
 	struct ndb_blocks *blocks;
 	struct ndb_block block;
-	const unsigned char *p;
+	struct rcur rcur;
 };
 
 struct ndb_query_result {
