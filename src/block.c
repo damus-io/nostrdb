@@ -10,122 +10,91 @@ int push_str_block(struct cursor *buf, const char *content, struct ndb_str_block
 	       cursor_push_varint(buf, block->len);
 }
 
-int pull_str_block(struct cursor *buf, const char *content, struct ndb_str_block *block) {
-	uint32_t start;
-	if (!cursor_pull_varint_u32(buf, &start))
-		return 0;
+bool pull_str_block(struct rcur *rcur, const char *content, struct ndb_str_block *block) {
+	block->str = content + rcur_pull_varint_u32(rcur);
+	block->len = rcur_pull_varint_u32(rcur);
 
-	block->str = content + start;
-
-	return cursor_pull_varint_u32(buf, &block->len);
+	return rcur_valid(rcur);
 }
 
-static int pull_nostr_bech32_type(struct cursor *cur, enum nostr_bech32_type *type)
+static bool pull_nostr_bech32_type(struct rcur *rcur, enum nostr_bech32_type *type)
 {
 	uint64_t inttype;
-	if (!cursor_pull_varint(cur, &inttype))
-		return 0;
 
-	if (inttype <= 0 || inttype > NOSTR_BECH32_KNOWN_TYPES)
-		return 0;
+	// Returns 0 on failure.
+	inttype = rcur_pull_varint(rcur);
+	if (inttype <= 0 || inttype > NOSTR_BECH32_KNOWN_TYPES) {
+		rcur_fail(rcur);
+		return false;
+	}
 
 	*type = inttype;
-	return 1;
+	return true;
 }
 
 
-static int pull_bech32_mention(const char *content, struct cursor *cur, struct ndb_mention_bech32_block *block) {
+static bool pull_bech32_mention(const char *content, struct rcur *rcur, struct ndb_mention_bech32_block *block) {
 	uint16_t size;
-	unsigned char *start;
 	struct rcur bech32;
 
-	if (!pull_str_block(cur, content, &block->str))
-		return 0;
+	pull_str_block(rcur, content, &block->str);
+	size = rcur_pull_u16(rcur);
+	pull_nostr_bech32_type(rcur, &block->bech32.type);
 
-	if (!cursor_pull_u16(cur, &size))
-		return 0;
+	bech32 = rcur_pull_slice(rcur, size);
+	parse_nostr_bech32_buffer(&bech32, block->bech32.type, &block->bech32);
+	if (!rcur_valid(&bech32))
+		rcur_fail(rcur);
 
-	if (!pull_nostr_bech32_type(cur, &block->bech32.type))
-		return 0;
-
-	bech32 = rcur_forbuf(cur->p, size);
-
-	start = cur->p;
-
-	if (!parse_nostr_bech32_buffer(&bech32, block->bech32.type, &block->bech32))
-		return 0;
-
-	//assert(bech32.p == start + size);
-	cur->p = start + size;
-	return 1;
+	return rcur_valid(rcur);
 }
 
-static bool pull_invoice(const char *content, struct cursor *cur,
+static bool pull_invoice(const char *content, struct rcur *rcur,
 			 struct ndb_invoice_block *block)
 {
-	bool ret;
-	struct rcur rcur;
-
-	if (!pull_str_block(cur, content, &block->invstr))
-		return false;
-
-	rcur = rcur_from_cursor(cur);
-	ret = ndb_decode_invoice(&rcur, &block->invoice);
-	*cur = cursor_from_rcur(&rcur);
-
-	return ret;
+	pull_str_block(rcur, content, &block->invstr);
+	return ndb_decode_invoice(rcur, &block->invoice);
 }
 
-static int pull_block_type(struct cursor *cur, enum ndb_block_type *type)
+static bool pull_block_type(struct rcur *rcur, enum ndb_block_type *type)
 {
 	uint32_t itype;
-	*type = 0;
-	if (!cursor_pull_varint_u32(cur, &itype))
-		return 0;
 
-	if (itype <= 0 || itype > NDB_NUM_BLOCK_TYPES)
-		return 0;
+	itype = rcur_pull_varint_u32(rcur);
+	if (itype <= 0 || itype > NDB_NUM_BLOCK_TYPES) {
+		rcur_fail(rcur);
+		return false;
+	}
 
 	*type = itype;
-	return 1;
+	return true;
 }
 
-static int pull_block(const char *content, struct cursor *cur, struct ndb_block *block)
+static bool pull_block(const char *content, struct rcur *rcur, struct ndb_block *block)
 {
-	unsigned char *start = cur->p;
-
-	if (!pull_block_type(cur, &block->type))
-		return 0;
+	if (!pull_block_type(rcur, &block->type))
+		return false;
 
 	switch (block->type) {
 	case BLOCK_HASHTAG:
 	case BLOCK_TEXT:
 	case BLOCK_URL:
-		if (!pull_str_block(cur, content, &block->block.str))
-			goto fail;
-		break;
+		return pull_str_block(rcur, content, &block->block.str);
 
 	case BLOCK_MENTION_INDEX:
-		if (!cursor_pull_varint_u32(cur, &block->block.mention_index))
-			goto fail;
-		break;
+		block->block.mention_index = rcur_pull_varint_u32(rcur);
+		return rcur_valid(rcur);
 
 	case BLOCK_MENTION_BECH32:
-		if (!pull_bech32_mention(content, cur, &block->block.mention_bech32))
-			goto fail;
-		break;
+		return pull_bech32_mention(content, rcur, &block->block.mention_bech32);
 
 	case BLOCK_INVOICE:
 		// we only push invoice strs here
-		if (!pull_invoice(content, cur, &block->block.invoice))
-			goto fail;
-		break;
+		return pull_invoice(content, rcur, &block->block.invoice);
 	}
 
-	return 1;
-fail:
-	cur->p = start;
-	return 0;
+	/* unreachable: pull_block_type can only return known types */
+	assert(0);
 }
 
 
@@ -142,22 +111,20 @@ void ndb_blocks_iterate_start(const char *content, struct ndb_blocks *blocks, st
 
 struct ndb_block *ndb_blocks_iterate_next(struct ndb_block_iterator *iter)
 {
-	struct cursor cur;
-	cur.start = iter->blocks->blocks;
-	cur.p = iter->p;
-	cur.end = iter->blocks->blocks + iter->blocks->blocks_size;
+	struct rcur rcur;
 
-	while (cur.p < cur.end) {
-		if (!pull_block(iter->content, &cur, &iter->block)) {
-			iter->p = cur.p;
-			return NULL;
-		} else {
-			iter->p = cur.p;
-			return &iter->block;
-		}
-	}
+	/* FIXME: why not make iter an rcur? */
+	rcur = rcur_forbuf(iter->blocks->blocks, iter->blocks->blocks_size);
+	rcur.p = iter->p;
 
-	return NULL;
+	if (!rcur_bytes_remaining(rcur))
+		return NULL;
+
+	if (!pull_block(iter->content, &rcur, &iter->block))
+		return NULL;
+
+	iter->p = rcur.p;
+	return &iter->block;
 }
 
 // STR BLOCKS

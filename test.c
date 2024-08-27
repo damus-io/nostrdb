@@ -8,6 +8,7 @@
 #include "protected_queue.h"
 #include "memchr.h"
 #include "print_util.h"
+#include "rcur.h"
 #include "bindings/c/profile_reader.h"
 #include "bindings/c/profile_verifier.h"
 #include "bindings/c/meta_reader.h"
