@@ -3,6 +3,7 @@
 #include "jsmn.h"
 #include "hex.h"
 #include "cursor.h"
+#include "rcur.h"
 #include "random.h"
 #include "ccan/crypto/sha256/sha256.h"
 #include "bolt11/bolt11.h"
@@ -377,37 +378,32 @@ static int ndb_tag_key_compare(const MDB_val *a, const MDB_val *b)
 
 static int ndb_text_search_key_compare(const MDB_val *a, const MDB_val *b)
 {
-	struct cursor ca, cb;
+	struct rcur rcura, rcurb;
 	uint64_t sa, sb, nid_a, nid_b;
 	MDB_val a2, b2;
 
-	make_cursor(a->mv_data, a->mv_data + a->mv_size, &ca);
-	make_cursor(b->mv_data, b->mv_data + b->mv_size, &cb);
+	rcura = rcur_forbuf(a->mv_data, a->mv_size);
+	rcurb = rcur_forbuf(b->mv_data, b->mv_size);
 
 	// note_id
-	if (unlikely(!cursor_pull_varint(&ca, &nid_a) || !cursor_pull_varint(&cb, &nid_b)))
+	nid_a = rcur_pull_varint(&rcura);
+	nid_b = rcur_pull_varint(&rcurb);
+
+	// strings (cast away const)
+	a2.mv_data = (char *)rcur_pull_prefixed_str(&rcura, &a2.mv_size);
+	b2.mv_data = (char *)rcur_pull_prefixed_str(&rcurb, &b2.mv_size);
+
+	// We don't *have* to bail here, but memcmp on NULL is technically
+	// illegal, so we do.
+	if (!rcur_valid(&rcura) || !rcur_valid(&rcurb))
 		return 0;
-
-	// string size
-	if (unlikely(!cursor_pull_varint(&ca, &sa) || !cursor_pull_varint(&cb, &sb)))
-		return 0;
-
-	a2.mv_data = ca.p;
-	a2.mv_size = sa;
-
-	b2.mv_data = cb.p;
-	b2.mv_size = sb;
 
 	int cmp = mdb_cmp_memn(&a2, &b2);
 	if (cmp) return cmp;
 
-	// skip over string
-	ca.p += sa;
-	cb.p += sb;
-
 	// timestamp
-	if (unlikely(!cursor_pull_varint(&ca, &sa) || !cursor_pull_varint(&cb, &sb)))
-		return 0;
+	sa = rcur_pull_varint(&rcura);
+	sb = rcur_pull_varint(&rcurb);
 
 	if      (sa < sb) return -1;
 	else if (sa > sb) return 1;
@@ -417,8 +413,8 @@ static int ndb_text_search_key_compare(const MDB_val *a, const MDB_val *b)
 	else if (nid_a > nid_b) return 1;
 
 	// word index
-	if (unlikely(!cursor_pull_varint(&ca, &sa) || !cursor_pull_varint(&cb, &sb)))
-		return 0;
+	sa = rcur_pull_varint(&rcura);
+	sb = rcur_pull_varint(&rcurb);
 
 	if      (sa < sb) return -1;
 	else if (sa > sb) return 1;
@@ -426,50 +422,29 @@ static int ndb_text_search_key_compare(const MDB_val *a, const MDB_val *b)
 	return 0;
 }
 
-static inline int ndb_unpack_text_search_key_noteid(
-		struct cursor *cur, uint64_t *note_id)
+static uint64_t ndb_unpack_text_search_key_noteid(struct rcur *rcur)
 {
-	if (!cursor_pull_varint(cur, note_id))
-		return 0;
-
-	return 1;
+	return rcur_pull_varint(rcur);
 }
 
 // faster peek of just the string instead of unpacking everything
 // this is used to quickly discard range query matches if there is no
 // common prefix
-static inline int ndb_unpack_text_search_key_string(struct cursor *cur,
-						    const char **str,
-						    int *str_len)
+static const char *ndb_unpack_text_search_key_string(struct rcur *rcur,
+						     size_t *str_len)
 {
-	uint64_t len;
-
-	if (!cursor_pull_varint(cur, &len))
-		return 0;
-
-	*str_len = len;
-
-	*str = (const char *)cur->p;
-
-	if (!cursor_skip(cur, *str_len))
-		return 0;
-
-	return 1;
+	return rcur_pull_prefixed_str(rcur, str_len);
 }
 
 // should be called after ndb_unpack_text_search_key_string. It continues
 // the unpacking of a text search key if we've already started it.
-static inline int
-ndb_unpack_remaining_text_search_key(struct cursor *cur,
+static bool
+ndb_unpack_remaining_text_search_key(struct rcur *rcur,
 				     struct ndb_text_search_key *key)
 {
-	if (!cursor_pull_varint(cur, &key->timestamp))
-		return 0;
-
-	if (!cursor_pull_varint(cur, &key->word_index))
-		return 0;
-
-	return 1;
+	key->timestamp = rcur_pull_varint(rcur);
+	key->word_index = rcur_pull_varint(rcur);
+	return rcur_valid(rcur);
 }
 
 // unpack a fulltext search key
@@ -477,19 +452,14 @@ ndb_unpack_remaining_text_search_key(struct cursor *cur,
 // full version of string + unpack remaining. This is split up because text
 // searching only requires to pull the string for prefix searching, and the
 // remaining is optional
-static inline int ndb_unpack_text_search_key(unsigned char *p, int len,
-				      struct ndb_text_search_key *key)
+static bool ndb_unpack_text_search_key(unsigned char *p, int len,
+				       struct ndb_text_search_key *key)
 {
-	struct cursor c;
-	make_cursor(p, p + len, &c);
+	struct rcur rcur = rcur_forbuf(p, len);
 
-	if (!ndb_unpack_text_search_key_noteid(&c, &key->note_id))
-		return 0;
-
-	if (!ndb_unpack_text_search_key_string(&c, &key->str, &key->str_len))
-		return 0;
-
-	return ndb_unpack_remaining_text_search_key(&c, key);
+	key->note_id = ndb_unpack_text_search_key_noteid(&rcur);
+	key->str = ndb_unpack_text_search_key_string(&rcur, &key->str_len);
+	return ndb_unpack_remaining_text_search_key(&rcur, key);
 }
 
 // Copies only lowercase characters to the destination string and fills the rest with null bytes.
@@ -3205,42 +3175,27 @@ static int ndb_write_word_to_index(struct ndb_txn *txn, const char *word,
 // break a string into individual words for querying or for building the
 // fulltext search index. This is callback based so we don't need to
 // build up an intermediate structure
-static int ndb_parse_words(struct cursor *cur, void *ctx, ndb_word_parser_fn fn)
+static void ndb_parse_words(struct rcur *rcur, void *ctx, ndb_word_parser_fn fn)
 {
-	int word_len, words;
+	size_t word_len, words;
 	const char *word;
 
 	words = 0;
+	/* Skip any leading whitespace and punctuation */
+	while (rcur_pull_whitespace(rcur) || rcur_pull_punctuation(rcur));
 
-	while (cur->p < cur->end) {
-		consume_whitespace_or_punctuation(cur);
-		if (cur->p >= cur->end)
-			break;
-		word = (const char *)cur->p;
-
-		if (!consume_until_boundary(cur))
-			break;
-
-		// start of word or end
-		word_len = cur->p - (unsigned char *)word;
-		if (word_len == 0 && cur->p >= cur->end)
-			break;
-
-		if (word_len == 0) {
-			if (!cursor_skip(cur, 1))
-				break;
-			continue;
-		}
-
+	while ((word = rcur_pull_word(rcur, &word_len)) != NULL) {
 		//ndb_debug("writing word index '%.*s'\n", word_len, word);
 
 		if (!fn(ctx, word, word_len, words))
 			continue;
 
 		words++;
-	}
 
-	return 1;
+		/* Skip next whitespace and punctuation */
+		while (rcur_pull_whitespace(rcur)
+		       || rcur_pull_punctuation(rcur));
+	}
 }
 
 struct ndb_word_writer_ctx
@@ -3271,7 +3226,7 @@ static int ndb_write_note_fulltext_index(struct ndb_txn *txn,
 					 struct ndb_note *note,
 					 uint64_t note_id)
 {
-	struct cursor cur;
+	struct rcur rcur;
 	unsigned char *content;
 	struct ndb_str str;
 	struct ndb_word_writer_ctx ctx;
@@ -3283,13 +3238,13 @@ static int ndb_write_note_fulltext_index(struct ndb_txn *txn,
 
 	content = (unsigned char *)str.str;
 
-	make_cursor(content, content + note->content_length, &cur);
+	rcur = rcur_forbuf(content, note->content_length);
 
 	ctx.txn = txn;
 	ctx.note = note;
 	ctx.note_id = note_id;
 
-	ndb_parse_words(&cur, &ctx, ndb_fulltext_word_writer);
+	ndb_parse_words(&rcur, &ctx, ndb_fulltext_word_writer);
 
 	return 1;
 }
@@ -3371,13 +3326,11 @@ static int ndb_text_search_next_word(MDB_cursor *cursor, MDB_cursor_op op,
 	struct ndb_text_search_result *result,
 	MDB_cursor_op order_op)
 {
-	struct cursor key_cursor;
+	struct rcur key_cursor;
 	//struct ndb_text_search_key search_key;
 	MDB_val v;
 	int retries;
 	retries = -1;
-
-	make_cursor(k->mv_data, k->mv_data + k->mv_size, &key_cursor);
 
 	// When op is MDB_SET_RANGE, this initializes the search. Position
 	// the cursor at the next key greater than or equal to the specified
@@ -3406,9 +3359,10 @@ retry:
 	printf("\n");
 	*/
 
-	make_cursor(k->mv_data, k->mv_data + k->mv_size, &key_cursor);
+	key_cursor = rcur_forbuf(k->mv_data, k->mv_size);
 
-	if (unlikely(!ndb_unpack_text_search_key_noteid(&key_cursor, &result->key.note_id))) {
+	result->key.note_id = ndb_unpack_text_search_key_noteid(&key_cursor);
+	if (unlikely(!result->key.note_id)) {
 		fprintf(stderr, "UNUSUAL: failed to unpack text search key note_id\n");
 		return 0;
 	}
@@ -3426,14 +3380,12 @@ retry:
 	// unpack just the string to check the prefix. We don't
 	// need to unpack the entire key if the prefix doesn't
 	// match
-	if (!ndb_unpack_text_search_key_string(&key_cursor,
-					       &result->key.str,
-					       &result->key.str_len)) {
-		// this should never happen
-		fprintf(stderr, "UNUSUAL: failed to unpack text search key string\n");
+	result->key.str = ndb_unpack_text_search_key_string(&key_cursor,
+							    &result->key.str_len);
+	if (unlikely(!result->key.str)) {
+		fprintf(stderr, "UNUSUAL: failed to unpack text search key note_id\n");
 		return 0;
 	}
-
 	if (!ndb_prefix_matches(result, search_word)) {
 		/*
 		printf("result prefix '%.*s' didn't match search word '%.*s'\n",
@@ -3506,7 +3458,7 @@ int ndb_text_search(struct ndb_txn *txn, const char *query,
 	struct ndb_search_words search_words;
 	//struct ndb_text_search_key search_key;
 	struct ndb_word *search_word;
-	struct cursor cur;
+	struct rcur rcur;
 	ndb_text_search_key_order_fn key_order_fn;
 	MDB_dbi text_db;
 	MDB_cursor *cursor;
@@ -3532,9 +3484,10 @@ int ndb_text_search(struct ndb_txn *txn, const char *query,
 	// end search config
 
 	text_db = txn->lmdb->dbs[NDB_DB_NOTE_TEXT];
-	make_cursor((unsigned char *)query, (unsigned char *)query + strlen(query), &cur);
 
-	ndb_parse_words(&cur, &search_words, ndb_parse_search_words);
+	rcur = rcur_forstr(query);
+
+	ndb_parse_words(&rcur, &search_words, ndb_parse_search_words);
 	if (search_words.num_words == 0)
 		return 0;
 

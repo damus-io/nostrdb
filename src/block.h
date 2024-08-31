@@ -8,6 +8,7 @@
 #include "nostr_bech32.h"
 #include "nostrdb.h"
 #include <inttypes.h>
+#include <stdbool.h>
 
 #define NDB_BLOCK_FLAG_OWNED 1
 
@@ -29,8 +30,9 @@ struct ndb_blocks {
 
 #pragma pack(pop)
 
-int push_str_block(struct cursor *buf, const char *content, struct ndb_str_block *block);
-int pull_str_block(struct cursor *buf, const char *content, struct ndb_str_block *block);
+struct rcur;
 
+int push_str_block(struct cursor *buf, const char *content, struct ndb_str_block *block);
+bool pull_str_block(struct rcur *rcur, const char *content, struct ndb_str_block *block);
 
 #endif // NDB_BLOCK_H

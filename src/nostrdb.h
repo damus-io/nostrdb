@@ -3,6 +3,7 @@
 
 #include <inttypes.h>
 #include "cursor.h"
+#include "rcur.h"
 
 // maximum number of filters allowed in a filter group
 #define NDB_PACKED_STR     0x1
@@ -294,7 +295,7 @@ struct ndb_stat {
 // see `ndb_make_text_search_key` for how the packed version is constructed
 struct ndb_text_search_key
 {
-	int str_len;
+	size_t str_len;
 	const char *str;
 	uint64_t timestamp;
 	uint64_t note_id;
@@ -396,8 +397,8 @@ struct ndb_invoice {
 	uint64_t amount;
 	uint64_t timestamp;
 	uint64_t expiry;
-	char *description;
-	unsigned char *description_hash;
+	const char *description;
+	const unsigned char *description_hash;
 };
 
 struct ndb_invoice_block {
@@ -419,7 +420,7 @@ struct ndb_block_iterator {
 	const char *content;
 	struct ndb_blocks *blocks;
 	struct ndb_block block;
-	unsigned char *p;
+	struct rcur rcur;
 };
 
 struct ndb_query_result {

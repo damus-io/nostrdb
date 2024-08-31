@@ -1,89 +1,101 @@
 #include "cursor.h"
+#include "rcur.h"
 #include "nostr_bech32.h"
 #include "block.h"
 #include "nostrdb.h"
 #include "invoice.h"
+#include "ccan/mem/mem.h"
 #include "bolt11/bolt11.h"
 #include "bolt11/bech32.h"
 #include <stdlib.h>
 #include <string.h>
 
-#include "cursor.h"
-
 struct ndb_content_parser {
 	int bech32_strs;
 	struct cursor buffer;
-	struct cursor content;
+	const char *content_start;
+	struct rcur content;
 	struct ndb_blocks *blocks;
 };
 
-static int parse_digit(struct cursor *cur, int *digit) {
-	int c;
-	if ((c = peek_char(cur, 0)) == -1)
-		return 0;
-	
-	c -= '0';
-	
-	if (c >= 0 && c <= 9) {
-		*digit = c;
-		cur->p++;
-		return 1;
-	}
-	return 0;
+static struct ndb_str_block str_block_forrcur(struct rcur rcur)
+{
+	struct ndb_str_block strblock;
+	size_t len;
+
+	strblock.str = rcur_peek_remainder(&rcur, &len);
+	strblock.len = len;
+	return strblock;
 }
 
+/* Only updates rcur if it returns true */
+static bool parse_digit(struct rcur *rcur, int *digit)
+{
+	const char *c;
 
-static int parse_mention_index(struct cursor *cur, struct ndb_block *block) {
-	int d1, d2, d3, ind;
-	unsigned char *start = cur->p;
+	c = rcur_peek(rcur, 1);
+	if (!c)
+		return false;
 	
-	if (!parse_str(cur, "#["))
-		return 0;
-	
-	if (!parse_digit(cur, &d1)) {
-		cur->p = start;
-		return 0;
+	if (*c >= '0' && *c <= '9') {
+		*digit = *c - '0';
+		rcur_skip(rcur, 1);
+		return true;
 	}
+	return false;
+}
+
+/* Leaves rcur untouched if it returns false. */
+static bool parse_if_mention_index(struct rcur *rcur, struct ndb_block *block)
+{
+	int d1, d2, d3, ind;
+	struct rcur index = *rcur;
+
+	if (!rcur_skip_if_str_anycase(&index, "#["))
+		return false;
+	
+	if (!parse_digit(&index, &d1))
+		return false;
 	
 	ind = d1;
 	
-	if (parse_digit(cur, &d2))
+	if (parse_digit(&index, &d2)) {
 		ind = (d1 * 10) + d2;
-	
-	if (parse_digit(cur, &d3))
-		ind = (d1 * 100) + (d2 * 10) + d3;
-	
-	if (!parse_char(cur, ']')) {
-		cur->p = start;
-		return 0;
+		if (parse_digit(&index, &d3))
+			ind = (d1 * 100) + (d2 * 10) + d3;
 	}
+
+	if (!rcur_skip_if_str_anycase(rcur, "]"))
+		return false;
 	
 	block->type = BLOCK_MENTION_INDEX;
 	block->block.mention_index = ind;
-	
-	return 1;
+
+	*rcur = index;
+	return true;
 }
 
-static int parse_hashtag(struct cursor *cur, struct ndb_block *block) {
-	int c;
-	unsigned char *start = cur->p;
-	
-	if (!parse_char(cur, '#'))
-		return 0;
-	
-	c = peek_char(cur, 0);
-	if (c == -1 || is_whitespace(c) || c == '#') {
-		cur->p = start;
-		return 0;
-	}
-	
-	consume_until_boundary(cur);
-	
+/* Leaves rcur untouched if it returns false. */
+static bool parse_if_hashtag(struct rcur *rcur, struct ndb_block *block)
+{
+	const char *c;
+	struct rcur hashtag = *rcur;
+	size_t len;
+
+	/* Use hashtag to look ahead */
+	if (!rcur_skip_if_str_anycase(&hashtag, "#"))
+		return false;
+
+	c = rcur_pull_word(&hashtag, &len);
+	if (!c || is_whitespace(*c) || *c == '#')
+		return false;
+
+	rcur_skip(rcur, 1);
 	block->type = BLOCK_HASHTAG;
-	block->block.str.str = (const char*)(start + 1);
-	block->block.str.len = cur->p - (start + 1);
-	
-	return 1;
+	block->block.str.len = len;
+	block->block.str.str = rcur_pull(rcur, len);
+
+	return true;
 }
 
 //
@@ -110,14 +122,17 @@ static int push_bech32_mention(struct ndb_content_parser *p, struct ndb_str_bloc
 	size_t u5_out_len, u8_out_len;
 	static const int MAX_PREFIX = 8;
 	char prefix[9] = {0};
+	struct rcur strcur;
 
 	start = p->buffer.p;
 
-	if (!parse_nostr_bech32_type(bech32->str, &type))
+	strcur = rcur_forstr(bech32->str);
+	type = parse_nostr_bech32_type(&strcur);
+	if (!rcur_valid(&strcur))
 		goto fail;
 
 	// make sure to push the str block!
-	if (!push_str_block(&p->buffer, (const char*)p->content.start, bech32))
+	if (!push_str_block(&p->buffer, p->content_start, bech32))
 		goto fail;
 	//
 	// save a spot for the raw bech32 buffer size
@@ -174,7 +189,7 @@ static int push_invoice_str(struct ndb_content_parser *p, struct ndb_str_block *
 	start = p->buffer.p;
 
 	// push the text block just incase we don't care for the invoice
-	if (!push_str_block(&p->buffer, (const char*)p->content.start, str))
+	if (!push_str_block(&p->buffer, p->content_start, str))
 		return 0;
 
 	// push decoded invoice data for quick access
@@ -203,6 +218,15 @@ static int add_text_block(struct ndb_content_parser *p, const char *start, const
 	return push_block(p, &b);
 }
 
+static bool add_text_block_rcur(struct ndb_content_parser *p,
+				struct rcur rcur)
+{
+	const char *start;
+	size_t len;
+
+	start = rcur_peek_remainder(&rcur, &len);
+	return add_text_block(p, start, start + len);
+}
 
 int push_block(struct ndb_content_parser *p, struct ndb_block *block)
 {
@@ -216,7 +240,7 @@ int push_block(struct ndb_content_parser *p, struct ndb_block *block)
 	case BLOCK_HASHTAG:
 	case BLOCK_TEXT:
 	case BLOCK_URL:
-		if (!push_str_block(&p->buffer, (const char*)p->content.start,
+		if (!push_str_block(&p->buffer, p->content_start,
 			       &block->block.str))
 			goto fail;
 		break;
@@ -262,103 +286,91 @@ fail:
 
 
 
-static inline int next_char_is_whitespace(unsigned char *cur, unsigned char *end) {
-	unsigned char *next = cur + 1;
-
-	if (next > end)
-		return 0;
-
-	if (next == end)
-		return 1;
-
-	return is_whitespace(*next);
-}
-
-static inline int char_disallowed_at_end_url(char c)
+static bool char_disallowed_at_end_url(char c)
 {
 	return c == '.' || c == ',';
  
 }
 
-static int is_final_url_char(unsigned char *cur, unsigned char *end) 
+static bool is_final_url_char(const struct rcur *rcur) 
 {
-	if (is_whitespace(*cur))
-		return 1;
+	const char *p = rcur_peek(rcur, 1), *p2;
+	if (!p)
+		return true;
 
-	if (next_char_is_whitespace(cur, end)) {
+	if (is_whitespace(*p))
+		return true;
+
+	p2 = rcur_peek(rcur, 2);
+	if (!p2 || is_whitespace(p2[1])) {
 		// next char is whitespace so this char could be the final char in the url
-		return char_disallowed_at_end_url(*cur);
+		return char_disallowed_at_end_url(*p);
 	}
 
 	// next char isn't whitespace so it can't be a final char
-	return 0;
+	return false;
 }
 
-static int consume_until_end_url(struct cursor *cur, int or_end) {
-	unsigned char *start = cur->p;
-
-	while (cur->p < cur->end) {
-		if (is_final_url_char(cur->p, cur->end))
-			return cur->p != start;
-
-		cur->p++;
-	}
-
-	return or_end;
-}
-
-static int consume_url_fragment(struct cursor *cur)
+static bool consume_until_end_url(struct rcur *rcur)
 {
-	int c;
+	bool consumed = false;
 
-	if ((c = peek_char(cur, 0)) < 0)
-		return 1;
+	while (rcur_bytes_remaining(*rcur)) {
+		if (is_final_url_char(rcur))
+			return consumed;
 
-	if (c != '#' && c != '?') {
-		return 1;
+		rcur_skip(rcur, 1);
+		consumed = true;
 	}
 
-	cur->p++;
-
-	return consume_until_end_url(cur, 1);
+	return true;
 }
 
-static int consume_url_path(struct cursor *cur)
+static bool consume_url_fragment(struct rcur *rcur)
 {
-	int c;
+	const char *c;
 
-	if ((c = peek_char(cur, 0)) < 0)
-		return 1;
+	c = rcur_peek(rcur, 1);
+	if (!c)
+		return true;
 
-	if (c != '/') {
-		return 1;
+	if (*c != '#' && *c != '?') {
+		return true;
 	}
 
-	while (cur->p < cur->end) {
-		c = *cur->p;
+	rcur_skip(rcur, 1);
 
-		if (c == '?' || c == '#' || is_final_url_char(cur->p, cur->end)) {
-			return 1;
+	return consume_until_end_url(rcur);
+}
+
+static void consume_url_path(struct rcur *rcur)
+{
+	const char *c;
+
+	c = rcur_peek(rcur, 1);
+	if (!c || *c != '/')
+		return;
+
+	while ((c = rcur_peek(rcur, 1)) != NULL) {
+		if (*c == '?' || *c == '#' || is_final_url_char(rcur)) {
+			return;
 		}
 
-		cur->p++;
+		rcur_skip(rcur, 1);
 	}
-
-	return 1;
 }
 
-static int consume_url_host(struct cursor *cur)
+static bool consume_url_host(struct rcur *rcur)
 {
-	char c;
+	const char *c;
 	int count = 0;
 
-	while (cur->p < cur->end) {
-		c = *cur->p;
+	while ((c = rcur_peek(rcur, 1)) != NULL) {
 		// TODO: handle IDNs
-		if ((is_alphanumeric(c) || c == '.' || c == '-') && !is_final_url_char(cur->p, cur->end))
+		if ((is_alphanumeric(*c) || *c == '.' || *c == '-') && !is_final_url_char(rcur))
 		{
 			count++;
-			cur->p++;
+			rcur_skip(rcur, 1);
 			continue;
 		}
 
@@ -370,159 +382,117 @@ static int consume_url_host(struct cursor *cur)
 	return count != 0;
 }
 
-static int parse_url(struct cursor *cur, struct ndb_block *block) {
-	unsigned char *start = cur->p;
-	unsigned char *host;
-	unsigned char tmp[4096];
-	int host_len;
-	struct cursor path_cur, tmp_cur;
+/* Leaves rcur untouched if it returns false. */
+static bool parse_if_url(struct rcur *rcur,
+			 bool prev_was_open_bracket,
+			 struct ndb_block *block)
+{
+	struct rcur url = *rcur, path, host, url_only;
 	enum nostr_bech32_type type;
-	make_cursor(tmp, tmp + sizeof(tmp), &tmp_cur);
 	
-	if (!parse_str(cur, "http"))
-		return 0;
-	
-	if (parse_char(cur, 's') || parse_char(cur, 'S')) {
-		if (!parse_str(cur, "://")) {
-			cur->p = start;
-			return 0;
-		}
-	} else {
-		if (!parse_str(cur, "://")) {
-			cur->p = start;
-			return 0;
-		}
-	}
+	if (!rcur_skip_if_str_anycase(&url, "http"))
+		return false;
+
+	rcur_skip_if_str_anycase(&url, "s");
+	if (!rcur_skip_if_str_anycase(&url, "://"))
+		return false;
 
 	// make sure to save the hostname. We will use this to detect damus.io links
-	host = cur->p;
-
-	if (!consume_url_host(cur)) {
-		cur->p = start;
-		return 0;
-	}
-
-	// get the length of the host string
-	host_len = (int)(cur->p - host);
+	host = url;
+	if (!consume_url_host(&url))
+		return false;
+	host = rcur_between(&host, &url);
 
 	// save the current parse state so that we can continue from here when
 	// parsing the bech32 in the damus.io link if we have it
-	copy_cursor(cur, &path_cur);
-
+	path = url;
 	// skip leading /
-	cursor_skip(&path_cur, 1);
+	rcur_skip(&path, 1);
 
-	if (!consume_url_path(cur)) {
-		cur->p = start;
-		return 0;
-	}
+	consume_url_path(&url);
 
-	if (!consume_url_fragment(cur)) {
-		cur->p = start;
-		return 0;
-	}
+	if (!consume_url_fragment(&url))
+		return false;
 
-	// smart parens
-	if ((start - 1) >= cur->start &&
-		start < cur->end &&
-		*(start - 1) == '(' &&
-		(cur->p - 1) < cur->end &&
-		*(cur->p - 1) == ')')
-	{
-		cur->p--;
-	}
+	// Now we've parsed, get url in buffer by itself.
+	url_only = rcur_between(rcur, &url);
 
-	// save the bech32 string pos in case we hit a damus.io link
-	block->block.str.str = (const char *)path_cur.p;
+	// smart parens: is entire URL surrounded by ()?
+	// Ideally, we'd pass prev_was_open_bracket to consume_url_fragment
+	// and it would be smart.
+	if (prev_was_open_bracket)
+		rcur_trim_if_char(&url_only, ')');
 
 	// if we have a damus link, make it a mention
-	if (host_len == 8
-	&& !strncmp((const char *)host, "damus.io", 8)
-	&& parse_nostr_bech32_str(&path_cur, &type))
-	{
-		block->block.str.len = path_cur.p - path_cur.start;
-		block->type = BLOCK_MENTION_BECH32;
-		return 1;
+	if (rcur_skip_if_match(&host, "damus.io", strlen("damus.io"))) {
+		struct rcur bech32 = path;
+		if (parse_nostr_bech32_str(&bech32, &type)) {
+			block->type = BLOCK_MENTION_BECH32;
+			block->block.str = str_block_forrcur(path);
+			goto got_url;
+		}
 	}
 
 	block->type = BLOCK_URL;
-	block->block.str.str = (const char *)start;
-	block->block.str.len = cur->p - start;
-	
-	return 1;
+	block->block.str = str_block_forrcur(url_only);
+
+got_url:
+	/* We've processed the url, now increment rcur */
+	rcur_skip(rcur, rcur_bytes_remaining(url_only));
+	return true;
 }
 
-static int parse_invoice(struct cursor *cur, struct ndb_block *block) {
-	unsigned char *start, *end;
+/* Leaves rcur untouched if it returns false. */
+static bool parse_if_invoice(struct rcur *rcur, struct ndb_block *block)
+{
+	struct rcur invoice = *rcur;
+	size_t len;
 
 	// optional
-	parse_str(cur, "lightning:");
+	rcur_skip_if_str_anycase(&invoice, "lightning:");
 	
-	start = cur->p;
-	
-	if (!parse_str(cur, "lnbc"))
-		return 0;
-	
-	if (!consume_until_whitespace(cur, 1)) {
-		cur->p = start;
-		return 0;
-	}
-	
-	end = cur->p;
-	
+	if (!rcur_skip_if_str_anycase(&invoice, "lnbc"))
+		return false;
+
+	if (!rcur_pull_word(&invoice, &len) || len == 0)
+		return false;
+
 	block->type = BLOCK_INVOICE;
-	
-	block->block.str.str = (const char*)start;
-	block->block.str.len = end - start;
-	
-	cur->p = end;
-	
-	return 1;
+	block->block.str = str_block_forrcur(rcur_between(rcur, &invoice));
+
+	*rcur = invoice;
+	return true;
 }
 
-
-static int parse_mention_bech32(struct cursor *cur, struct ndb_block *block) {
-	unsigned char *start = cur->p;
-	enum nostr_bech32_type type;
-	
-	parse_char(cur, '@');
-	parse_str(cur, "nostr:");
-
-	block->block.str.str = (const char *)cur->p;
-	
-	if (!parse_nostr_bech32_str(cur, &type)) {
-		cur->p = start;
-		return 0;
-	}
-	
-	block->block.str.len = cur->p - (unsigned char*)block->block.str.str;
-	block->type = BLOCK_MENTION_BECH32;
-
-	return 1;
-}
-
-static int add_text_then_block(struct ndb_content_parser *p,
-			       struct ndb_block *block,
-			       unsigned char **start,
-			       const unsigned char *pre_mention)
+/* Leaves rcur untouched if it returns false. */
+static bool parse_if_mention_bech32(struct rcur *rcur, struct ndb_block *block)
 {
-	if (!add_text_block(p, (const char *)*start, (const char*)pre_mention))
-		return 0;
+	struct rcur bech32 = *rcur, after_ignored;
+	enum nostr_bech32_type type;
+
+	/* Ignore these */
+	rcur_skip_if_str_anycase(&bech32, "@");
+	rcur_skip_if_str_anycase(&bech32, "nostr:");
+
+	after_ignored = bech32;
+	if (!parse_nostr_bech32_str(&bech32, &type))
+		return false;
 	
-	*start = (unsigned char*)p->content.p;
-	
-	return push_block(p, block);
+	block->type = BLOCK_MENTION_BECH32;
+	block->block.str = str_block_forrcur(rcur_between(&after_ignored, &bech32));
+
+	*rcur = bech32;
+	return true;
 }
 
 int ndb_parse_content(unsigned char *buf, int buf_size,
 		      const char *content, int content_len,
 		      struct ndb_blocks **blocks_p)
 {
-	int cp, c;
 	struct ndb_content_parser parser;
 	struct ndb_block block;
-
-	unsigned char *start, *pre_mention, *blocks_start;
+	bool prev_was_open_bracket = false;
+	struct rcur start, pre_mention;
 	
 	make_cursor(buf, buf + buf_size, &parser.buffer);
 
@@ -530,8 +500,8 @@ int ndb_parse_content(unsigned char *buf, int buf_size,
 	*blocks_p = parser.blocks = (struct ndb_blocks *)buf;
 	parser.buffer.p += sizeof(struct ndb_blocks);
 
-	make_cursor((unsigned char *)content,
-		    (unsigned char*)content + content_len, &parser.content);
+	parser.content_start = content;
+	parser.content = rcur_forbuf(parser.content_start, content_len);
 
 	parser.blocks->words = 0;
 	parser.blocks->num_blocks = 0;
@@ -539,53 +509,75 @@ int ndb_parse_content(unsigned char *buf, int buf_size,
 	parser.blocks->flags = 0;
 	parser.blocks->version = 1;
 
-	blocks_start = start = parser.content.p;
-	while (parser.content.p < parser.content.end) {
-		cp = peek_char(&parser.content, -1);
-		c  = peek_char(&parser.content, 0);
+	start = parser.content;
+
+	while (rcur_bytes_remaining(parser.content)) {
+		const char *c;
+
+		// Skip whitespace.
+		rcur_pull_whitespace(&parser.content);
+
+		c = rcur_peek(&parser.content, 1);
+		if (!c)
+			break;
 		
 		// new word
-		if (is_whitespace(cp) && !is_whitespace(c))
-			parser.blocks->words++;
-		
-		pre_mention = parser.content.p;
-		if (cp == -1 || is_left_boundary(cp) || c == '#') {
-			if (c == '#' && (parse_mention_index(&parser.content, &block) || parse_hashtag(&parser.content, &block))) {
-				if (!add_text_then_block(&parser, &block, &start, pre_mention))
-					return 0;
-				continue;
-			} else if ((c == 'h' || c == 'H') && parse_url(&parser.content, &block)) {
-				if (!add_text_then_block(&parser, &block, &start, pre_mention))
-					return 0;
-				continue;
-			} else if ((c == 'l' || c == 'L') && parse_invoice(&parser.content, &block)) {
-				if (!add_text_then_block(&parser, &block, &start, pre_mention))
-					return 0;
-				continue;
-			} else if ((c == 'n' || c == '@') && parse_mention_bech32(&parser.content, &block)) {
-				if (!add_text_then_block(&parser, &block, &start, pre_mention))
-					return 0;
-				continue;
-			}
+		parser.blocks->words++;
+
+		pre_mention = parser.content;
+
+		switch (*c) {
+		case '#':
+			if (parse_if_mention_index(&parser.content, &block) || parse_if_hashtag(&parser.content, &block))
+				goto add_it;
+			break;
+
+		case 'h':			
+		case 'H':
+			if (parse_if_url(&parser.content, prev_was_open_bracket, &block))
+				goto add_it;
+			break;
+
+		case 'l':
+		case 'L':
+			if (parse_if_invoice(&parser.content, &block))
+				goto add_it;
+			break;
+
+		case 'n':
+		case '@':
+			if (parse_if_mention_bech32(&parser.content, &block))
+				goto add_it;
+			break;
 		}
-		
-		parser.content.p++;
-	}
-	
-	if (parser.content.p - start > 0) {
-		if (!add_text_block(&parser, (const char*)start, (const char *)parser.content.p))
+		prev_was_open_bracket = (*c == '(');
+		rcur_skip(&parser.content, 1);
+		continue;
+
+	add_it:
+		// Add any text (e.g. whitespace) before this (noop if empty)
+		if (!add_text_block_rcur(&parser,
+					 rcur_between(&start, &pre_mention)))
 			return 0;
+		if (!push_block(&parser, &block))
+			return 0;
+
+		start = parser.content;
 	}
 
-	parser.blocks->blocks_size = parser.buffer.p - blocks_start;
+	// Add any trailing text (noop if empty)
+	if (!add_text_block_rcur(&parser, rcur_between(&start, &parser.content)))
+		return 0;
+
+	parser.blocks->blocks_size = parser.buffer.p - buf;
 
 	//
 	// pad to 8-byte alignment
 	//
 	if (!cursor_align(&parser.buffer, 8))
 		return 0;
-	assert((parser.buffer.p - parser.buffer.start) % 8 == 0);
-	parser.blocks->total_size = parser.buffer.p - parser.buffer.start;
+	assert((parser.buffer.p - buf) % 8 == 0);
+	parser.blocks->total_size = parser.buffer.p - buf;
 
 	return 1;
 }
