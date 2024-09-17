@@ -348,7 +348,7 @@ int main(int argc, char *argv[])
 		} else {
 			map_file(argv[2], &data, &data_len);
 			ndb_process_events(ndb, (const char *)data, data_len);
-			ndb_process_client_events(ndb, (const char *)data, data_len);
+			//ndb_process_client_events(ndb, (const char *)data, data_len);
 		}
 	} else if (argc == 2 && !strcmp(argv[1], "print-search-keys")) {
 		ndb_begin_query(ndb, &txn);
