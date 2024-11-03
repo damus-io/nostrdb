@@ -1662,8 +1662,36 @@ static void test_weird_note_corruption() {
 	ndb_destroy(ndb);
 }
 
+static void test_filter_eq() {
+	struct ndb_filter filter, *f = &filter;
+	struct ndb_filter filter2, *f2 = &filter2;
+
+	ndb_filter_init(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_UNTIL));
+	assert(ndb_filter_add_int_element(f, 42));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	assert(ndb_filter_add_int_element(f, 2));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	ndb_filter_init(f2);
+	assert(ndb_filter_start_field(f2, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f2, 2));
+	assert(ndb_filter_add_int_element(f2, 1));
+	ndb_filter_end_field(f2);
+	assert(ndb_filter_start_field(f2, NDB_FILTER_UNTIL));
+	assert(ndb_filter_add_int_element(f2, 42));
+	ndb_filter_end_field(f2);
+	ndb_filter_end(f2);
+
+	assert(ndb_filter_eq(f, f2));
+}
+
 int main(int argc, const char *argv[]) {
 	test_parse_filter_json();
+	test_filter_eq();
 	test_filter_json();
 	test_bech32_parsing();
 	test_single_url_parsing();
