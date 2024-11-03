@@ -1689,9 +1689,45 @@ static void test_filter_eq() {
 	assert(ndb_filter_eq(f, f2));
 }
 
+static void test_filter_is_subset() {
+	struct ndb_filter global, *g = &global;
+	struct ndb_filter kind, *k = &kind;
+	struct ndb_filter kind_and_id, *ki = &kind_and_id;
+
+	const unsigned char id[] = {
+	  0x03, 0x36, 0x94, 0x8b, 0xdf, 0xbf, 0x5f, 0x93, 0x98, 0x02, 0xeb, 0xa0,
+	  0x3a, 0xa7, 0x87, 0x35, 0xc8, 0x28, 0x25, 0x21, 0x1e, 0xec, 0xe9, 0x87,
+	  0xa6, 0xd2, 0xe2, 0x0e, 0x3c, 0xff, 0xf9, 0x30
+	};
+
+	ndb_filter_init(g);
+	ndb_filter_end(g);
+
+	ndb_filter_init(k);
+	assert(ndb_filter_start_field(k, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(k, 1));
+	ndb_filter_end_field(k);
+	ndb_filter_end(k);
+
+	ndb_filter_init(ki);
+	assert(ndb_filter_start_field(ki, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(ki, 1));
+	ndb_filter_end_field(ki);
+	assert(ndb_filter_start_field(ki, NDB_FILTER_IDS));
+	assert(ndb_filter_add_id_element(ki, id));
+	ndb_filter_end_field(ki);
+	ndb_filter_end(ki);
+
+	assert(ndb_filter_is_subset_of(g, k) == 0);
+	assert(ndb_filter_is_subset_of(k, g) == 1);
+	assert(ndb_filter_is_subset_of(ki, k) == 1);
+	assert(ndb_filter_is_subset_of(k, ki) == 0);
+}
+
 int main(int argc, const char *argv[]) {
 	test_parse_filter_json();
 	test_filter_eq();
+	test_filter_is_subset();
 	test_filter_json();
 	test_bech32_parsing();
 	test_single_url_parsing();
