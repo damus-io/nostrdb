@@ -1,14 +1,13 @@
 /* Licensed under BSD-MIT - see LICENSE file for details */
-#include <unistd.h>
+//#include <unistd.h>
 #include <stdint.h>
 #include <string.h>
 #include <limits.h>
 #include <stdlib.h>
 #include "str.h"
 #include <sys/types.h>
-#include <regex.h>
+//#include <regex.h>
 #include <stdarg.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <ccan/str/str.h>
 
@@ -236,51 +235,3 @@ static size_t count_open_braces(const char *string)
 #endif
 }
 
-bool tal_strreg_(const tal_t *ctx, const char *string, const char *label,
-		 const char *regex, ...)
-{
-	size_t nmatch = 1 + count_open_braces(regex);
-	regmatch_t matches[nmatch];
-	regex_t r;
-	bool ret = false;
-	unsigned int i;
-	va_list ap;
-
-	if (regcomp(&r, regex, REG_EXTENDED) != 0)
-		goto fail_no_re;
-
-	if (regexec(&r, string, nmatch, matches, 0) != 0)
-		goto fail;
-
-	ret = true;
-	va_start(ap, regex);
-	for (i = 1; i < nmatch; i++) {
-		char **arg = va_arg(ap, char **);
-		if (arg) {
-			/* eg. ([a-z])? can give "no match". */
-			if (matches[i].rm_so == -1)
-				*arg = NULL;
-			else {
-				*arg = tal_strndup_(ctx,
-						    string + matches[i].rm_so,
-						    matches[i].rm_eo
-						    - matches[i].rm_so,
-						    label);
-				/* FIXME: If we fail, we set some and leak! */
-				if (!*arg) {
-					ret = false;
-					break;
-				}
-			}
-		}
-	}
-	va_end(ap);
-fail:
-	regfree(&r);
-fail_no_re:
-	if (taken(regex))
-		tal_free(regex);
-	if (taken(string))
-		tal_free(string);
-	return ret;
-}
