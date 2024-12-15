@@ -470,12 +470,16 @@ static void test_migrate() {
 	static const char *v0_dir = "testdata/db/v0";
 	struct ndb *ndb;
 	struct ndb_config config;
+	struct ndb_txn txn;
+
 	ndb_default_config(&config);
 	ndb_config_set_flags(&config, NDB_FLAG_NOMIGRATE);
 
 	fprintf(stderr, "testing migrate on v0\n");
 	assert(ndb_init(&ndb, v0_dir, &config));
-	assert(ndb_db_version(ndb) == 0);
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_db_version(&txn) == 0);
+	assert(ndb_end_query(&txn));
 	ndb_destroy(ndb);
 
 	ndb_config_set_flags(&config, 0);
@@ -483,7 +487,10 @@ static void test_migrate() {
 	assert(ndb_init(&ndb, v0_dir, &config));
 	ndb_destroy(ndb);
 	assert(ndb_init(&ndb, v0_dir, &config));
-	assert(ndb_db_version(ndb) == 3);
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_db_version(&txn) == 3);
+	assert(ndb_end_query(&txn));
 
 	test_profile_search(ndb);
 	ndb_destroy(ndb);
