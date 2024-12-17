@@ -333,6 +333,7 @@ static void test_reaction_counter()
 	assert(reactions == 2);
 	ndb_end_query(&txn);
 	ndb_destroy(ndb);
+	free(json);
 }
 
 static void test_profile_search(struct ndb *ndb)
@@ -415,6 +416,7 @@ static void test_profile_updates()
 	assert(!strcmp(name, "c"));
 
 	ndb_destroy(ndb);
+	free(json);
 }
 
 static void test_load_profiles()
