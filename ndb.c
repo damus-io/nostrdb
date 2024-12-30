@@ -252,7 +252,17 @@ int main(int argc, char *argv[])
 				ndb_filter_end_field(f);
 				argv += 2;
 				argc -= 2;
-			} else if (!strcmp(argv[0], "-u")) {
+			} else if (!strcmp(argv[0], "--since") || !strcmp(argv[0], "-s")) {
+				if (current_field) {
+					ndb_filter_end_field(f);
+					current_field = 0;
+				}
+				ndb_filter_start_field(f, NDB_FILTER_SINCE);
+				ndb_filter_add_int_element(f, atoll(argv[1]));
+				ndb_filter_end_field(f);
+				argv += 2;
+				argc -= 2;
+			} else if (!strcmp(argv[0], "--until") || !strcmp(argv[0], "-u")) {
 				if (current_field) {
 					ndb_filter_end_field(f);
 					current_field = 0;
