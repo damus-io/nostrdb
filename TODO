@@ -1,5 +1,7 @@
-subscription polling
-execution plan for created_at query
-note kind index rebuild migration
-(A) filter from json
-tags index migration
+
+# Replaceable Events
+
+- [ ] delete note
+- [ ] delete note indices
+- [ ] when replacing kind0, delete profile as well
+- [ ] delete profile index
