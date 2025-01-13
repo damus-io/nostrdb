@@ -1733,7 +1733,55 @@ static void test_filter_is_subset() {
 	assert(ndb_filter_is_subset_of(k, ki) == 0);
 }
 
+static void test_filter_search()
+{
+	struct ndb_filter filter, *f = &filter;
+
+	assert(ndb_filter_init_with(f, 2));
+
+	assert(ndb_filter_start_field(f, NDB_FILTER_SEARCH));
+	assert(ndb_filter_add_str_element(f, "searchterm"));
+	assert(!ndb_filter_add_str_element(f, "searchterm 2"));
+	ndb_filter_end_field(f);
+
+	assert(ndb_filter_end(f));
+}
+
+static void test_filter_parse_search_json() {
+	const char *json = "{\"search\":\"abc\",\"limit\":1}";
+	unsigned char buf[1024];
+	int i;
+
+	struct ndb_filter filter, *f = &filter;
+	struct ndb_filter_elements *es;
+
+	ndb_filter_init_with(f, 2);
+	assert(ndb_filter_from_json(json, strlen(json), f, buf, sizeof(buf)));
+	assert(filter.finalized);
+
+	assert(f->num_elements == 2);
+	for (i = 0; i < f->num_elements; i++) {
+		es = ndb_filter_get_elements(f, i);
+		if (i == 0) {
+			assert(es->field.type == NDB_FILTER_SEARCH);
+			assert(es->count == 1);
+			assert(!strcmp(ndb_filter_get_string_element(f, es, 0), "abc"));
+		} else if (i == 1) {
+			assert(es->field.type == NDB_FILTER_LIMIT);
+			assert(es->count == 1);
+			assert(ndb_filter_get_int_element(es, 0) == 1);
+		}
+	}
+
+	// test back to json
+	assert(ndb_filter_json(f, (char *)buf, sizeof(buf)));
+	printf("search json: '%s'\n", (const char *)buf);
+	assert(!strcmp((const char*)buf, json));
+}
+
 int main(int argc, const char *argv[]) {
+	test_filter_search();
+	test_filter_parse_search_json();
 	test_parse_filter_json();
 	test_filter_eq();
 	test_filter_is_subset();
