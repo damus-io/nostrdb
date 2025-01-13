@@ -142,6 +142,7 @@ enum ndb_writer_msgtype {
 	NDB_WRITER_BLOCKS, // write parsed note blocks
 	NDB_WRITER_MIGRATE, // migrate the database
 	NDB_WRITER_NOTE_RELAY, // we already have the note, but we have more relays to write
+	NDB_WRITER_REPLACE_NOTE, // replace a note in the db
 };
 
 // keys used for storing data in the NDB metadata database (NDB_DB_NDB_META)
@@ -157,6 +158,18 @@ struct ndb_json_parser {
 	jsmntok_t *toks, *toks_end;
 	int i;
 	int num_tokens;
+};
+
+enum replacement_action {
+	RA_ERROR,
+	RA_REPLACE,
+	RA_SKIP,
+	RA_NEW,
+};
+
+struct ndb_replace_action {
+	uint64_t note_to_delete;
+	enum replacement_action action;
 };
 
 // useful to pass to threads on its own
@@ -1425,6 +1438,11 @@ static void ndb_make_search_key(struct ndb_search_key *key, unsigned char *id,
 	key->search[sizeof(key->search) - 1] = '\0';
 }
 
+int ndb_delete_profile(struct ndb_txn *txn, unsigned char *pubkey)
+{
+	return 0;
+}
+
 static int ndb_write_profile_search_index(struct ndb_txn *txn,
 					  struct ndb_search_key *index_key,
 					  uint64_t profile_key)
@@ -2119,6 +2137,11 @@ static void ndb_writer_note_init(struct ndb_writer_note *writer_note, struct ndb
 	writer_note->relay = relay;
 }
 
+struct ndb_writer_replace_note {
+	struct ndb_writer_note note;
+	uint64_t note_to_delete;
+};
+
 struct ndb_writer_profile {
 	struct ndb_writer_note note;
 	struct ndb_profile_record_builder record;
@@ -2156,6 +2179,7 @@ struct ndb_writer_msg {
 	union {
 		struct ndb_writer_note_relay note_relay;
 		struct ndb_writer_note note;
+		struct ndb_writer_replace_note replace_note;
 		struct ndb_writer_profile profile;
 		struct ndb_writer_ndb_meta ndb_meta;
 		struct ndb_writer_last_fetch last_fetch;
@@ -2681,17 +2705,63 @@ static int ndb_ingest_event(struct ndb_ingester *ingester, const char *json,
 	return ndb_ingester_queue_event(ingester, json_copy, len, meta->client, relay);
 }
 
+// Find the note to replace, generate the diff, and replace
+void ndb_process_replaceable_event(struct ndb_txn *txn,
+				   struct ndb_note *note,
+				   struct ndb_replace_action *action)
+{
+	struct ndb_filter filter, *f = &filter;
+	struct ndb_query_result result;
+	int result_count;
+
+	// we only need one page to malloc, since our filter is small
+	ndb_filter_init_with(f, 1);
+
+	ndb_filter_start_field(f, NDB_FILTER_KINDS);
+	ndb_filter_add_int_element(f, note->kind);
+	ndb_filter_end_field(f);
+
+	ndb_filter_start_field(f, NDB_FILTER_AUTHORS);
+	ndb_filter_add_id_element(f, note->pubkey);
+	ndb_filter_end_field(f);
+
+	ndb_filter_end(f);
+
+	if (!ndb_query(txn, &filter, 1, &result, 1, &result_count)) {
+		// something went wrong?
+		action->action = RA_ERROR;
+	} else if (result_count == 0) {
+		// no note found, so let's just insert
+		action->action = RA_NEW;
+	} else {
+		// result_count == 1
+		if (result.note->created_at >= note->created_at) {
+			// this event is newer, make sure we delete this one
+			action->note_to_delete = result.note_id;
+			action->action = RA_REPLACE;
+		} else {
+			action->action = RA_SKIP;
+		}
+	}
+
+	ndb_filter_destroy(f);
+}
+
 
 static int ndb_ingester_process_note(secp256k1_context *ctx,
 				     struct ndb_note *note,
 				     size_t note_size,
 				     struct ndb_writer_msg *out,
 				     struct ndb_ingester *ingester,
-				     const char *relay)
+				     const char *relay,
+				     struct ndb_txn *txn)
 {
 	enum ndb_ingest_filter_action action;
 	struct ndb_ingest_meta meta;
+	struct ndb_replace_action replace_action;
+	uint64_t note_to_delete;
 
+	note_to_delete = 0;
 	action = NDB_INGEST_ACCEPT;
 
 	if (ingester->filter)
@@ -2710,6 +2780,27 @@ static int ndb_ingester_process_note(secp256k1_context *ctx,
 		if (!ndb_note_verify(ctx, note->pubkey, note->id, note->sig)) {
 			ndb_debug("signature verification failed\n");
 			return 0;
+		}
+	}
+
+	// check to see if we have a replaceable event, because we can bail
+	// early if so
+	if (is_replaceable_kind(note->kind)) {
+		ndb_process_replaceable_event(txn, note, &replace_action);
+
+		switch (replace_action.action) {
+		case RA_ERROR:
+			ndb_debug("error processing replaceable event %d\n", note->kind);
+			return 0;
+		case RA_REPLACE:
+			note_to_delete = replace_action.note_to_delete;
+			break;
+		case RA_SKIP:
+			// this is old or we already have it, skip
+			return 0;
+		case RA_NEW:
+			// new event, write it like normal
+			break;
 		}
 	}
 
@@ -2737,8 +2828,14 @@ static int ndb_ingester_process_note(secp256k1_context *ctx,
 					   &meta);
 	}
 
-	out->type = NDB_WRITER_NOTE;
-	ndb_writer_note_init(&out->note, note, note_size, relay);
+	if (note_to_delete != 0) {
+		out->type = NDB_WRITER_REPLACE_NOTE;
+		out->replace_note.note_to_delete = note_to_delete;
+		ndb_writer_note_init(&out->replace_note.note, note, note_size, relay);
+	} else {
+		out->type = NDB_WRITER_NOTE;
+		ndb_writer_note_init(&out->note, note, note_size, relay);
+	}
 
 	return 1;
 }
@@ -2814,6 +2911,7 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 	void *buf;
 	int ok;
 	size_t bufsize, note_size;
+	struct ndb_txn txn;
 
 	ok = 0;
 
@@ -2823,6 +2921,8 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 	controller.lmdb = ingester->lmdb;
 	cb.fn = ndb_ingester_json_controller;
 	cb.data = &controller;
+
+	ndb_txn_from_mdb(&txn, ingester->lmdb, read_txn);
 
 	// since we're going to be passing this allocated note to a different
 	// thread, we can't use thread-local buffers. just allocate a block
@@ -2843,8 +2943,6 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 	if ((int)note_size == -42) {
 		assert(controller.note != NULL);
 		assert(controller.note_key != 0);
-		struct ndb_txn txn;
-		ndb_txn_from_mdb(&txn, ingester->lmdb, read_txn);
 
 		// we still need to process the relays on the note even
 		// if we already have it
@@ -2879,7 +2977,7 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 
 			if (!ndb_ingester_process_note(ctx, note, note_size,
 						       out, ingester,
-						       ev->relay)) {
+						       ev->relay, &txn)) {
 				ndb_debug("failed to process note\n");
 				goto cleanup;
 			} else {
@@ -2901,7 +2999,7 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 
 			if (!ndb_ingester_process_note(ctx, note, note_size,
 						       out, ingester,
-						       ev->relay)) {
+						       ev->relay, &txn)) {
 				ndb_debug("failed to process note\n");
 				goto cleanup;
 			} else {
@@ -5290,6 +5388,23 @@ static int ndb_run_migrations(struct ndb_txn *txn)
 	return 1;
 }
 
+int ndb_delete_note(struct ndb_txn *txn, uint64_t note_key)
+{
+	// delete note
+	MDB_val k;
+
+	k.mv_data = &note_key;
+	k.mv_size = sizeof(note_key);
+
+	if (mdb_del(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE], &k, NULL)) {
+		// error
+		ndb_debug("error deleting note\n");
+		return 0;
+	}
+	
+	// TODO: delete note indices
+	return 1;
+}
 
 static void *ndb_writer_thread(void *data)
 {
@@ -5320,13 +5435,16 @@ static void *ndb_writer_thread(void *data)
 		for (i = 0 ; i < popped; i++) {
 			msg = &msgs[i];
 			switch (msg->type) {
-			case NDB_WRITER_NOTE: needs_commit = 1; break;
-			case NDB_WRITER_PROFILE: needs_commit = 1; break;
-			case NDB_WRITER_DBMETA: needs_commit = 1; break;
-			case NDB_WRITER_PROFILE_LAST_FETCH: needs_commit = 1; break;
-			case NDB_WRITER_BLOCKS: needs_commit = 1; break;
-			case NDB_WRITER_MIGRATE: needs_commit = 1; break;
-			case NDB_WRITER_NOTE_RELAY: needs_commit = 1; break;
+			case NDB_WRITER_NOTE:
+			case NDB_WRITER_REPLACE_NOTE:
+			case NDB_WRITER_PROFILE:
+			case NDB_WRITER_DBMETA:
+			case NDB_WRITER_PROFILE_LAST_FETCH:
+			case NDB_WRITER_BLOCKS:
+			case NDB_WRITER_NOTE_RELAY:
+			case NDB_WRITER_MIGRATE:
+				needs_commit = 1;
+				break;
 			case NDB_WRITER_QUIT: break;
 			}
 		}
@@ -5365,6 +5483,23 @@ static void *ndb_writer_thread(void *data)
 					};
 				} else {
 					ndb_debug("failed to write note\n");
+				}
+				break;
+			case NDB_WRITER_REPLACE_NOTE:
+				if (!ndb_delete_note(&txn, msg->replace_note.note_to_delete)) {
+					ndb_debug("failed to delete note\n");
+				}
+
+				note_nkey = ndb_write_note(&txn, &msg->replace_note.note,
+							   scratch,
+							   writer->scratch_size,
+							   writer->ndb_flags);
+
+				if (note_nkey > 0) {
+					written_notes[num_notes++] = (struct written_note){
+						.note_id = note_nkey,
+						.note = &msg->note,
+					};
 				}
 				break;
 			case NDB_WRITER_NOTE:
