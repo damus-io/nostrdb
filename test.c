@@ -1737,7 +1737,7 @@ static void test_filter_search()
 {
 	struct ndb_filter filter, *f = &filter;
 
-	assert(ndb_filter_init_with(f, 2));
+	assert(ndb_filter_init_with(f, 1));
 
 	assert(ndb_filter_start_field(f, NDB_FILTER_SEARCH));
 	assert(ndb_filter_add_str_element(f, "searchterm"));
@@ -1755,7 +1755,7 @@ static void test_filter_parse_search_json() {
 	struct ndb_filter filter, *f = &filter;
 	struct ndb_filter_elements *es;
 
-	ndb_filter_init_with(f, 2);
+	ndb_filter_init_with(f, 1);
 	assert(ndb_filter_from_json(json, strlen(json), f, buf, sizeof(buf)));
 	assert(filter.finalized);
 
