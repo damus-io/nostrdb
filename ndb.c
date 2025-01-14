@@ -17,8 +17,7 @@ static int usage()
 	printf("usage: ndb [--skip-verification] [-d db_dir] <command>\n\n");
 	printf("commands\n\n");
 	printf("	stat\n");
-	printf("	search [--oldest-first] [--limit 42] <fulltext query>\n");
-	printf("	query [-k 42] [-k 1337] [-l 42] [-e abcdef...] [-a abcdef... -a bcdef...]\n");
+	printf("	query [-k 42] [-k 1337] [--search term] [-l 42] [-e abcdef...] [-a abcdef... -a bcdef...]\n");
 	printf("	profile <pubkey>\n");
 	printf("	print-search-keys\n");
 	printf("	print-kind-keys\n");
@@ -136,14 +135,11 @@ int main(int argc, char *argv[])
 	long nanos;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
-	struct ndb_text_search_results results;
-	struct ndb_text_search_result *result;
 	const char *dir;
 	unsigned char *data;
 	size_t data_len;
 	struct ndb_config config;
 	struct timespec t1, t2;
-	struct ndb_text_search_config search_config;
 	unsigned char tmp_id[32];
 
 	// profiles
@@ -154,7 +150,6 @@ int main(int argc, char *argv[])
 
 	res = 0;
 	ndb_default_config(&config);
-	ndb_default_text_search_config(&search_config);
 	ndb_config_set_mapsize(&config, 1024ULL * 1024ULL * 1024ULL * 1024ULL /* 1 TiB */);
 
 	if (argc < 2) {
@@ -184,38 +179,7 @@ int main(int argc, char *argv[])
 		return 2;
 	}
 
-	if (argc >= 3 && !strcmp(argv[1], "search")) {
-		for (i = 0; i < 2; i++) {
-			if (!strcmp(argv[2], "--oldest-first")) {
-				ndb_text_search_config_set_order(&search_config, NDB_ORDER_ASCENDING);
-				argv++;
-				argc--;
-			} else if (!strcmp(argv[2], "--limit") || !strcmp(argv[2], "-l")) {
-				limit = atoi(argv[3]);
-				ndb_text_search_config_set_limit(&search_config, limit);
-				argv += 2;
-				argc -= 2;
-			}
-		}
-
-		ndb_begin_query(ndb, &txn);
-		clock_gettime(CLOCK_MONOTONIC, &t1);
-		ndb_text_search(&txn, argv[2], &results, &search_config);
-		clock_gettime(CLOCK_MONOTONIC, &t2);
-
-		nanos = (t2.tv_sec - t1.tv_sec) * (long)1e9 + (t2.tv_nsec - t1.tv_nsec);
-
-		fprintf(stderr, "%d results in %f ms\n", results.num_results, nanos/1000000.0);
-
-		// print results for now
-		for (i = 0; i < results.num_results; i++) {
-			result = &results.results[i];
-			//fprintf(stderr, "[%02d] ", i+1);
-			ndb_print_text_search_result(&txn, result);
-		}
-
-		ndb_end_query(&txn);
-	} else if (argc == 2 && !strcmp(argv[1], "stat")) {
+	if (argc == 2 && !strcmp(argv[1], "stat")) {
 		if (!ndb_stat(ndb, &stat)) {
 			res = 3;
 			goto cleanup;
@@ -278,6 +242,16 @@ int main(int argc, char *argv[])
 					current_field = 0;
 				}
 				ndb_filter_start_tag_field(f, 't');
+				ndb_filter_add_str_element(f, argv[1]);
+				ndb_filter_end_field(f);
+				argv += 2;
+				argc -= 2;
+			} else if (!strcmp(argv[0], "--search") || !strcmp(argv[0], "-S")) {
+				if (current_field) {
+					ndb_filter_end_field(f);
+					current_field = 0;
+				}
+				ndb_filter_start_field(f, NDB_FILTER_SEARCH);
 				ndb_filter_add_str_element(f, argv[1]);
 				ndb_filter_end_field(f);
 				argv += 2;
