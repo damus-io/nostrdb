@@ -240,7 +240,7 @@ int main(int argc, char *argv[])
 				ndb_filter_add_int_element(f, atoll(argv[1]));
 				argv += 2;
 				argc -= 2;
-			} else if (!strcmp(argv[0], "-l")) {
+			} else if (!strcmp(argv[0], "-l") || !strcmp(argv[0], "--limit")) {
 				limit = atol(argv[1]);
 				if (current_field) {
 					ndb_filter_end_field(f);
