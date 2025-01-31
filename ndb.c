@@ -281,8 +281,11 @@ int main(int argc, char *argv[])
 				argv += 2;
 				argc -= 2;
 			} else if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--author")) {
-				if (current_field != NDB_FILTER_AUTHORS) {
+				if (current_field) {
 					ndb_filter_end_field(f);
+					current_field = 0;
+				}
+				if (current_field != NDB_FILTER_AUTHORS)
 					ndb_filter_start_field(f, NDB_FILTER_AUTHORS);
 				}
 				current_field = NDB_FILTER_AUTHORS;
