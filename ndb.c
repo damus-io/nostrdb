@@ -17,7 +17,7 @@ static int usage()
 	printf("usage: ndb [--skip-verification] [-d db_dir] <command>\n\n");
 	printf("commands\n\n");
 	printf("	stat\n");
-	printf("	query [-k 42] [-k 1337] [--search term] [-l 42] [-e abcdef...] [-a abcdef... -a bcdef...]\n");
+	printf("	query [--kind 42]  [--search term] [--limit 42] [-e abcdef...] [--author abcdef... -a bcdef...]\n");
 	printf("	profile <pubkey>\n");
 	printf("	print-search-keys\n");
 	printf("	print-kind-keys\n");
