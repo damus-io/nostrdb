@@ -195,7 +195,7 @@ int main(int argc, char *argv[])
 		current_field = 0;
 
 		for (i = 0; argc && i < 1000; i++) {
-			if (!strcmp(argv[0], "-k")) {
+			if (!strcmp(argv[0], "-k") || !strcmp(argv[0], "--kind")) {
 				if (current_field != NDB_FILTER_KINDS) {
 					ndb_filter_end_field(f);
 					ndb_filter_start_field(f, NDB_FILTER_KINDS);
@@ -280,7 +280,7 @@ int main(int argc, char *argv[])
 
 				argv += 2;
 				argc -= 2;
-			} else if (!strcmp(argv[0], "-a")) {
+			} else if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--author")) {
 				if (current_field != NDB_FILTER_AUTHORS)
 					ndb_filter_start_field(f, NDB_FILTER_AUTHORS);
 				current_field = NDB_FILTER_AUTHORS;
