@@ -1,4 +1,6 @@
 tags
+build.log
+*.swp
 data.mdb
 lock.mdb
 v0-lock
