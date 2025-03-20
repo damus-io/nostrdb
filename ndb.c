@@ -285,7 +285,7 @@ int main(int argc, char *argv[])
 					ndb_filter_end_field(f);
 					current_field = 0;
 				}
-				if (current_field != NDB_FILTER_AUTHORS)
+				if (current_field != NDB_FILTER_AUTHORS) {
 					ndb_filter_start_field(f, NDB_FILTER_AUTHORS);
 				}
 				current_field = NDB_FILTER_AUTHORS;
