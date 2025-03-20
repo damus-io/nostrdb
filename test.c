@@ -1781,12 +1781,13 @@ static void test_filter_parse_search_json() {
 
 static void test_note_relay_index()
 {
+	const char *relay;
 	struct ndb *ndb;
 	struct ndb_txn txn;
 	struct ndb_config config;
 	struct ndb_note *note;
 	struct ndb_filter filter, *f = &filter;
-	uint64_t note_id, subid;
+	uint64_t note_key, subid;
 	struct ndb_ingest_meta meta;
 
 	const char *json = "[\"EVENT\",{\"id\": \"0f20295584a62d983a4fa85f7e50b460cd0049f94d8cd250b864bb822a747114\",\"pubkey\": \"55c882cf4a255ac66fc8507e718a1d1283ba46eb7d678d0573184dada1a4f376\",\"created_at\": 1742498339,\"kind\": 1,\"tags\": [],\"content\": \"hi\",\"sig\": \"ae1218280f554ea0b04ae09921031493d60fb7831dfd2dbd7086efeace2719a46842ce80342ebc002da8943df02e98b8b4abb4629c7103ca2114e6c4425f97fe\"}]";
@@ -1809,11 +1810,11 @@ static void test_note_relay_index()
 	ndb_ingest_meta_init(&meta, 1, "wss://relay.damus.io");
 	assert(ndb_process_event_with(ndb, json, strlen(json), &meta));
 
-	assert(ndb_wait_for_notes(ndb, subid, &note_id, 1) == 1);
-	assert(note_id > 0);
+	assert(ndb_wait_for_notes(ndb, subid, &note_key, 1) == 1);
+	assert(note_key > 0);
 	assert(ndb_begin_query(ndb, &txn));
 
-	assert((note = ndb_get_note_by_key(&txn, note_id, NULL)));
+	assert((note = ndb_get_note_by_key(&txn, note_key, NULL)));
 
 	ndb_end_query(&txn);
 
@@ -1826,8 +1827,27 @@ static void test_note_relay_index()
 
 	// 4) Check that we have both relays
 	assert(ndb_begin_query(ndb, &txn));
-	assert(ndb_note_seen_on_relay(&txn, note_id, "wss://relay.damus.io"));
-	assert(ndb_note_seen_on_relay(&txn, note_id, "wss://relay.mit.edu"));
+	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://relay.damus.io"));
+	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://relay.mit.edu"));
+
+	// walk the relays
+	struct ndb_note_relay_iterator iter;
+
+	assert(ndb_note_relay_iterate_start(&txn, &iter, note_key));
+
+	relay = ndb_note_relay_iterate_next(&iter);
+	assert(relay);
+	assert(!strcmp(relay, "wss://relay.damus.io"));
+
+	relay = ndb_note_relay_iterate_next(&iter);
+	assert(relay);
+	assert(!strcmp(relay, "wss://relay.mit.edu"));
+
+	assert(ndb_note_relay_iterate_next(&iter) == NULL);
+	ndb_note_relay_iterate_close(&iter);
+	assert(iter.mdb_cur == NULL);
+
+	assert(ndb_end_query(&txn));
 
 	// Cleanup
 	ndb_destroy(ndb);
