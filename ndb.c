@@ -22,6 +22,7 @@ static int usage()
 	printf("	print-search-keys\n");
 	printf("	print-kind-keys\n");
 	printf("	print-tag-keys\n");
+	printf("	print-relay-kind-index-keys\n");
 	printf("	import <line-delimited json file>\n\n");
 	printf("settings\n\n");
 	printf("	--skip-verification  skip signature validation\n");
@@ -98,6 +99,7 @@ static void print_stats(struct ndb_stat *stat)
 int ndb_print_search_keys(struct ndb_txn *txn);
 int ndb_print_kind_keys(struct ndb_txn *txn);
 int ndb_print_tag_index(struct ndb_txn *txn);
+int ndb_print_relay_kind_index(struct ndb_txn *txn);
 
 static void print_note(struct ndb_note *note)
 {
@@ -351,7 +353,11 @@ int main(int argc, char *argv[])
 		ndb_begin_query(ndb, &txn);
 		ndb_print_tag_index(&txn);
 		ndb_end_query(&txn);
-	}  else if (argc == 3 && !strcmp(argv[1], "profile")) {
+	} else if (argc == 2 && !strcmp(argv[1], "print-relay-kind-index-keys")) {
+		ndb_begin_query(ndb, &txn);
+		ndb_print_relay_kind_index(&txn);
+		ndb_end_query(&txn);
+	} else if (argc == 3 && !strcmp(argv[1], "profile")) {
 		pk_str = argv[2];
 		if (!hex_decode(pk_str, strlen(pk_str), tmp_id, sizeof(tmp_id))) {
 			fprintf(stderr, "failed to decode hex pubkey '%s'\n", pk_str);
