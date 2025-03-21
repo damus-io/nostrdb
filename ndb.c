@@ -18,7 +18,8 @@ static int usage()
 	printf("commands\n\n");
 	printf("	stat\n");
 	printf("	query [--kind 42]  [--search term] [--limit 42] [-e abcdef...] [--author abcdef... -a bcdef...]\n");
-	printf("	profile <pubkey>\n");
+	printf("	profile <pubkey>                            print the raw profile data for a pubkey\n");
+	printf("	note-relays <note-id>                       list the relays a given note id has been seen on\n");
 	printf("	print-search-keys\n");
 	printf("	print-kind-keys\n");
 	printf("	print-tag-keys\n");
@@ -145,7 +146,7 @@ int main(int argc, char *argv[])
 	unsigned char tmp_id[32];
 
 	// profiles
-	const char *pk_str;
+	const char *arg_str;
 	void *ptr;
 	size_t profile_len;
 	uint64_t key;
@@ -175,7 +176,7 @@ int main(int argc, char *argv[])
 
 	ndb_config_set_flags(&config, flags);
 
-	fprintf(stderr, "using db '%s'\n", dir);
+	//fprintf(stderr, "using db '%s'\n", dir);
 
 	if (!ndb_init(&ndb, dir, &config)) {
 		return 2;
@@ -357,10 +358,38 @@ int main(int argc, char *argv[])
 		ndb_begin_query(ndb, &txn);
 		ndb_print_relay_kind_index(&txn);
 		ndb_end_query(&txn);
+	} else if (argc == 3 && !strcmp(argv[1], "note-relays")) {
+		struct ndb_note_relay_iterator iter;
+		const char *relay;
+
+		ndb_begin_query(ndb, &txn);
+		arg_str = argv[2];
+
+		if (!hex_decode(arg_str, strlen(arg_str), tmp_id, sizeof(tmp_id))) {
+			fprintf(stderr, "failed to decode hex pubkey '%s'\n", arg_str);
+			res = 88;
+			goto cleanup;
+		}
+
+		if (!(key = ndb_get_notekey_by_id(&txn, tmp_id))) {
+			fprintf(stderr, "noteid '%s' not found\n", arg_str);
+			res = 89;
+			goto cleanup;
+		}
+
+		ndb_note_relay_iterate_start(&txn, &iter, key);
+
+		for (i = 0; (relay = ndb_note_relay_iterate_next(&iter)); i++) {
+			printf("%s\n", relay);
+		}
+
+		fprintf(stderr, "seen on %d relays\n", i);
+
+		ndb_end_query(&txn);
 	} else if (argc == 3 && !strcmp(argv[1], "profile")) {
-		pk_str = argv[2];
-		if (!hex_decode(pk_str, strlen(pk_str), tmp_id, sizeof(tmp_id))) {
-			fprintf(stderr, "failed to decode hex pubkey '%s'\n", pk_str);
+		arg_str = argv[2];
+		if (!hex_decode(arg_str, strlen(arg_str), tmp_id, sizeof(tmp_id))) {
+			fprintf(stderr, "failed to decode hex pubkey '%s'\n", arg_str);
 			res = 88;
 			goto cleanup;
 		}
