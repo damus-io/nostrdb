@@ -1812,6 +1812,8 @@ static void test_note_relay_index()
 	assert(ndb_process_event_with(ndb, json, strlen(json), &meta));
 	meta.relay = "wss://nostr.mom";
 	assert(ndb_process_event_with(ndb, json, strlen(json), &meta));
+	meta.relay = "ws://monad.jb55.com:8080";
+	assert(ndb_process_event_with(ndb, json, strlen(json), &meta));
 
 	assert(ndb_wait_for_notes(ndb, subid, &note_key, 1) == 1);
 	assert(note_key > 0);
@@ -1823,11 +1825,16 @@ static void test_note_relay_index()
 	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://relay.damus.io"));
 	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://relay.mit.edu"));
 	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://nostr.mom"));
+	assert(ndb_note_seen_on_relay(&txn, note_key, "ws://monad.jb55.com:8080"));
 
 	// walk the relays
 	struct ndb_note_relay_iterator iter;
 
 	assert(ndb_note_relay_iterate_start(&txn, &iter, note_key));
+
+	relay = ndb_note_relay_iterate_next(&iter);
+	assert(relay);
+	assert(!strcmp(relay, "ws://monad.jb55.com:8080"));
 
 	relay = ndb_note_relay_iterate_next(&iter);
 	assert(relay);
