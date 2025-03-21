@@ -1785,7 +1785,6 @@ static void test_note_relay_index()
 	struct ndb *ndb;
 	struct ndb_txn txn;
 	struct ndb_config config;
-	struct ndb_note *note;
 	struct ndb_filter filter, *f = &filter;
 	uint64_t note_key, subid;
 	struct ndb_ingest_meta meta;
@@ -1809,31 +1808,30 @@ static void test_note_relay_index()
 
 	ndb_ingest_meta_init(&meta, 1, "wss://relay.damus.io");
 	assert(ndb_process_event_with(ndb, json, strlen(json), &meta));
+	meta.relay = "wss://relay.mit.edu";
+	assert(ndb_process_event_with(ndb, json, strlen(json), &meta));
+	meta.relay = "wss://nostr.mom";
+	assert(ndb_process_event_with(ndb, json, strlen(json), &meta));
 
 	assert(ndb_wait_for_notes(ndb, subid, &note_key, 1) == 1);
 	assert(note_key > 0);
-	assert(ndb_begin_query(ndb, &txn));
 
-	assert((note = ndb_get_note_by_key(&txn, note_key, NULL)));
-
-	ndb_end_query(&txn);
-
-	// 3) Ingest it again from a new relay: “relay2”
-	ndb_ingest_meta_init(&meta, 1, "wss://relay.mit.edu");
-	assert(ndb_process_event_with(ndb, json, strlen(json), &meta));
-
-	// TODO: subscribe to this somehow if we have a relay filter?
 	sleep(1);
 
 	// 4) Check that we have both relays
 	assert(ndb_begin_query(ndb, &txn));
 	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://relay.damus.io"));
 	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://relay.mit.edu"));
+	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://nostr.mom"));
 
 	// walk the relays
 	struct ndb_note_relay_iterator iter;
 
 	assert(ndb_note_relay_iterate_start(&txn, &iter, note_key));
+
+	relay = ndb_note_relay_iterate_next(&iter);
+	assert(relay);
+	assert(!strcmp(relay, "wss://nostr.mom"));
 
 	relay = ndb_note_relay_iterate_next(&iter);
 	assert(relay);
