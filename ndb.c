@@ -15,9 +15,12 @@
 static int usage()
 {
 	printf("usage: ndb [--skip-verification] [-d db_dir] <command>\n\n");
+
 	printf("commands\n\n");
+
 	printf("	stat\n");
-	printf("	query [--kind 42]  [--search term] [--limit 42] [-e abcdef...] [--author abcdef... -a bcdef...]\n");
+	printf("	query [--kind 42] [--notekey key] [--search term] [--limit 42] \n");
+	printf("	      [-e abcdef...] [--author abcdef... -a bcdef...] [--relay wss://relay.damus.io]\n");
 	printf("	profile <pubkey>                            print the raw profile data for a pubkey\n");
 	printf("	note-relays <note-id>                       list the relays a given note id has been seen on\n");
 	printf("	print-search-keys\n");
@@ -25,7 +28,9 @@ static int usage()
 	printf("	print-tag-keys\n");
 	printf("	print-relay-kind-index-keys\n");
 	printf("	import <line-delimited json file>\n\n");
+
 	printf("settings\n\n");
+
 	printf("	--skip-verification  skip signature validation\n");
 	printf("	-d <db_dir>          set database directory\n");
 	return 1;
@@ -144,6 +149,8 @@ int main(int argc, char *argv[])
 	struct ndb_config config;
 	struct timespec t1, t2;
 	unsigned char tmp_id[32];
+	char buf[1024];
+	buf[0] = 0;
 
 	// profiles
 	const char *arg_str;
@@ -207,6 +214,10 @@ int main(int argc, char *argv[])
 				ndb_filter_add_int_element(f, atoll(argv[1]));
 				argv += 2;
 				argc -= 2;
+			} else if (!strcmp(argv[0], "--notekey")) {
+				key = atol(argv[1]);
+				argv += 2;
+				argc -= 2;
 			} else if (!strcmp(argv[0], "-l") || !strcmp(argv[0], "--limit")) {
 				limit = atol(argv[1]);
 				if (current_field) {
@@ -255,6 +266,16 @@ int main(int argc, char *argv[])
 					current_field = 0;
 				}
 				ndb_filter_start_field(f, NDB_FILTER_SEARCH);
+				ndb_filter_add_str_element(f, argv[1]);
+				ndb_filter_end_field(f);
+				argv += 2;
+				argc -= 2;
+			} else if (!strcmp(argv[0], "--relay") || !strcmp(argv[0], "-r")) {
+				if (current_field) {
+					ndb_filter_end_field(f);
+					current_field = 0;
+				}
+				ndb_filter_start_field(f, NDB_FILTER_RELAYS);
 				ndb_filter_add_str_element(f, argv[1]);
 				ndb_filter_end_field(f);
 				argv += 2;
@@ -316,11 +337,23 @@ int main(int argc, char *argv[])
 			current_field = 0;
 		}
 
+		ndb_filter_end(f);
+
+		ndb_filter_json(f, buf, sizeof(buf));
+		fprintf(stderr, "using filter '%s'\n", buf);
+
 		struct ndb_query_result results[10000];
 		ndb_begin_query(ndb, &txn);
 
+
 		clock_gettime(CLOCK_MONOTONIC, &t1);
-		if (!ndb_query(&txn, f, 1, results, 10000, &count)) {
+		if (key) {
+			results[0].note = ndb_get_note_by_key(&txn, key, NULL);
+			if (results[0].note != NULL)
+				count = 1;
+			else
+				count = 0;
+		} else if (!ndb_query(&txn, f, 1, results, 10000, &count)) {
 			fprintf(stderr, "query error\n");
 		}
 		clock_gettime(CLOCK_MONOTONIC, &t2);
