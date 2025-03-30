@@ -1857,7 +1857,48 @@ static void test_note_relay_index()
 	// Cleanup
 	ndb_destroy(ndb);
 
-	printf("test_note_relay_index passed!\n");
+	printf("ok test_note_relay_index\n");
+}
+
+static void test_nip50_profile_search() {
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_config config;
+	struct ndb_filter filter, *f = &filter;
+	int count;
+	struct ndb_query_result result;
+
+	// Initialize NDB
+	ndb_default_config(&config);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	// 1) Ingest the note from “relay1”.
+	// Use ndb_ingest_meta_init to record the relay.
+
+	unsigned char expected_id[32] = {
+	  0x22, 0x05, 0x0b, 0x6d, 0x97, 0xbb, 0x9d, 0xa0, 0x9e, 0x90, 0xed, 0x0c,
+	  0x6d, 0xd9, 0x5e, 0xed, 0x1d, 0x42, 0x3e, 0x27, 0xd5, 0xcb, 0xa5, 0x94,
+	  0xd2, 0xb4, 0xd1, 0x3a, 0x55, 0x43, 0x09, 0x07 };
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_SEARCH));
+	assert(ndb_filter_add_str_element(f, "Selene"));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 0));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	ndb_begin_query(ndb, &txn);
+	ndb_query(&txn, f, 1, &result, 1, &count);
+	ndb_end_query(&txn);
+
+	assert(count == 1);
+	assert(!memcmp(ndb_note_id(result.note), expected_id, 32));
+
+	// Cleanup
+	ndb_destroy(ndb);
+
+	printf("ok test_nip50_profile_search\n");
 }
 
 int main(int argc, const char *argv[]) {
@@ -1887,6 +1928,7 @@ int main(int argc, const char *argv[]) {
 	test_profile_updates();
 	test_reaction_counter();
 	test_load_profiles();
+	test_nip50_profile_search();
 	test_basic_event();
 	test_empty_tags();
 	test_parse_json();
