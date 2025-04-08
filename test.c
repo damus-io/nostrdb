@@ -1901,7 +1901,105 @@ static void test_nip50_profile_search() {
 	printf("ok test_nip50_profile_search\n");
 }
 
+static bool only_threads_filter(void *ctx, struct ndb_note *note)
+{
+	struct ndb_iterator it;
+	struct ndb_str str;
+	const char *c;
+
+	ndb_tags_iterate_start(note, &it);
+
+	while (ndb_tags_iterate_next(&it)) {
+		if (ndb_tag_count(it.tag) < 4)
+			continue;
+
+		str = ndb_iter_tag_str(&it, 0);
+		if (str.str[0] != 'e')
+			continue;
+
+		str = ndb_iter_tag_str(&it, 3);
+		if (str.flag == NDB_PACKED_ID)
+			continue;
+
+		if (str.str[0] != 'r')
+			continue;
+
+		// if it has a reply or root marker, then this is a reply
+		c = &str.str[1];
+		if (*c++ == 'e' && *c++ == 'p' && *c++ == 'l' && *c++ == 'y' && *c++ == '\0')  {
+			return false;
+		}
+
+		c = &str.str[1];
+		if (*c++ == 'o' && *c++ == 'o' && *c++ == 't' && *c++ == '\0') {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static void test_custom_filter()
+{
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_config config;
+	struct ndb_filter filter, *f = &filter;
+	struct ndb_filter filter2, *f2 = &filter2;
+	int count;
+	uint64_t sub_id, note_key;
+	struct ndb_query_result results[2];
+	struct ndb_ingest_meta meta;
+
+	const char *root = "[\"EVENT\",{\"id\":\"3d3fba391ce6f83cf336b161f3de90bb2610c20dfb9f4de3a6dacb6b11362971\",\"pubkey\":\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\",\"created_at\":1744084064,\"kind\":1,\"tags\":[],\"content\":\"dire wolves are back LFG\",\"sig\":\"340a6ee8a859a1d78e50551dae7b24aaba7137647a6ac295acc97faa06ba33310593f5b4081dad188aee81266144f2312afb249939a2e07c14ca167af08e998f\"}]";
+
+	const char *reply_json = "[\"EVENT\",{\"id\":\"3a338522ee1e27056acccee65849de8deba426db1c71cbd61d105280bbb67ed2\",\"pubkey\":\"7cc328a08ddb2afdf9f9be77beff4c83489ff979721827d628a542f32a247c0e\",\"created_at\":1744151551,\"kind\":1,\"tags\":[[\"alt\",\"A short note: pokerdeck ♠️🦍🐧\"],[\"e\",\"086ccb1873fa10d4338713f24b034e17e543d8ad79c15ff39cf59f4d0cb7a2d6\",\"wss://nostr.wine/\",\"root\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\"],[\"p\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\",\"wss://nostr.wine\"]],\"content\":\"pokerdeck ♠️🦍🐧\",\"sig\":\"1099e47ba1ba962a8f2617c139e240d0369d81e70241dce7e73340e3230d8a3039c07114ed21f0e765e40f1b71fc2770fa5585994d27d2ece3b14e7b98f988d3\"}]";
+
+	ndb_default_config(&config);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_CUSTOM));
+	assert(ndb_filter_add_custom_filter_element(f, only_threads_filter, NULL));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	assert(ndb_filter_init(f2));
+	assert(ndb_filter_start_field(f2, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f2, 1));
+	ndb_filter_end_field(f2);
+	ndb_filter_end(f2);
+
+	sub_id = ndb_subscribe(ndb, f2, 1);
+
+	ndb_ingest_meta_init(&meta, 1, "test");
+
+	assert(ndb_process_event_with(ndb, root, strlen(root), &meta));
+	assert(ndb_process_event_with(ndb, reply_json, strlen(reply_json), &meta));
+
+	assert(ndb_wait_for_notes(ndb, sub_id, &note_key, 2) == 2);
+
+	ndb_begin_query(ndb, &txn);
+	ndb_query(&txn, f, 1, results, 2, &count);
+	ndb_end_query(&txn);
+
+	assert(count == 1);
+	assert(ndb_note_id(results[0].note)[0] == 0x3d);
+
+	// Cleanup
+	ndb_destroy(ndb);
+
+	printf("ok test_custom_filter\n");
+}
+
 int main(int argc, const char *argv[]) {
+	test_custom_filter();
 	test_note_relay_index();
 	test_filter_search();
 	test_filter_parse_search_json();
