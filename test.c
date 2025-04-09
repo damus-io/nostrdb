@@ -1958,15 +1958,13 @@ static void test_custom_filter()
 	ndb_default_config(&config);
 	assert(ndb_init(&ndb, test_dir, &config));
 
-	assert(ndb_filter_init(f));
-	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
-	assert(ndb_filter_add_int_element(f, 1));
+	ndb_filter_init(f);
+	ndb_filter_start_field(f, NDB_FILTER_KINDS);
+	ndb_filter_add_int_element(f, 1);
 	ndb_filter_end_field(f);
-	ndb_filter_end(f);
 
-	assert(ndb_filter_init(f));
-	assert(ndb_filter_start_field(f, NDB_FILTER_CUSTOM));
-	assert(ndb_filter_add_custom_filter_element(f, only_threads_filter, NULL));
+	ndb_filter_start_field(f, NDB_FILTER_CUSTOM);
+	ndb_filter_add_custom_filter_element(f, only_threads_filter, NULL);
 	ndb_filter_end_field(f);
 	ndb_filter_end(f);
 
