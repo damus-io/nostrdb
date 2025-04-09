@@ -19,7 +19,7 @@ static int usage()
 	printf("commands\n\n");
 
 	printf("	stat\n");
-	printf("	query [--kind 42] [--notekey key] [--search term] [--limit 42] \n");
+	printf("	query [--kind 42] [--id abcdef...] [--notekey key] [--search term] [--limit 42] \n");
 	printf("	      [-e abcdef...] [--author abcdef... -a bcdef...] [--relay wss://relay.damus.io]\n");
 	printf("	profile <pubkey>                            print the raw profile data for a pubkey\n");
 	printf("	note-relays <note-id>                       list the relays a given note id has been seen on\n");
@@ -282,6 +282,23 @@ int main(int argc, char *argv[])
 				ndb_filter_end_field(f);
 				argv += 2;
 				argc -= 2;
+			} else if (!strcmp(argv[0], "-i") || !strcmp(argv[0], "--id")) {
+				if (current_field != NDB_FILTER_IDS) {
+					ndb_filter_end_field(f);
+					ndb_filter_start_field(f, NDB_FILTER_IDS);
+					current_field = NDB_FILTER_IDS;
+				}
+
+				len = strlen(argv[1]);
+				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
+					fprintf(stderr, "invalid hex id\n");
+					res = 42;
+					goto cleanup;
+				}
+
+				ndb_filter_add_id_element(f, tmp_id);
+				argv += 2;
+				argc -= 2;
 			} else if (!strcmp(argv[0], "-e")) {
 				if (current_field != 'e') {
 					if (!ndb_filter_start_tag_field(f, 'e')) {
@@ -307,14 +324,11 @@ int main(int argc, char *argv[])
 				argv += 2;
 				argc -= 2;
 			} else if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--author")) {
-				if (current_field) {
-					ndb_filter_end_field(f);
-					current_field = 0;
-				}
 				if (current_field != NDB_FILTER_AUTHORS) {
+					ndb_filter_end_field(f);
 					ndb_filter_start_field(f, NDB_FILTER_AUTHORS);
+					current_field = NDB_FILTER_AUTHORS;
 				}
-				current_field = NDB_FILTER_AUTHORS;
 
 				len = strlen(argv[1]);
 				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
@@ -331,6 +345,10 @@ int main(int argc, char *argv[])
 
 				argv += 2;
 				argc -= 2;
+			} else {
+				fprintf(stderr, "unrecognized option: %s\n", argv[0]);
+				res = 100;
+				goto cleanup;
 			}
 		}
 
