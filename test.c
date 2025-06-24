@@ -20,7 +20,14 @@
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
 int ndb_print_kind_keys(struct ndb_txn *txn);
-static const char *test_dir = "./testdata/db";
+#define TEST_DIR "./testdata/db"
+static const char *test_dir = TEST_DIR;
+
+static void delete_test_db() {
+    // Delete ./testdata/db/data.mdb
+    unlink(TEST_DIR "/data.mdb");
+    unlink(TEST_DIR "/data.lock");
+}
 
 static NdbProfile_table_t lookup_profile(struct ndb_txn *txn, uint64_t pk)
 {
@@ -1997,6 +2004,8 @@ static void test_custom_filter()
 }
 
 int main(int argc, const char *argv[]) {
+	delete_test_db();
+
 	test_custom_filter();
 	test_note_relay_index();
 	test_filter_search();

@@ -49,9 +49,7 @@ ndb: ndb.c $(DEPS)
 bindings: bindings-swift bindings-rust bindings-c
 
 check: test
-	rm -rf testdata/db/*.mdb
 	./test
-	rm -rf testdata/db/*.mdb
 
 clean:
 	rm -rf test bench bench-ingest bench-ingest-many $(OBJS)
