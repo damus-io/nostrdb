@@ -630,7 +630,7 @@ static void test_parse_contact_list()
 
 	memcpy(id, ndb_note_id(note), 32);
 	memset(ndb_note_id(note), 0, 32);
-	assert(ndb_calculate_id(note, json, alloc_size));
+	assert(ndb_calculate_id(note, json, alloc_size, ndb_note_id(note)));
 	assert(!memcmp(ndb_note_id(note), id, 32));
 
 	const char* expected_content = 
