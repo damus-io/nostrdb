@@ -1953,7 +1953,7 @@ static void test_custom_filter()
 	struct ndb_config config;
 	struct ndb_filter filter, *f = &filter;
 	struct ndb_filter filter2, *f2 = &filter2;
-	int count;
+	int count, nres = 2;
 	uint64_t sub_id, note_key;
 	struct ndb_query_result results[2];
 	struct ndb_ingest_meta meta;
@@ -1988,7 +1988,8 @@ static void test_custom_filter()
 	assert(ndb_process_event_with(ndb, root, strlen(root), &meta));
 	assert(ndb_process_event_with(ndb, reply_json, strlen(reply_json), &meta));
 
-	assert(ndb_wait_for_notes(ndb, sub_id, &note_key, 2) == 2);
+	for (nres = 2; nres > 0;)
+		nres -= ndb_wait_for_notes(ndb, sub_id, &note_key, 2);
 
 	ndb_begin_query(ndb, &txn);
 	ndb_query(&txn, f, 1, results, 2, &count);
@@ -2007,6 +2008,8 @@ int main(int argc, const char *argv[]) {
 	delete_test_db();
 
 	test_custom_filter();
+	delete_test_db();
+
 	test_note_relay_index();
 	test_filter_search();
 	test_filter_parse_search_json();
