@@ -2004,7 +2004,52 @@ static void test_custom_filter()
 	printf("ok test_custom_filter\n");
 }
 
+void test_replay_attack() {
+	struct ndb_filter filter, *f = &filter;
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_config config;
+	uint64_t note_key, sub_id;
+	int count;
+	struct ndb_query_result results[2];
+	unsigned char expected[] = { 0x1f, 0x5f, 0x21, 0xb2, 0x2e, 0x4c, 0x87, 0xb1, 0xd7, 0xcf, 0x92, 0x71, 0xa1, 0xc8, 0xae, 0xaf, 0x5b, 0x49, 0x06, 0x1a, 0xf2, 0xc0, 0x3c, 0xab, 0x70, 0x6b, 0xbe, 0x2e, 0xbb, 0x9f, 0xef, 0xd9 };
+
+	// maleated note
+	const char *bad_note = "[\"EVENT\",\"blah\",{\"id\":\"3d3fba391ce6f83cf336b161f3de90bb2610c20dfb9f4de3a6dacb6b11362971\",\"pubkey\":\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\",\"created_at\":1744084064,\"kind\":1,\"tags\":[],\"content\":\"dire wolves are cool\",\"sig\":\"340a6ee8a859a1d78e50551dae7b24aaba7137647a6ac295acc97faa06ba33310593f5b4081dad188aee81266144f2312afb249939a2e07c14ca167af08e998f\"}]";
+
+	const char *ok_note = "[\"EVENT\",\"blah\",{\"id\": \"1f5f21b22e4c87b1d7cf9271a1c8aeaf5b49061af2c03cab706bbe2ebb9fefd9\",\"pubkey\": \"73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca\",\"created_at\": 1750785986,\"kind\": 1,\"tags\": [],\"content\": \"ok\",\"sig\": \"bde9ee6933b01c11a9881a3ea4730c6e7f7d952c165fb7ab3f77488c5f73e6d60ce25a32386f2e1d0244c24fd840f25af5d2d04dc6d229ec0f67c7782e8879d9\"}]";
+
+	ndb_default_config(&config);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	ndb_filter_init(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	sub_id = ndb_subscribe(ndb, f, 1);
+
+	ndb_process_event(ndb, bad_note, strlen(bad_note));
+	ndb_process_event(ndb, ok_note, strlen(bad_note));
+
+	assert(ndb_wait_for_notes(ndb, sub_id, &note_key, 1) == 1);
+
+	ndb_begin_query(ndb, &txn);
+	ndb_query(&txn, f, 1, results, 2, &count);
+	ndb_end_query(&txn);
+
+	assert(count == 1);
+	assert(memcmp(expected, ndb_note_id(results[0].note), 32) == 0);
+
+	ndb_filter_destroy(f);
+	ndb_destroy(ndb);
+}
+
 int main(int argc, const char *argv[]) {
+	delete_test_db();
+
+	test_replay_attack();
 	delete_test_db();
 
 	test_custom_filter();
