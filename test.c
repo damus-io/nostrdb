@@ -233,6 +233,7 @@ static void test_timeline_query()
 	assert(ndb_query(&txn, &filter, 1, results,
 			 sizeof(results)/sizeof(results[0]), &count));
 	ndb_end_query(&txn);
+	ndb_filter_destroy(&filter);
 
 	assert(count == 10);
 }
@@ -291,6 +292,9 @@ static void test_fetched_at()
 
 	fetched_at = ndb_read_last_profile_fetch(&txn, pubkey);
 	assert(fetched_at == t1);
+
+	ndb_end_query(&txn);
+	ndb_destroy(ndb);
 }
 
 static void test_reaction_counter()
@@ -422,6 +426,7 @@ static void test_profile_updates()
 
 	assert(!strcmp(name, "c"));
 
+	ndb_end_query(&txn);
 	ndb_destroy(ndb);
 	free(json);
 }
@@ -1413,6 +1418,7 @@ static void test_tag_query()
 	assert(!strcmp(ndb_note_content(results[0].note), "hi"));
 
 	ndb_end_query(&txn);
+	ndb_filter_destroy(f);
 	ndb_destroy(ndb);
 }
 
@@ -1491,6 +1497,7 @@ static void test_query()
 	assert(!strcmp(ndb_note_content(results[1].note), "what"));
 
 	ndb_end_query(&txn);
+	ndb_filter_destroy(f);
 	ndb_destroy(ndb);
 }
 
@@ -1614,6 +1621,7 @@ static void test_subscriptions()
 	assert(ndb_num_subscriptions(ndb) == 0);
 
 	ndb_end_query(&txn);
+	ndb_filter_destroy(f);
 	ndb_destroy(ndb);
 }
 
@@ -1675,6 +1683,7 @@ static void test_weird_note_corruption() {
 	assert(i == 1);
 
 	ndb_end_query(&txn);
+	ndb_filter_destroy(f);
 	ndb_destroy(ndb);
 }
 
@@ -1703,6 +1712,9 @@ static void test_filter_eq() {
 	ndb_filter_end(f2);
 
 	assert(ndb_filter_eq(f, f2));
+
+	ndb_filter_destroy(f);
+	ndb_filter_destroy(f2);
 }
 
 static void test_filter_is_subset() {
@@ -1738,6 +1750,9 @@ static void test_filter_is_subset() {
 	assert(ndb_filter_is_subset_of(k, g) == 1);
 	assert(ndb_filter_is_subset_of(ki, k) == 1);
 	assert(ndb_filter_is_subset_of(k, ki) == 0);
+
+	ndb_filter_destroy(g);
+	ndb_filter_destroy(ki);
 }
 
 static void test_filter_search()
@@ -1752,6 +1767,7 @@ static void test_filter_search()
 	ndb_filter_end_field(f);
 
 	assert(ndb_filter_end(f));
+	ndb_filter_destroy(f);
 }
 
 static void test_filter_parse_search_json() {
@@ -1784,6 +1800,8 @@ static void test_filter_parse_search_json() {
 	assert(ndb_filter_json(f, (char *)buf, sizeof(buf)));
 	printf("search json: '%s'\n", (const char *)buf);
 	assert(!strcmp((const char*)buf, json));
+
+	ndb_filter_destroy(f);
 }
 
 static void test_note_relay_index()
@@ -1903,6 +1921,7 @@ static void test_nip50_profile_search() {
 	assert(!memcmp(ndb_note_id(result.note), expected_id, 32));
 
 	// Cleanup
+	ndb_filter_destroy(f);
 	ndb_destroy(ndb);
 
 	printf("ok test_nip50_profile_search\n");
@@ -1954,7 +1973,7 @@ static void test_custom_filter()
 	struct ndb_filter filter, *f = &filter;
 	struct ndb_filter filter2, *f2 = &filter2;
 	int count, nres = 2;
-	uint64_t sub_id, note_key;
+	uint64_t sub_id, note_keys[2];
 	struct ndb_query_result results[2];
 	struct ndb_ingest_meta meta;
 
@@ -1989,7 +2008,7 @@ static void test_custom_filter()
 	assert(ndb_process_event_with(ndb, reply_json, strlen(reply_json), &meta));
 
 	for (nres = 2; nres > 0;)
-		nres -= ndb_wait_for_notes(ndb, sub_id, &note_key, 2);
+		nres -= ndb_wait_for_notes(ndb, sub_id, note_keys, 2);
 
 	ndb_begin_query(ndb, &txn);
 	ndb_query(&txn, f, 1, results, 2, &count);
