@@ -362,9 +362,10 @@ int main(int argc, char *argv[])
 		ndb_filter_json(f, buf, sizeof(buf));
 		fprintf(stderr, "using filter '%s'\n", buf);
 
-		struct ndb_query_result results[10000];
+		int rsize = 30000;
+		struct ndb_query_result *results = malloc(sizeof(struct ndb_query_result) * rsize);
+		assert(results);
 		ndb_begin_query(ndb, &txn);
-
 
 		clock_gettime(CLOCK_MONOTONIC, &t1);
 		if (key) {
@@ -373,7 +374,7 @@ int main(int argc, char *argv[])
 				count = 1;
 			else
 				count = 0;
-		} else if (!ndb_query(&txn, f, 1, results, 10000, &count)) {
+		} else if (!ndb_query(&txn, f, 1, results, rsize, &count)) {
 			fprintf(stderr, "query error\n");
 		}
 		clock_gettime(CLOCK_MONOTONIC, &t2);
