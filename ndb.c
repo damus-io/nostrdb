@@ -387,7 +387,9 @@ int main(int argc, char *argv[])
 		}
 
 		ndb_end_query(&txn);
+		ndb_filter_destroy(f);
 
+		free(results);
 	} else if (argc == 3 && !strcmp(argv[1], "import")) {
 		if (!strcmp(argv[2], "-")) {
 			ndb_process_events_stream(ndb, stdin);
