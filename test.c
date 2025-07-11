@@ -917,6 +917,7 @@ static void test_parse_filter_json()
 		}
 	}
 
+	ndb_filter_destroy(f);
 }
 
 static void test_parse_json() {
@@ -1752,6 +1753,7 @@ static void test_filter_is_subset() {
 	assert(ndb_filter_is_subset_of(k, ki) == 0);
 
 	ndb_filter_destroy(g);
+	ndb_filter_destroy(k);
 	ndb_filter_destroy(ki);
 }
 
@@ -1880,6 +1882,7 @@ static void test_note_relay_index()
 	assert(ndb_end_query(&txn));
 
 	// Cleanup
+	ndb_filter_destroy(f);
 	ndb_destroy(ndb);
 
 	printf("ok test_note_relay_index\n");
@@ -2018,6 +2021,8 @@ static void test_custom_filter()
 	assert(ndb_note_id(results[0].note)[0] == 0x3d);
 
 	// Cleanup
+	ndb_filter_destroy(f);
+	ndb_filter_destroy(f2);
 	ndb_destroy(ndb);
 
 	printf("ok test_custom_filter\n");
