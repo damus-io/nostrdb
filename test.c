@@ -76,11 +76,12 @@ static void test_filters()
 	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS) == 0);
 	assert(ndb_filter_start_field(f, NDB_FILTER_TAGS) == 0);
 	ndb_filter_end_field(f);
-	ndb_filter_end(f);
 
 	// should be sorted after end
 	assert(current->elements[0] == 2);
 	assert(current->elements[1] == 1337);
+
+	ndb_filter_end(f);
 
 	// try matching the filter
 	assert(ndb_filter_matches(f, note));
@@ -1752,7 +1753,6 @@ static void test_filter_is_subset() {
 	assert(ndb_filter_is_subset_of(ki, k) == 1);
 	assert(ndb_filter_is_subset_of(k, ki) == 0);
 
-	ndb_filter_destroy(g);
 	ndb_filter_destroy(k);
 	ndb_filter_destroy(ki);
 }
