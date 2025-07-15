@@ -1,0 +1,4 @@
+delete note
+delete note indices
+when replacing kind0, delete profile as well
+delete profile index
