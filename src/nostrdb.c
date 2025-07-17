@@ -591,6 +591,11 @@ int ndb_filter_end(struct ndb_filter *filter)
 	size_t orig_size;
 #endif
 	size_t data_len, elem_len;
+	unsigned char *rel;
+
+	assert(filter);
+	assert(filter->elem_buf.start);
+
 	if (filter->finalized == 1)
 		return 0;
 
@@ -609,7 +614,10 @@ int ndb_filter_end(struct ndb_filter *filter)
 	memmove(filter->elem_buf.p, filter->data_buf.start, data_len);
 
 	// realloc the whole thing
-	filter->elem_buf.start = realloc(filter->elem_buf.start, elem_len + data_len);
+	rel = realloc(filter->elem_buf.start, elem_len + data_len);
+	if (rel) 
+		filter->elem_buf.start = rel;
+	assert(filter->elem_buf.start);
 	filter->elem_buf.end = filter->elem_buf.start + elem_len;
 	filter->elem_buf.p = filter->elem_buf.end;
 
@@ -2666,13 +2674,16 @@ void ndb_profile_record_builder_init(struct ndb_profile_record_builder *b)
 
 void ndb_profile_record_builder_free(struct ndb_profile_record_builder *b)
 {
-	if (b->builder)
-		free(b->builder);
 	if (b->flatbuf)
-		free(b->flatbuf);
+		flatcc_builder_aligned_free(b->flatbuf);
+	if (b->builder) {
+		flatcc_builder_clear(b->builder);
+		free(b->builder);
+	}
 
 	b->builder = NULL;
 	b->flatbuf = NULL;
+
 }
 
 int ndb_process_profile_note(struct ndb_note *note,
@@ -3379,7 +3390,7 @@ static int ndb_write_reaction_stats(struct ndb_txn *txn, struct ndb_note *note)
 
 	if (root == NULL) {
 		ndb_debug("failed to create note metadata record\n");
-		return 0;
+		goto fail;
 	}
 
 	// metadata is keyed on id because we want to collect stats regardless
@@ -3397,13 +3408,18 @@ static int ndb_write_reaction_stats(struct ndb_txn *txn, struct ndb_note *note)
 
 	if ((rc = mdb_put(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], &key, &val, 0))) {
 		ndb_debug("write reaction stats to db failed: %s\n", mdb_strerror(rc));
-		free(root);
-		return 0;
+		goto fail;
 	}
 
 	free(root);
+	flatcc_builder_clear(&builder);
 
 	return 1;
+
+fail:
+	free(root);
+	flatcc_builder_clear(&builder);
+	return 0;
 }
 
 
@@ -3657,7 +3673,8 @@ static int ndb_query_plan_execute_ids(struct ndb_txn *txn,
 	uint64_t note_id, until, *pint;
 	size_t note_size;
 	unsigned char *id;
-	struct ndb_note_relay_iterator note_relay_iter;
+	struct ndb_note_relay_iterator note_relay_iter = {0};
+	struct ndb_note_relay_iterator *relay_iter = NULL;
 
 	until = UINT64_MAX;
 
@@ -3698,17 +3715,20 @@ static int ndb_query_plan_execute_ids(struct ndb_txn *txn,
 		if (!(note = ndb_get_note_by_key(txn, note_id, &note_size)))
 			continue;
 
-		if (need_relays)
-			ndb_note_relay_iterate_start(txn, &note_relay_iter, note_id);
+		relay_iter = need_relays ? &note_relay_iter : NULL;
+		if (relay_iter)
+			ndb_note_relay_iterate_start(txn, relay_iter, note_id);
 
 		// Sure this particular lookup matched the index query, but
 		// does it match the entire filter? Check! We also pass in
 		// things we've already matched via the filter so we don't have
 		// to check again. This can be pretty important for filters
 		// with a large number of entries.
-		if (!ndb_filter_matches_with(filter, note, 1 << NDB_FILTER_IDS,
-					     need_relays ? &note_relay_iter : NULL))
+		if (!ndb_filter_matches_with(filter, note, 1 << NDB_FILTER_IDS, relay_iter)) {
+			ndb_note_relay_iterate_close(relay_iter);
 			continue;
+		}
+		ndb_note_relay_iterate_close(relay_iter);
 
 		ndb_query_result_init(&res, note, note_size, note_id);
 		if (!push_query_result(results, &res))
@@ -3959,8 +3979,9 @@ static int ndb_query_plan_execute_tags(struct ndb_txn *txn,
 
 		if (!(len = ndb_encode_tag_key(key_buffer, sizeof(key_buffer),
 					       tags->field.tag, tag, taglen,
-					       until)))
-			return 0;
+					       until))) {
+			goto fail;
+		}
 
 		k.mv_data = key_buffer;
 		k.mv_size = len;
@@ -4006,6 +4027,9 @@ next:
 
 	mdb_cursor_close(cur);
 	return 1;
+fail:
+	mdb_cursor_close(cur);
+	return 0;
 }
 
 static int ndb_query_plan_execute_author_kinds(
@@ -4152,12 +4176,12 @@ static int ndb_query_plan_execute_profile_search(
 	// get the authors element after we finalize the filter, since
 	// the data could have moved
 	if (!(els = ndb_filter_find_elements(f, NDB_FILTER_AUTHORS)))
-		return 0;
+		goto fail;
 
 	// grab pointer to pubkey in the filter so that we can
 	// update the filter as we go
 	if (!(filter_pubkey = ndb_filter_get_id_element(f, els, 0)))
-		return 0;
+		goto fail;
 
 	for (i = 0; !query_is_full(results, limit); i++) {
 		if (i == 0) {
@@ -4173,10 +4197,16 @@ static int ndb_query_plan_execute_profile_search(
 
 		// Look up the corresponding note associated with that pubkey
 		if (!ndb_query_plan_execute_author_kinds(txn, f, results, limit))
-			return 0;
+			goto fail;
 	}
 
+	ndb_search_profile_end(&profile_search);
+	ndb_filter_destroy(f);
 	return 1;
+
+fail:
+	ndb_filter_destroy(f);
+	return 0;
 }
 
 static int ndb_query_plan_execute_relay_kinds(
@@ -5598,7 +5628,7 @@ static void *ndb_writer_thread(void *data)
 					free((void*)msg->note.relay);
 			} else if (msg->type == NDB_WRITER_PROFILE) {
 				free(msg->profile.note.note);
-				//ndb_profile_record_builder_free(&msg->profile.record);
+				ndb_profile_record_builder_free(&msg->profile.record);
 			} else if (msg->type == NDB_WRITER_BLOCKS) {
 				ndb_blocks_free(msg->blocks.blocks);
 			} else if (msg->type == NDB_WRITER_NOTE_RELAY) {
@@ -7821,6 +7851,8 @@ int ndb_print_author_kind_index(struct ndb_txn *txn)
 		i++;
 	}
 
+	mdb_cursor_close(cur);
+
 	return i;
 }
 
@@ -7845,6 +7877,8 @@ int ndb_print_relay_kind_index(struct ndb_txn *txn)
 		i++;
 	}
 
+	mdb_cursor_close(cur);
+
 	return i;
 }
 
@@ -7863,6 +7897,8 @@ int ndb_print_tag_index(struct ndb_txn *txn)
 		print_tag_kv(txn, &k, &v);
 		i++;
 	}
+
+	mdb_cursor_close(cur);
 
 	return 1;
 }
@@ -7885,6 +7921,8 @@ int ndb_print_kind_keys(struct ndb_txn *txn)
 
 		i++;
 	}
+
+	mdb_cursor_close(cur);
 
 	return 1;
 }
@@ -7912,6 +7950,8 @@ int ndb_print_search_keys(struct ndb_txn *txn)
 
 		i++;
 	}
+
+	mdb_cursor_close(cur);
 
 	return 1;
 }

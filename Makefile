@@ -21,6 +21,8 @@ C_BINDINGS_COMMON=$(BINDINGS)/c/flatbuffers_common_builder.h $(BINDINGS)/c/flatb
 C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE) $(C_BINDINGS_META)
 BIN=ndb
 
+SANFLAGS = -fsanitize=leak
+
 # Detect operating system
 UNAME_S := $(shell uname -s)
 
@@ -189,6 +191,8 @@ testdata/db/.dir:
 	@mkdir -p testdata/db
 	touch testdata/db/.dir
 
+test: CFLAGS  += $(SANFLAGS)   # compile test objects with ASan/UBSan
+test: LDFLAGS += $(SANFLAGS)   # link test binary with the sanitizer runtime
 test: test.c $(DEPS) testdata/db/.dir
 	$(CC) $(CFLAGS) test.c $(LDS) $(LDFLAGS) -o $@
 
