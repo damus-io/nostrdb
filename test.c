@@ -183,6 +183,9 @@ static void test_invoice_encoding(const char *bolt11_str)
 	bolt11 = bolt11_decode_minimal(NULL, bolt11_str, &fail);
 	make_cursor(buf, buf + sizeof(buf), &cur);
 
+	if (fail != NULL) {
+		printf("invoice decoding failed: %s\n", fail);
+	}
 	assert(fail == NULL);
 	assert(ndb_encode_invoice(&cur, bolt11));
 	cur.p = cur.start;
@@ -206,9 +209,11 @@ static void test_encode_decode_invoice()
 {
 	const char *deschash = "lnbc12n1pjctuljsp57l6za0xry37prkrz7vuv4324ljnssm8ukr2vrf6qvvrgclsmpyhspp5xqfuk89duzjlt2yg56ym7p3enrfxxltyfpc364qc8nsu3kznkl8shp5eugmd894yph7wq68u09gke5x2hmn7mg3zrwd06fs57gmcrjm0uxsxqyjw5qcqpjrzjqd7yw3w4kvhx8uvcj7qusfw4uqre3j56zjz9t07nd2u55yuya3awsrqdlcqqdzcqqqqqqqqqqqqqqzqqyg9qxpqysgqwm2tsc448ellvf5xem2c95hfvc07lakph9r8hffh704uxqhs22r9s4ly0jel48zv6f7fy8zjkgmjt5h2l4jc9gyj4av42s40qvve2ysqwuega8";
 	const char *desc = "lnbc12u1pjctuklsp5lg8wdhq2g5xfphkqd5k6gf0femt06wfevu94uuqfprc4ggyqma7spp54lmpmz0mhv3lczepdckr0acf3gdany2654u4k2s8fp5xh0yanjhsdq5w3jhxapdd9h8vmmfvdjsxqyjw5qcqpjrzjqgtsq68q0s9wdadpg32gcfu7hslgkhdpaysj2ha3dtnm8882wa6jyzahpqqqpsgqqyqqqqlgqqqqqpsq9q9qxpqysgqdqzhl8gz46nmalhg27stl25z2u7mqtclv3zz223mjwut90m24fa46xqprjewsqys78j2uljfznz5vtefctu6fw7375ee66e62tj965gpcs85tc";
+	const char *problem = "lnbc1230n1p5fetpfpp5mqn7v09jz8pkxl67h4hgd8z2xuqfzfhlw0d4yu5dz4z35ermszaqdq57z0cadhsn78tduylnztscqzzsxqyz5vqrzjqvueefmrckfdwyyu39m0lf24sqzcr9vcrmxrvgfn6empxz7phrjxvrttncqq0lcqqyqqqqlgqqqqqqgq2qsp5mhdv3kgh8y57hd0nezqk0yqhdtkjecnykfxer2k4geg7x34xvqyq9qxpqysgqylpwwyjlvfhc4jzw5hl77a5ajdf7ay6hku7vpznc9efe8nw0h2jp58p7hl2km3hsf3k40z6tey4ye26zf3wwt77ws02rdzzl3cem97squshha0";
 
 	test_invoice_encoding(deschash);
 	test_invoice_encoding(desc);
+	test_invoice_encoding(problem);
 }
 
 // Test the created_at query plan via a contact-list query
