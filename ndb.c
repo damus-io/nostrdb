@@ -158,7 +158,7 @@ int main(int argc, char *argv[])
 	const char *arg_str;
 	void *ptr;
 	size_t profile_len;
-	uint64_t key;
+	uint64_t key = 0;
 
 	res = 0;
 	ndb_default_config(&config);
