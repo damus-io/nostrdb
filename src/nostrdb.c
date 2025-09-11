@@ -133,6 +133,13 @@ struct ndb_ingest_controller
 	uint64_t note_key;
 };
 
+struct ndb_delete_a_ref {
+	uint32_t kind;
+	unsigned char pubkey[32];
+	const char *identifier;
+	size_t identifier_len;
+};
+
 enum ndb_writer_msgtype {
 	NDB_WRITER_QUIT, // kill thread immediately
 	NDB_WRITER_NOTE, // write a note to the db
@@ -1620,10 +1627,12 @@ static int ndb_db_is_index(enum ndb_dbs index)
 		case NDB_DB_NOTE_ID:
 		case NDB_DB_NDB_META:
 		case NDB_DB_PROFILE_SEARCH:
-		case NDB_DB_PROFILE_LAST_FETCH:
-		case NDB_DB_NOTE_RELAYS:
-		case NDB_DBS:
-			return 0;
+	case NDB_DB_PROFILE_LAST_FETCH:
+	case NDB_DB_NOTE_RELAYS:
+	case NDB_DB_NOTE_DELETE:
+	case NDB_DB_DELETE_A:
+	case NDB_DBS:
+		return 0;
 		case NDB_DB_PROFILE_PK:
 		case NDB_DB_NOTE_KIND:
 		case NDB_DB_NOTE_TEXT:
@@ -1960,10 +1969,15 @@ static int ndb_rebuild_note_indices(struct ndb_txn *txn, enum ndb_dbs *indices, 
 			case NDB_DB_NOTE_KIND:
 			case NDB_DB_NOTE_TEXT:
 			case NDB_DB_NOTE_BLOCKS:
-			case NDB_DB_NOTE_TAGS:
-				fprintf(stderr, "%s index rebuild not supported yet. sorry.\n", ndb_db_name(index));
-				count = -1;
-				goto cleanup;
+		case NDB_DB_NOTE_TAGS:
+			fprintf(stderr, "%s index rebuild not supported yet. sorry.\n", ndb_db_name(index));
+			count = -1;
+			goto cleanup;
+		case NDB_DB_NOTE_DELETE:
+		case NDB_DB_DELETE_A:
+			fprintf(stderr, "%s index rebuild not supported yet. sorry.\n", ndb_db_name(index));
+			count = -1;
+			goto cleanup;
 			case NDB_DB_NOTE_PUBKEY:
 				if (!ndb_write_note_pubkey_index(txn, note, note_key)) {
 					count = -1;
@@ -3332,6 +3346,470 @@ static unsigned char *ndb_note_last_id_tag(struct ndb_note *note, char type)
 	}
 
 	return last;
+}
+
+// normalize a tag value into a 32-byte id when possible
+static int ndb_hex_id_from_str(struct ndb_str str, unsigned char out[32])
+{
+	if (str.flag == NDB_PACKED_ID) {
+		memcpy(out, str.id, 32);
+		return 1;
+	}
+
+	if (str.flag != NDB_PACKED_STR || str.str == NULL)
+		return 0;
+
+	size_t len = strlen(str.str);
+	if (len != 64)
+		return 0;
+
+	return hex_decode(str.str, len, out, 32);
+}
+
+// search tags for a specific label and return the requested element
+static int ndb_note_find_tag_value(struct ndb_note *note, char want,
+				       int value_index, struct ndb_str *out)
+{
+	struct ndb_iterator iter;
+	struct ndb_str tag_name;
+
+	ndb_tags_iterate_start(note, &iter);
+
+	while (ndb_tags_iterate_next(&iter)) {
+		if (iter.tag->count <= value_index)
+			continue;
+
+		tag_name = ndb_tag_str(note, iter.tag, 0);
+		if (tag_name.flag != NDB_PACKED_STR || tag_name.str == NULL)
+			continue;
+
+		if (tag_name.str[0] != want || tag_name.str[1] != '\0')
+			continue;
+
+		if (out)
+			*out = ndb_tag_str(note, iter.tag, value_index);
+		return 1;
+	}
+
+	return 0;
+}
+
+// helper to pull the "d" tag string (replaceable identifier)
+static void ndb_note_get_d_identifier(struct ndb_note *note,
+				      const char **identifier,
+				      size_t *identifier_len)
+{
+	struct ndb_str str;
+
+	if (ndb_note_find_tag_value(note, 'd', 1, &str) &&
+	    str.flag == NDB_PACKED_STR && str.str != NULL) {
+		if (identifier)
+			*identifier = str.str;
+		if (identifier_len)
+			*identifier_len = strlen(str.str);
+		return;
+	}
+
+	if (identifier)
+		*identifier = "";
+	if (identifier_len)
+		*identifier_len = 0;
+}
+
+// parse an "a" tag (kind:pubkey:d) into a structured reference
+static int ndb_parse_a_ref(struct ndb_str str, struct ndb_delete_a_ref *ref)
+{
+	const char *value, *first_colon, *second_colon, *p;
+	uint64_t kind = 0;
+
+	if (str.flag != NDB_PACKED_STR || str.str == NULL)
+		return 0;
+
+	value = str.str;
+	first_colon = strchr(value, ':');
+	if (!first_colon)
+		return 0;
+
+	for (p = value; p < first_colon; p++) {
+		if (*p < '0' || *p > '9')
+			return 0;
+		kind = kind * 10 + (*p - '0');
+		if (kind > UINT32_MAX)
+			return 0;
+	}
+
+	second_colon = strchr(first_colon + 1, ':');
+	if (!second_colon)
+		return 0;
+
+	if (second_colon - (first_colon + 1) != 64)
+		return 0;
+
+	if (!hex_decode(first_colon + 1, 64, ref->pubkey,
+			  sizeof(ref->pubkey)))
+		return 0;
+
+	ref->kind = (uint32_t)kind;
+	ref->identifier = second_colon + 1;
+	ref->identifier_len = strlen(ref->identifier);
+	return 1;
+}
+
+// format an "a" reference into the canonical key used for lookups
+static int ndb_build_a_key(const struct ndb_delete_a_ref *ref,
+			 char **out_key, size_t *out_len)
+{
+	char hex_pubkey[65];
+	char *buf;
+	size_t ident_len;
+	int header_len;
+
+	if (!hex_encode(ref->pubkey, sizeof(ref->pubkey), hex_pubkey))
+		return 0;
+
+	ident_len = ref->identifier_len;
+	header_len = snprintf(NULL, 0, "%u:%s:", ref->kind, hex_pubkey);
+	if (header_len < 0)
+		return 0;
+
+	buf = malloc((size_t)header_len + ident_len + 1);
+	if (!buf)
+		return 0;
+
+	int written = snprintf(buf, (size_t)header_len + 1, "%u:%s:",
+				 ref->kind, hex_pubkey);
+	if (written < 0) {
+		free(buf);
+		return 0;
+	}
+
+	memcpy(buf + written, ref->identifier, ident_len);
+	written += ident_len;
+	buf[written] = '\0';
+
+	if (out_key)
+		*out_key = buf;
+	if (out_len)
+		*out_len = written;
+	return 1;
+}
+
+// fetch a previously stored delete marker for a raw event id
+static int ndb_lookup_delete_marker_raw(struct ndb_txn *txn,
+					  const unsigned char *event_id,
+					  struct ndb_delete_marker *marker)
+{
+	MDB_val key, val;
+	int rc;
+
+	key.mv_data = (void *)event_id;
+	key.mv_size = 32;
+
+	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE_DELETE], &key, &val);
+	if (rc)
+		return 0;
+
+	if (marker)
+		*marker = *(struct ndb_delete_marker *)val.mv_data;
+	return 1;
+}
+
+// upsert a delete marker if the incoming request is newer
+static int ndb_store_delete_marker(struct ndb_txn *txn,
+					 const unsigned char *event_id,
+					 const unsigned char *pubkey,
+					 const unsigned char *request_id,
+					 uint64_t deleted_at)
+{
+	MDB_val key, val, existing_val;
+	int rc;
+
+	key.mv_data = (void *)event_id;
+	key.mv_size = 32;
+
+	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE_DELETE],
+		     &key, &existing_val);
+	if (rc && rc != MDB_NOTFOUND)
+		return 0;
+
+	if (rc == 0) {
+		struct ndb_delete_marker *existing = existing_val.mv_data;
+		if (existing->deleted_at >= deleted_at)
+			return 1;
+	}
+
+	struct ndb_delete_marker marker;
+	memcpy(marker.pubkey, pubkey, 32);
+	memcpy(marker.request_id, request_id, 32);
+	marker.deleted_at = deleted_at;
+
+	val.mv_data = &marker;
+	val.mv_size = sizeof(marker);
+
+	if ((rc = mdb_put(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE_DELETE],
+			     &key, &val, 0))) {
+		ndb_debug("write note_delete failed: %s\n", mdb_strerror(rc));
+		return 0;
+	}
+
+	return 1;
+}
+
+// remember the latest delete marker that targets an "a" reference
+static int ndb_delete_store_a_entry(struct ndb_txn *txn,
+				       const struct ndb_delete_a_ref *ref,
+				       const unsigned char *request_id,
+				       uint64_t deleted_at)
+{
+	MDB_val key, val, existing_val;
+	char *encoded = NULL;
+	size_t key_len = 0;
+	int rc;
+
+	if (!ndb_build_a_key(ref, &encoded, &key_len))
+		return 0;
+
+	key.mv_data = encoded;
+	key.mv_size = key_len;
+
+	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_DELETE_A], &key,
+		     &existing_val);
+	if (rc && rc != MDB_NOTFOUND) {
+		free(encoded);
+		return 0;
+	}
+
+	if (rc == 0) {
+		struct ndb_delete_marker *existing = existing_val.mv_data;
+		if (existing->deleted_at >= deleted_at) {
+			free(encoded);
+			return 1;
+		}
+	}
+
+	struct ndb_delete_marker marker;
+	memcpy(marker.pubkey, ref->pubkey, 32);
+	memcpy(marker.request_id, request_id, 32);
+	marker.deleted_at = deleted_at;
+
+	val.mv_data = &marker;
+	val.mv_size = sizeof(marker);
+
+	rc = mdb_put(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_DELETE_A], &key,
+		      &val, 0);
+	free(encoded);
+	if (rc) {
+		ndb_debug("write delete_a failed: %s\n", mdb_strerror(rc));
+		return 0;
+	}
+
+	return 1;
+}
+
+// see whether we already have a delete marker for this replaceable slot
+static int ndb_lookup_a_marker_for_note(struct ndb_txn *txn,
+					 struct ndb_note *note,
+					 struct ndb_delete_marker *marker)
+{
+	struct ndb_delete_a_ref ref = {0};
+	const char *identifier;
+	size_t identifier_len;
+	MDB_val key, val;
+	char *encoded = NULL;
+	size_t key_len = 0;
+	int rc;
+
+	if (!is_replaceable_kind(note->kind))
+		return 0;
+
+	ref.kind = note->kind;
+	memcpy(ref.pubkey, note->pubkey, 32);
+	ndb_note_get_d_identifier(note, &identifier, &identifier_len);
+	ref.identifier = identifier;
+	ref.identifier_len = identifier_len;
+
+	if (!ndb_build_a_key(&ref, &encoded, &key_len))
+		return 0;
+
+	key.mv_data = encoded;
+	key.mv_size = key_len;
+	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_DELETE_A], &key, &val);
+	free(encoded);
+	if (rc)
+		return 0;
+
+	if (marker)
+		*marker = *(struct ndb_delete_marker *)val.mv_data;
+	return 1;
+}
+
+// walk backwards through the pubkey/kind index applying historical deletes
+static void ndb_apply_delete_a_existing(struct ndb_txn *txn,
+					 const struct ndb_delete_a_ref *ref,
+					 const unsigned char *request_id,
+					 uint64_t deleted_at)
+{
+	MDB_cursor *cur;
+	MDB_val k, v;
+	struct ndb_id_u64_ts seek, *current;
+	int rc;
+
+	if (mdb_cursor_open(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE_PUBKEY_KIND], &cur))
+		return;
+
+	ndb_id_u64_ts_init(&seek, (unsigned char *)ref->pubkey, ref->kind,
+			       deleted_at);
+	k.mv_data = &seek;
+	k.mv_size = sizeof(seek);
+
+	rc = mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE);
+	if (rc == MDB_NOTFOUND) {
+		if (mdb_cursor_get(cur, &k, &v, MDB_LAST))
+			goto done;
+	} else if (rc) {
+		goto done;
+	} else {
+		current = (struct ndb_id_u64_ts *)k.mv_data;
+		int cmp = memcmp(current->id, ref->pubkey, 32);
+		if (cmp > 0 || (cmp == 0 &&
+		    (current->u64 > ref->kind ||
+		     (current->u64 == ref->kind && current->timestamp > deleted_at)))) {
+			if (mdb_cursor_get(cur, &k, &v, MDB_PREV))
+				goto done;
+		}
+	}
+
+	while (1) {
+		current = (struct ndb_id_u64_ts *)k.mv_data;
+
+		if (current->u64 != ref->kind)
+			break;
+		if (memcmp(current->id, ref->pubkey, 32))
+			break;
+		if (current->timestamp > deleted_at)
+			goto next;
+
+		size_t note_size;
+		struct ndb_note *candidate = ndb_get_note_by_key(txn,
+						      *(uint64_t *)v.mv_data,
+						      &note_size);
+		if (!candidate)
+			goto next;
+
+		const char *note_ident;
+		size_t note_ident_len;
+		ndb_note_get_d_identifier(candidate, &note_ident,
+					 &note_ident_len);
+		if (note_ident_len != ref->identifier_len ||
+		    memcmp(note_ident, ref->identifier, ref->identifier_len))
+			goto next;
+
+		ndb_store_delete_marker(txn, candidate->id, ref->pubkey,
+				      request_id, deleted_at);
+
+next:
+		if (mdb_cursor_get(cur, &k, &v, MDB_PREV))
+			break;
+	}
+
+done:
+	mdb_cursor_close(cur);
+}
+
+// handle kind 5 notes by honoring e/a references immediately
+static void ndb_process_delete_request(struct ndb_txn *txn,
+				 struct ndb_note *note,
+				 uint64_t note_key)
+{
+	struct ndb_iterator iter;
+	struct ndb_str label, value;
+	unsigned char target_id[32];
+	const unsigned char *request_id = note->id;
+	const unsigned char *request_pubkey = note->pubkey;
+	uint64_t deleted_at = note->created_at;
+	(void)note_key;
+
+	ndb_tags_iterate_start(note, &iter);
+
+	while (ndb_tags_iterate_next(&iter)) {
+		if (iter.tag->count < 2)
+			continue;
+
+		label = ndb_tag_str(note, iter.tag, 0);
+		if (label.flag != NDB_PACKED_STR || label.str == NULL)
+			continue;
+
+		if (label.str[0] == 'e' && label.str[1] == '\0') {
+			value = ndb_tag_str(note, iter.tag, 1);
+			if (!ndb_hex_id_from_str(value, target_id))
+				continue;
+
+			uint64_t target_key = ndb_get_notekey_by_id(txn, target_id);
+			if (target_key) {
+				size_t len;
+				struct ndb_note *target = ndb_get_note_by_key(txn,
+								 target_key, &len);
+				if (!target)
+					continue;
+				if (target->kind == 5)
+					continue;
+				if (memcmp(target->pubkey, request_pubkey, 32))
+					continue;
+			}
+
+			ndb_store_delete_marker(txn, target_id, request_pubkey,
+					      request_id, deleted_at);
+			continue;
+		}
+
+		if (label.str[0] == 'a' && label.str[1] == '\0') {
+			struct ndb_delete_a_ref ref;
+			value = ndb_tag_str(note, iter.tag, 1);
+			if (!ndb_parse_a_ref(value, &ref))
+				continue;
+			if (!is_replaceable_kind(ref.kind))
+				continue;
+			if (memcmp(ref.pubkey, request_pubkey, 32))
+				continue;
+
+			if (!ndb_delete_store_a_entry(txn, &ref, request_id, deleted_at))
+				continue;
+
+			ndb_apply_delete_a_existing(txn, &ref, request_id, deleted_at);
+		}
+	}
+}
+
+// when a replaceable note arrives after the delete request, mark it deleted
+static void ndb_apply_delete_markers_to_new_note(struct ndb_txn *txn,
+					   struct ndb_note *note)
+{
+	struct ndb_delete_marker marker;
+
+	if (!ndb_lookup_a_marker_for_note(txn, note, &marker))
+		return;
+
+	if (memcmp(marker.pubkey, note->pubkey, 32))
+		return;
+	if (note->kind == 5)
+		return;
+	if (note->created_at > marker.deleted_at)
+		return;
+
+	ndb_store_delete_marker(txn, note->id, marker.pubkey,
+				 marker.request_id, marker.deleted_at);
+}
+
+// single entry point for any post-write bookkeeping per note
+static void ndb_note_post_write(struct ndb_txn *txn,
+			   struct ndb_note *note,
+			   uint64_t note_key)
+{
+	if (note->kind == 5) {
+		ndb_process_delete_request(txn, note, note_key);
+	} else {
+		ndb_apply_delete_markers_to_new_note(txn, note);
+	}
 }
 
 void *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char *id, size_t *len)
@@ -5315,6 +5793,7 @@ static uint64_t ndb_write_note(struct ndb_txn *txn,
 	ndb_write_note_tag_index(txn, note->note, note_key);
 	ndb_write_note_pubkey_index(txn, note->note, note_key);
 	ndb_write_note_pubkey_kind_index(txn, note->note, note_key);
+	ndb_note_post_write(txn, note->note, note_key);
 
 	if (ndb_relay_kind_key_init(&relay_key, note_key, kind, ndb_note_created_at(note->note), note->relay))
 		ndb_write_note_relay_indexes(txn, &relay_key);
@@ -5893,6 +6372,16 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 	// note_id -> relay index
 	if ((rc = mdb_dbi_open(txn, "note_relays", MDB_CREATE | MDB_DUPSORT, &lmdb->dbs[NDB_DB_NOTE_RELAYS]))) {
 		fprintf(stderr, "mdb_dbi_open profile last fetch, error %d\n", rc);
+		return 0;
+	}
+
+	if ((rc = mdb_dbi_open(txn, "note_delete", MDB_CREATE, &lmdb->dbs[NDB_DB_NOTE_DELETE]))) {
+		fprintf(stderr, "mdb_dbi_open note_delete failed: %s\n", mdb_strerror(rc));
+		return 0;
+	}
+
+	if ((rc = mdb_dbi_open(txn, "delete_a", MDB_CREATE, &lmdb->dbs[NDB_DB_DELETE_A]))) {
+		fprintf(stderr, "mdb_dbi_open delete_a failed: %s\n", mdb_strerror(rc));
 		return 0;
 	}
 
@@ -6525,6 +7014,30 @@ int ndb_note_json(struct ndb_note *note, char *buf, int buflen)
 	}
 
 	return cur.p - cur.start;
+}
+
+int ndb_note_delete_reason(struct ndb_txn *txn, struct ndb_note *note,
+			       struct ndb_delete_marker *marker)
+{
+	struct ndb_delete_marker found;
+
+	if (note->kind == 5)
+		return 0;
+
+	if (!ndb_lookup_delete_marker_raw(txn, note->id, &found))
+		return 0;
+
+	if (memcmp(found.pubkey, note->pubkey, 32))
+		return 0;
+
+	if (marker)
+		*marker = found;
+	return 1;
+}
+
+int ndb_note_is_deleted(struct ndb_txn *txn, struct ndb_note *note)
+{
+	return ndb_note_delete_reason(txn, note, NULL);
 }
 
 static int cursor_push_json_elem_array(struct cursor *cur,
@@ -8213,12 +8726,16 @@ const char *ndb_db_name(enum ndb_dbs db)
 			return "note_pubkey_index";
 		case NDB_DB_NOTE_PUBKEY_KIND:
 			return "note_pubkey_kind_index";
-		case NDB_DB_NOTE_RELAY_KIND:
-			return "note_relay_kind_index";
-		case NDB_DB_NOTE_RELAYS:
-			return "note_relays";
-		case NDB_DBS:
-			return "count";
+	case NDB_DB_NOTE_RELAY_KIND:
+		return "note_relay_kind_index";
+	case NDB_DB_NOTE_RELAYS:
+		return "note_relays";
+	case NDB_DB_NOTE_DELETE:
+		return "note_delete";
+	case NDB_DB_DELETE_A:
+		return "delete_a";
+	case NDB_DBS:
+		return "count";
 	}
 
 	return "unknown";

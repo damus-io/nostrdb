@@ -362,7 +362,7 @@ int main(int argc, char *argv[])
 		ndb_filter_json(f, buf, sizeof(buf));
 		fprintf(stderr, "using filter '%s'\n", buf);
 
-		int rsize = 30000;
+		int rsize = 1000000;
 		struct ndb_query_result *results = malloc(sizeof(struct ndb_query_result) * rsize);
 		assert(results);
 		ndb_begin_query(ndb, &txn);

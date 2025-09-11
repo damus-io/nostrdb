@@ -94,6 +94,12 @@ struct ndb_event {
 	struct ndb_note *note;
 };
 
+struct ndb_delete_marker {
+	unsigned char pubkey[32];
+	unsigned char request_id[32];
+	uint64_t deleted_at;
+};
+
 struct ndb_command_result {
 	int ok;
 	const char *msg;
@@ -201,6 +207,8 @@ enum ndb_dbs {
 	NDB_DB_NOTE_PUBKEY_KIND, // note pubkey kind index
 	NDB_DB_NOTE_RELAY_KIND, // relay+kind+created -> note_id
 	NDB_DB_NOTE_RELAYS, // note_id -> relays
+	NDB_DB_NOTE_DELETE, // note_id -> deletion metadata
+	NDB_DB_DELETE_A, // canonical a-tag -> deletion metadata
 	NDB_DBS,
 };
 
@@ -580,6 +588,9 @@ int ndb_filter_start_field(struct ndb_filter *, enum ndb_filter_fieldtype);
 int ndb_filter_start_tag_field(struct ndb_filter *, char tag);
 int ndb_filter_matches(struct ndb_filter *, struct ndb_note *);
 int ndb_filter_matches_with_relay(struct ndb_filter *, struct ndb_note *, struct ndb_note_relay_iterator *iter);
+int ndb_note_is_deleted(struct ndb_txn *txn, struct ndb_note *note);
+int ndb_note_delete_reason(struct ndb_txn *txn, struct ndb_note *note,
+			       struct ndb_delete_marker *marker);
 int ndb_filter_clone(struct ndb_filter *dst, struct ndb_filter *src);
 int ndb_filter_end(struct ndb_filter *);
 void ndb_filter_end_field(struct ndb_filter *);

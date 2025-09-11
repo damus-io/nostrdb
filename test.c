@@ -2075,6 +2075,160 @@ void test_replay_attack() {
 	ndb_destroy(ndb);
 }
 
+// verifies that an e-tag delete hides an existing note
+static void test_delete_e_tag(void)
+{
+	const char *text_note =
+		"[\"EVENT\",\"blah\",{\"id\":\"1f5f21b22e4c87b1d7cf9271a1c8aeaf5b49061af2c03cab706bbe2ebb9fefd9\",\"pubkey\":\"73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca\",\"created_at\":1750785986,\"kind\":1,\"tags\":[],\"content\":\"ok\",\"sig\":\"bde9ee6933b01c11a9881a3ea4730c6e7f7d952c165fb7ab3f77488c5f73e6d60ce25a32386f2e1d0244c24fd840f25af5d2d04dc6d229ec0f67c7782e8879d9\"}]";
+	const char *delete_note =
+		"[\"EVENT\",\"blah\",{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pubkey\":\"73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca\",\"created_at\":1750787000,\"kind\":5,\"tags\":[[\"e\",\"1f5f21b22e4c87b1d7cf9271a1c8aeaf5b49061af2c03cab706bbe2ebb9fefd9\"],[\"k\",\"1\"]],\"content\":\"cleanup\",\"sig\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}]";
+	struct ndb_config config;
+	struct ndb_filter filter, *f = &filter;
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_query_result result;
+	int count;
+	struct ndb_delete_marker marker;
+	unsigned char expected_id[32];
+
+	delete_test_db();
+	ndb_default_config(&config);
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	assert(ndb_process_event(ndb, text_note, strlen(text_note)));
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_query(&txn, f, 1, &result, 1, &count));
+	assert(count == 1);
+	assert(!ndb_note_is_deleted(&txn, result.note));
+	ndb_end_query(&txn);
+
+	assert(ndb_process_event(ndb, delete_note, strlen(delete_note)));
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_query(&txn, f, 1, &result, 1, &count));
+	assert(count == 1);
+	assert(ndb_note_is_deleted(&txn, result.note));
+	assert(ndb_note_delete_reason(&txn, result.note, &marker));
+	assert(hex_decode("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			64, expected_id, 32));
+	assert(memcmp(marker.request_id, expected_id, 32) == 0);
+	assert(marker.deleted_at == 1750787000);
+	ndb_end_query(&txn);
+
+	ndb_filter_destroy(f);
+	ndb_destroy(ndb);
+}
+
+// verifies that delete markers apply to future arrivals
+static void test_delete_e_tag_pending(void)
+{
+	const char *text_note =
+		"[\"EVENT\",\"blah\",{\"id\":\"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\",\"pubkey\":\"73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca\",\"created_at\":1650000000,\"kind\":1,\"tags\":[],\"content\":\"pending\",\"sig\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}]";
+	const char *delete_note =
+		"[\"EVENT\",\"blah\",{\"id\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"pubkey\":\"73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca\",\"created_at\":1650000100,\"kind\":5,\"tags\":[[\"e\",\"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\"]],\"content\":\"pending delete\",\"sig\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"}]";
+	struct ndb_config config;
+	struct ndb_filter filter, *f = &filter;
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_query_result result;
+	int count;
+
+	delete_test_db();
+	ndb_default_config(&config);
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	assert(ndb_process_event(ndb, delete_note, strlen(delete_note)));
+	assert(ndb_process_event(ndb, text_note, strlen(text_note)));
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_query(&txn, f, 1, &result, 1, &count));
+	assert(count == 1);
+	assert(ndb_note_is_deleted(&txn, result.note));
+	ndb_end_query(&txn);
+
+	ndb_filter_destroy(f);
+	ndb_destroy(ndb);
+}
+
+// verifies that a-tag deletes mark all matching replaceable events
+static void test_delete_a_tag(void)
+{
+	const char *note_one =
+		"[\"EVENT\",\"blah\",{\"id\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"pubkey\":\"73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca\",\"created_at\":1500000000,\"kind\":30000,\"tags\":[[\"d\",\"alpha\"]],\"content\":\"alpha\",\"sig\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}]";
+	const char *note_two =
+		"[\"EVENT\",\"blah\",{\"id\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"pubkey\":\"73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca\",\"created_at\":1500000100,\"kind\":30000,\"tags\":[[\"d\",\"alpha\"]],\"content\":\"alpha newer\",\"sig\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"}]";
+	const char *note_three =
+		"[\"EVENT\",\"blah\",{\"id\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"pubkey\":\"73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca\",\"created_at\":1500000200,\"kind\":30000,\"tags\":[[\"d\",\"beta\"]],\"content\":\"beta\",\"sig\":\"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"}]";
+	const char *delete_note =
+		"[\"EVENT\",\"blah\",{\"id\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"pubkey\":\"73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca\",\"created_at\":1500000300,\"kind\":5,\"tags\":[[\"a\",\"30000:73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca:alpha\"]],\"content\":\"drop alpha\",\"sig\":\"99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999\"}]";
+	struct ndb_config config;
+	struct ndb_filter filter, *f = &filter;
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_query_result results[4];
+	int count;
+	unsigned char id_one[32], id_two[32], id_three[32];
+
+	delete_test_db();
+	ndb_default_config(&config);
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 30000));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	assert(ndb_process_event(ndb, note_one, strlen(note_one)));
+	assert(ndb_process_event(ndb, note_two, strlen(note_two)));
+	assert(ndb_process_event(ndb, note_three, strlen(note_three)));
+	assert(ndb_process_event(ndb, delete_note, strlen(delete_note)));
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_query(&txn, f, 1, results, 4, &count));
+	assert(count == 3);
+	assert(hex_decode("1111111111111111111111111111111111111111111111111111111111111111", 64, id_one, 32));
+	assert(hex_decode("2222222222222222222222222222222222222222222222222222222222222222", 64, id_two, 32));
+	assert(hex_decode("3333333333333333333333333333333333333333333333333333333333333333", 64, id_three, 32));
+
+	int deleted_one = 0, deleted_two = 0, deleted_three = 0;
+	for (int i = 0; i < count; i++) {
+		struct ndb_note *note = results[i].note;
+		if (!memcmp(ndb_note_id(note), id_one, 32)) {
+			deleted_one = ndb_note_is_deleted(&txn, note);
+		} else if (!memcmp(ndb_note_id(note), id_two, 32)) {
+			deleted_two = ndb_note_is_deleted(&txn, note);
+		} else if (!memcmp(ndb_note_id(note), id_three, 32)) {
+			deleted_three = ndb_note_is_deleted(&txn, note);
+		}
+	}
+
+	assert(deleted_one);
+	assert(deleted_two);
+	assert(!deleted_three);
+
+	ndb_end_query(&txn);
+
+	ndb_filter_destroy(f);
+	ndb_destroy(ndb);
+}
+
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
@@ -2105,6 +2259,9 @@ int main(int argc, const char *argv[]) {
 	//test_block_coding();
 	test_encode_decode_invoice();
 	test_filters();
+	test_delete_e_tag();
+	test_delete_e_tag_pending();
+	test_delete_a_tag();
 	//test_migrate();
 	test_fetched_at();
 	test_profile_updates();
@@ -2144,6 +2301,3 @@ int main(int argc, const char *argv[]) {
 
 	printf("All tests passed!\n");       // Print this if all tests pass.
 }
-
-
-
