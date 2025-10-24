@@ -1436,7 +1436,7 @@ static void test_query()
 	struct ndb_filter filters[2], *f;
 	struct ndb_config config;
 	struct ndb_query_result results[4];
-	int count, cap;
+	int count, cap, nres;
 	uint64_t subid, note_ids[4];
 	ndb_default_config(&config);
 
@@ -1474,16 +1474,15 @@ static void test_query()
 
 	assert(ndb_process_event(ndb, ev, strlen(ev)));
 	assert(ndb_process_event(ndb, ev2, strlen(ev2)));
-	assert(ndb_process_event(ndb, ev3, strlen(ev3)));
-	assert(ndb_process_event(ndb, ev4, strlen(ev4)));
 
-	for (count = 0; count < 2;)
-		count += ndb_wait_for_notes(ndb, subid, note_ids+count, 4-count);
+	for (nres = 2; nres > 0;)
+		nres -= ndb_wait_for_notes(ndb, subid, note_ids, 2);
 
 	ndb_begin_query(ndb, &txn);
 	assert(ndb_query(&txn, f, 1, results, cap, &count));
 	assert(count == 2);
 	assert(0 == memcmp(ndb_note_id(results[0].note), id2, 32));
+	ndb_end_query(&txn);
 
 	ndb_filter_destroy(f);
 	ndb_filter_init(f);
@@ -1495,10 +1494,17 @@ static void test_query()
 	ndb_filter_end_field(f);
 	ndb_filter_end(f);
 
+	assert((subid = ndb_subscribe(ndb, f, 1)));
+	assert(ndb_process_event(ndb, ev3, strlen(ev3)));
+	assert(ndb_process_event(ndb, ev4, strlen(ev4)));
+
+	for (nres = 2; nres > 0;)
+		nres -= ndb_wait_for_notes(ndb, subid, note_ids, 2);
+	ndb_begin_query(ndb, &txn);
+
 	count = 0;
 	assert(ndb_query(&txn, f, 1, results, cap, &count));
 	ndb_print_kind_keys(&txn);
-	printf("count %d\n", count);
 	assert(count == 2);
 	assert(!strcmp(ndb_note_content(results[0].note), "hmm"));
 	assert(!strcmp(ndb_note_content(results[1].note), "what"));
