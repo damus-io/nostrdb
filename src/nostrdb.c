@@ -142,6 +142,7 @@ enum ndb_writer_msgtype {
 	NDB_WRITER_BLOCKS, // write parsed note blocks
 	NDB_WRITER_MIGRATE, // migrate the database
 	NDB_WRITER_NOTE_RELAY, // we already have the note, but we have more relays to write
+	NDB_WRITER_NOTE_META, // write note metadata to the db
 };
 
 // keys used for storing data in the NDB metadata database (NDB_DB_NDB_META)
@@ -2213,6 +2214,11 @@ struct ndb_writer_ndb_meta {
 	uint64_t version;
 };
 
+struct ndb_writer_note_meta {
+	unsigned char note_id[32];
+	struct ndb_note_meta *metadata;
+};
+
 // Used in the writer thread when writing ndb_profile_fetch_record's
 //   kv = pubkey: recor
 struct ndb_writer_last_fetch {
@@ -2237,6 +2243,7 @@ struct ndb_writer_msg {
 		struct ndb_writer_ndb_meta ndb_meta;
 		struct ndb_writer_last_fetch last_fetch;
 		struct ndb_writer_blocks blocks;
+		struct ndb_writer_note_meta note_meta;
 	};
 };
 
@@ -3332,6 +3339,42 @@ static unsigned char *ndb_note_last_id_tag(struct ndb_note *note, char type)
 	}
 
 	return last;
+}
+
+int ndb_set_note_meta(struct ndb *ndb, const unsigned char *id, struct ndb_note_meta *meta)
+{
+	struct ndb_writer_msg msg;
+	struct ndb_writer_note_meta *meta_msg = &msg.note_meta;
+
+	msg.type = NDB_WRITER_NOTE_META;
+
+	memcpy(meta_msg->note_id, id, 32);
+	meta_msg->metadata = meta;
+
+	return ndb_writer_queue_msg(&ndb->writer, &msg);
+}
+
+int ndb_writer_set_note_meta(struct ndb_txn *txn, const unsigned char *id, struct ndb_note_meta *meta)
+{
+	int rc;
+	MDB_val k, v;
+	MDB_dbi note_meta_db;
+
+	// get dbs
+	note_meta_db = txn->lmdb->dbs[NDB_DB_META];
+
+	k.mv_data = (unsigned char *)id;
+	k.mv_size = 32;
+
+	v.mv_data = (unsigned char *)meta;
+	v.mv_size = ndb_note_meta_total_size(meta);
+
+	if ((rc = mdb_put(txn->mdb_txn, note_meta_db, &k, &v, 0))) {
+		ndb_debug("ndb_set_note_meta: write note metadata to db failed: %s\n", mdb_strerror(rc));
+		return 0;
+	}
+
+	return 1;
 }
 
 void *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char *id, size_t *len)
@@ -5514,13 +5557,16 @@ static void *ndb_writer_thread(void *data)
 		for (i = 0 ; i < popped; i++) {
 			msg = &msgs[i];
 			switch (msg->type) {
-			case NDB_WRITER_NOTE: needs_commit = 1; break;
-			case NDB_WRITER_PROFILE: needs_commit = 1; break;
-			case NDB_WRITER_DBMETA: needs_commit = 1; break;
-			case NDB_WRITER_PROFILE_LAST_FETCH: needs_commit = 1; break;
-			case NDB_WRITER_BLOCKS: needs_commit = 1; break;
-			case NDB_WRITER_MIGRATE: needs_commit = 1; break;
-			case NDB_WRITER_NOTE_RELAY: needs_commit = 1; break;
+			case NDB_WRITER_NOTE:
+			case NDB_WRITER_NOTE_META:
+			case NDB_WRITER_PROFILE:
+			case NDB_WRITER_DBMETA:
+			case NDB_WRITER_PROFILE_LAST_FETCH:
+			case NDB_WRITER_BLOCKS:
+			case NDB_WRITER_MIGRATE:
+			case NDB_WRITER_NOTE_RELAY:
+				needs_commit = 1;
+				break;
 			case NDB_WRITER_QUIT: break;
 			}
 		}
@@ -5561,6 +5607,10 @@ static void *ndb_writer_thread(void *data)
 					ndb_debug("failed to write note\n");
 				}
 				break;
+			case NDB_WRITER_NOTE_META:
+				ndb_writer_set_note_meta(&txn, msg->note_meta.note_id, msg->note_meta.metadata);
+				break;
+
 			case NDB_WRITER_NOTE:
 				note_nkey = ndb_write_note(&txn, &msg->note,
 							   scratch,
