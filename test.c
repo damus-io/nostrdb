@@ -51,6 +51,48 @@ static void print_search(struct ndb_txn *txn, struct ndb_search *search)
 	printf("\n");
 }
 
+static void test_metadata()
+{
+	unsigned char buffer[1024];
+	union ndb_reaction_str str;
+	struct ndb_note_meta_builder builder;
+	struct ndb_note_meta *meta;
+	struct ndb_note_meta_entry *entry = NULL;
+	int ok;
+
+	ok = ndb_note_meta_builder_init(&builder, buffer, sizeof(buffer));
+	assert(ok);
+
+	entry = ndb_note_meta_add_entry(&builder);
+	assert(entry);
+
+	ndb_reaction_set(&str, "🏴‍☠️");
+	ndb_note_meta_reaction_set(entry, 1337, str);
+
+	ndb_note_meta_build(&builder, &meta);
+
+	assert(ndb_note_meta_entries_count(meta) == 1);
+	assert(ndb_note_meta_total_size(meta) == 32);
+
+	entry = ndb_note_meta_entries(meta);
+	assert(ndb_note_meta_reaction_count(entry) == 1337);
+
+	printf("ok test_metadata\n");
+}
+
+static void test_reaction_encoding()
+{
+	union ndb_reaction_str reaction;
+	assert(ndb_reaction_set(&reaction, "👩🏻‍🤝‍👩🏿"));
+	assert(reaction.binmoji == 0x07D1A7747240B0D0);
+	assert(ndb_reaction_str_is_emoji(reaction) == 1);
+	assert(ndb_reaction_set(&reaction, "hello"));
+	assert(ndb_reaction_str_is_emoji(reaction) == 0);
+	assert(!strcmp(reaction.packed.str, "hello"));
+	printf("ok test_reaction_encoding\n");
+}
+
+
 static void test_filters()
 {
 	struct ndb_filter filter, *f;
@@ -2083,6 +2125,8 @@ int main(int argc, const char *argv[]) {
 	test_custom_filter();
 	delete_test_db();
 
+	test_metadata();
+	test_reaction_encoding();
 	test_note_relay_index();
 	test_filter_search();
 	test_filter_parse_search_json();
