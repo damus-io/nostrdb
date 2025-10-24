@@ -782,7 +782,7 @@ static int ndb_filter_start_field_impl(struct ndb_filter *filter, enum ndb_filte
 	struct ndb_filter_elements *els, *el;
 
 	if (ndb_filter_current_element(filter)) {
-		fprintf(stderr, "ndb_filter_start_field: filter field already in progress, did you forget to call ndb_filter_end_field?\n");
+		ndb_debug("ndb_filter_start_field: filter field already in progress, did you forget to call ndb_filter_end_field?\n");
 		return 0;
 	}
 

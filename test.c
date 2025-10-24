@@ -329,7 +329,6 @@ static void test_reaction_counter()
 	for (reactions = 0; reactions < num_reactions;) {
 		results = ndb_wait_for_notes(ndb, subid, note_ids, num_reactions);
 		reactions += results;
-		fprintf(stderr, "got %d notes, total %d\n", results, reactions);
 		assert(reactions > 0);
 	}
 
@@ -635,7 +634,6 @@ static void test_parse_contact_list()
 	read_file("testdata/contacts.json", json, alloc_size, &written);
 
 	size = ndb_note_from_json((const char*)json, written, &note, buf, alloc_size);
-	printf("ndb_note_from_json size %d\n", size);
 	assert(size > 0);
 	assert(size == 34328);
 
@@ -659,9 +657,7 @@ static void test_parse_contact_list()
 	assert(ndb_note_kind(note) == 3);
 	assert(ndb_tags_count(ndb_note_tags(note)) == 786);
 	//printf("note content length %d\n", ndb_note_content_length(note));
-	printf("ndb_content_len %d, expected_len %ld\n",
-			ndb_note_content_length(note),
-			strlen(expected_content));
+	//printf("ndb_content_len %d, expected_len %ld\n", ndb_note_content_length(note), strlen(expected_content));
 	assert(ndb_note_content_length(note) == strlen(expected_content));
 
 	struct ndb_iterator iter, *it = &iter;
@@ -697,7 +693,7 @@ static void test_parse_contact_list()
 	assert(total_elems == 1580);
 
 	write_file("test_contacts_ndb_note", (unsigned char *)note, size);
-	printf("wrote test_contacts_ndb_note (raw ndb_note)\n");
+	//printf("wrote test_contacts_ndb_note (raw ndb_note)\n");
 
 	free(json);
 	free(buf);
@@ -783,7 +779,7 @@ static void test_fetch_last_noteid()
 
 	assert(root);
 	int res = NdbProfileRecord_verify_as_root(root, len);
-	printf("NdbProfileRecord verify result %d\n", res);
+	//printf("NdbProfileRecord verify result %d\n", res);
 	assert(res == 0);
 
 	NdbProfileRecord_table_t profile_record = NdbProfileRecord_as_root(root);
@@ -796,7 +792,7 @@ static void test_fetch_last_noteid()
 	assert(!strcmp(name, "jb55"));
 	assert(!strcmp(lnurl, "fixme"));
 
-	printf("note_key %" PRIu64 "\n", key);
+	//printf("note_key %" PRIu64 "\n", key);
 
 	struct ndb_note *n = ndb_get_note_by_key(&txn, key, NULL);
 	ndb_end_query(&txn);
@@ -1504,7 +1500,7 @@ static void test_query()
 
 	count = 0;
 	assert(ndb_query(&txn, f, 1, results, cap, &count));
-	ndb_print_kind_keys(&txn);
+	//ndb_print_kind_keys(&txn);
 	assert(count == 2);
 	assert(!strcmp(ndb_note_content(results[0].note), "hmm"));
 	assert(!strcmp(ndb_note_content(results[1].note), "what"));
@@ -1811,7 +1807,6 @@ static void test_filter_parse_search_json() {
 
 	// test back to json
 	assert(ndb_filter_json(f, (char *)buf, sizeof(buf)));
-	printf("search json: '%s'\n", (const char *)buf);
 	assert(!strcmp((const char*)buf, json));
 
 	ndb_filter_destroy(f);
@@ -1855,8 +1850,6 @@ static void test_note_relay_index()
 
 	assert(ndb_wait_for_notes(ndb, subid, &note_key, 1) == 1);
 	assert(note_key > 0);
-
-	sleep(1);
 
 	// 4) Check that we have both relays
 	assert(ndb_begin_query(ndb, &txn));
