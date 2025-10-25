@@ -1992,9 +1992,140 @@ cleanup:
 	return count;
 }
 
+int ndb_cursor_start(MDB_cursor *cur, MDB_val *k, MDB_val *v);
+
+/* count all of the quote reposts for a note id */
+static int ndb_count_quotes(struct ndb_txn *txn, const unsigned char *note_id, uint32_t *count)
+{
+	MDB_val k, v;
+	MDB_cursor *cur;
+	MDB_dbi db;
+	int rc;
+	unsigned char *keybuf;
+	char buffer[41]; /* 1 + 32 + 8 */
+
+	*count = 0;
+	db = txn->lmdb->dbs[NDB_DB_NOTE_TAGS];
+
+	/* we will iterate q tags for this particular id */
+	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur))) {
+		fprintf(stderr, "ndb_count_quotes: mdb_cursor_open failed, error %d\n", rc);
+		return 0;
+	}
+
+	buffer[0] = 'q';
+	memcpy(&buffer[1], note_id, 32);
+	memset(&buffer[33], 0x00, 8);
+
+	k.mv_data = buffer;
+	k.mv_size = sizeof(buffer);
+	v.mv_data = NULL;
+	v.mv_size = 0;
+
+	if (mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE))
+		goto cleanup;
+
+	for (;;) {
+		keybuf = (unsigned char *)k.mv_data;
+		if (k.mv_size < sizeof(buffer))
+			break;
+		if (keybuf[0] != 'q')
+			break;
+		if (memcmp(&keybuf[1], note_id, 32) != 0)
+			break;
+		(*count)++;
+
+		if (mdb_cursor_get(cur, &k, &v, MDB_NEXT))
+			break;
+	}
+
+cleanup:
+	mdb_cursor_close(cur);
+	return 1;
+}
+
+/* count quotes and add them to a metadata builder.
+ * we assume there is no existing quotes entry */
+static int ndb_note_meta_builder_count_quotes(struct ndb_txn *txn,
+					      unsigned char *note_id,
+					      struct ndb_note_meta_builder *builder)
+{
+	uint32_t count;
+	struct ndb_note_meta_entry *entry;
+
+	if (!ndb_count_quotes(txn, note_id, &count))
+		return 0;
+
+	if (count == 0)
+		return 1;
+
+	if (!(entry = ndb_note_meta_add_entry(builder)))
+		return 0;
+
+	ndb_note_meta_quotes_set(entry, count);
+
+	return 1;
+}
+
+/* count all of the reactions on a note and add it to metadata in progress */
+static void ndb_note_meta_builder_count_reactions(struct ndb_txn *txn, struct ndb_note_meta_builder *builder)
+{
+}
+
 
 // Migrations
 //
+
+/* switch from flatbuffer stats to custom v2 */
+static int ndb_migrate_reaction_stats(struct ndb_txn *txn)
+{
+	MDB_val k, k2, v, v2;
+	MDB_cursor *cur;
+	MDB_dbi db;
+	unsigned char *id;
+	unsigned char buffer[4096];
+	int rc;
+	struct ndb_note_meta_builder builder;
+	struct ndb_note_meta *meta;
+
+	db = txn->lmdb->dbs[NDB_DB_META];
+
+	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur))) {
+		fprintf(stderr, "ndb_migrate_reaction_stats: mdb_cursor_open failed, error %d\n", rc);
+		return -1;
+	}
+
+	/* loop through every metadata entry */
+	while (mdb_cursor_get(cur, &k, &v, MDB_NEXT) == 0) {
+		ndb_note_meta_builder_init(&builder, buffer, sizeof(buffer));
+
+		id = (unsigned char *)k.mv_data;
+		ndb_note_meta_builder_count_reactions(txn, &builder);
+		ndb_note_meta_builder_count_quotes(txn, id, &builder);
+		ndb_note_meta_build(&builder, &meta);
+
+		/* no counts found, just delete this entry */
+		if (ndb_note_meta_entries_count(meta) == 0) {
+			if ((rc = mdb_del(txn->mdb_txn, db, &k, &v))) {
+				ndb_debug("delete old metadata entry failed: %s\n", mdb_strerror(rc));
+				return -1;
+			}
+			continue;
+		}
+
+		k2.mv_data = (unsigned char *)id;
+		k2.mv_size = 32;
+		v2.mv_data = meta;
+		v2.mv_size = ndb_note_meta_total_size(meta);
+
+		/* set entry */
+		if ((rc = mdb_put(txn->mdb_txn, db, &k2, &v2, 0))) {
+			ndb_debug("migrate metadata entry failed on write: %s\n", mdb_strerror(rc));
+		}
+	}
+
+	return 1;
+}
 
 // This was before we had note_profile_pubkey{,_kind} indices. Let's create them.
 static int ndb_migrate_profile_indices(struct ndb_txn *txn)
@@ -2329,6 +2460,7 @@ static struct ndb_migration MIGRATIONS[] = {
 	{ .fn = ndb_migrate_lower_user_search_indices },
 	{ .fn = ndb_migrate_utf8_profile_names },
 	{ .fn = ndb_migrate_profile_indices },
+	//{ .fn = ndb_migrate_reaction_stats },
 };
 
 
@@ -2450,7 +2582,7 @@ int ndb_write_last_profile_fetch(struct ndb *ndb, const unsigned char *pubkey,
 // When doing cursor scans from greatest to lowest, this function positions the
 // cursor at the first element before descending. MDB_SET_RANGE puts us right
 // after the first element, so we have to go back one.
-static int ndb_cursor_start(MDB_cursor *cur, MDB_val *k, MDB_val *v)
+int ndb_cursor_start(MDB_cursor *cur, MDB_val *k, MDB_val *v)
 {
 	int rc;
 	// Position cursor at the next key greater than or equal to the

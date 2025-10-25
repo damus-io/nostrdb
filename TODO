@@ -1,2 +1,10 @@
-implement NDB_WRITER_NOTE_META
-test write metadata
+test write +metadata
+(B) migrate reply stats +metadata
+(B) migrate quote stats +metadata
+online quote stat calculation +metadata
+online reply stats calculation +metadata
+(B) migrate reaction stats +metadata
+online reaction stats +metadata
+test reply stats +metadata
+test reaction stats +metadata
+test quote stats +metadata
