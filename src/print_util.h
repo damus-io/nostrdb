@@ -21,7 +21,7 @@ static void ndb_print_text_search_key(int bytes_size, struct ndb_text_search_key
 
 static void print_tag_kv(struct ndb_txn *txn, MDB_val *k, MDB_val *v)
 {
-	char hex_id[65], c;;
+	char hex_id[65], c;
 	struct ndb_note *note;
 	uint64_t ts;
 
