@@ -1914,7 +1914,7 @@ static int ndb_rebuild_note_indices(struct ndb_txn *txn, enum ndb_dbs *indices, 
 	// ensure they are all index dbs
 	for (i = 0; i < num_indices; i++) {
 		if (!ndb_db_is_index(indices[i])) {
-			fprintf(stderr, "ndb_rebuild_note_index: %s is not an index db\n", ndb_db_name(indices[i]));
+			fprintf(stderr, "ndb_rebuild_note_indices: %s is not an index db\n", ndb_db_name(indices[i]));
 			return -1;
 		}
 	}
@@ -1923,13 +1923,13 @@ static int ndb_rebuild_note_indices(struct ndb_txn *txn, enum ndb_dbs *indices, 
 	for (i = 0; i < num_indices; i++) {
 		index = indices[i];
 		if (mdb_drop(txn->mdb_txn, index, drop_dbi)) {
-			fprintf(stderr, "ndb_rebuild_pubkey_index: mdb_drop failed for %s\n", ndb_db_name(index));
+			fprintf(stderr, "ndb_rebuild_note_indices: mdb_drop failed for %s\n", ndb_db_name(index));
 			return -1;
 		}
 	}
 
 	if ((rc = mdb_cursor_open(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE], &cur))) {
-		fprintf(stderr, "ndb_migrate_user_search_indices: mdb_cursor_open failed, error %d\n", rc);
+		fprintf(stderr, "ndb_rebuild_note_indices: mdb_cursor_open failed, error %d\n", rc);
 		return -1;
 	}
 
