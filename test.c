@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
@@ -27,6 +28,22 @@ static void delete_test_db() {
     // Delete ./testdata/db/data.mdb
     unlink(TEST_DIR "/data.mdb");
     unlink(TEST_DIR "/data.lock");
+}
+
+static void db_load_events(struct ndb *ndb, const char *filename)
+{
+	size_t filesize;
+	int written;
+	char *json;
+	struct stat st;
+
+	stat(filename, &st);
+	filesize = st.st_size;
+
+	json = malloc(filesize + 1); // +1 for '\0' if you need it null-terminated
+	read_file(filename, (unsigned char*)json, filesize, &written);
+	assert(ndb_process_client_events(ndb, json, written));
+	free(json);
 }
 
 static NdbProfile_table_t lookup_profile(struct ndb_txn *txn, uint64_t pk)
@@ -49,6 +66,77 @@ static void print_search(struct ndb_txn *txn, struct ndb_search *search)
 	printf("searched_name name:'%s' display_name:'%s' pk:%" PRIu64 " ts:%" PRIu64 " id:", name, display_name, search->profile_key, search->key->timestamp);
 	print_hex(search->key->id, 32);
 	printf("\n");
+}
+
+static void test_count_metadata()
+{
+	struct ndb *ndb;
+	struct ndb_config config;
+	struct ndb_txn txn;
+	struct ndb_note_meta *meta;
+	//struct ndb_note_meta_entry *counts;
+	struct ndb_note_meta_entry *entry;
+	uint16_t count;
+	uint32_t total_reactions, reactions, replies;
+	int i;
+
+	reactions = 0;
+	delete_test_db();
+
+	ndb_default_config(&config);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	const unsigned char id[] = {
+		0xd4, 0x4a, 0xd9, 0x6c, 0xb8, 0x92, 0x40, 0x92, 0xa7, 0x6b, 0xc2, 0xaf,
+		0xdd, 0xeb, 0x12, 0xeb, 0x85, 0x23, 0x3c, 0x0d, 0x03, 0xa7, 0xd9, 0xad,
+		0xc4, 0x2c, 0x2a, 0x85, 0xa7, 0x9a, 0x43, 0x05
+	};
+
+	db_load_events(ndb, "testdata/test_counts.json");
+
+	/* consume all events to ensure we're done processing */
+	ndb_destroy(ndb);
+	ndb_init(&ndb, test_dir, &config);
+
+	ndb_begin_query(ndb, &txn);
+	meta = ndb_get_note_meta(&txn, id);
+	assert(meta);
+
+	count = ndb_note_meta_entries_count(meta);
+	entry = ndb_note_meta_entries(meta);
+	for (i = 0; i < count; i++) {
+		entry = ndb_note_meta_entry_at(meta, i);
+		if (*ndb_note_meta_entry_type(entry) == NDB_NOTE_META_REACTION) {
+			reactions += *ndb_note_meta_reaction_count(entry);
+		}
+	}
+
+	entry = ndb_note_meta_find_entry(meta, NDB_NOTE_META_COUNTS, NULL);
+
+	assert(entry);
+	assert(*ndb_note_meta_counts_quotes(entry) == 2);
+
+	replies = *ndb_note_meta_counts_thread_replies(entry);
+	printf("\t# thread replies %d\n", replies);
+	assert(replies == 93);
+
+	replies = *ndb_note_meta_counts_direct_replies(entry);
+	printf("\t# direct replies %d\n", replies);
+	assert(replies == 14);
+
+	total_reactions = *ndb_note_meta_counts_total_reactions(entry);
+	printf("\t# total reactions %d\n", reactions);
+	assert(total_reactions > 0);
+
+	printf("\t# reactions %d\n", reactions);
+	assert(reactions > 0);
+	assert(total_reactions == reactions);
+
+	ndb_end_query(&txn);
+	ndb_destroy(ndb);
+	delete_test_db();
+
+	printf("ok test_count_metadata\n");
 }
 
 static void test_metadata()
@@ -75,7 +163,7 @@ static void test_metadata()
 	assert(ndb_note_meta_total_size(meta) == 32);
 
 	entry = ndb_note_meta_entries(meta);
-	assert(ndb_note_meta_reaction_count(entry) == 1337);
+	assert(*ndb_note_meta_reaction_count(entry) == 1337);
 
 	printf("ok test_metadata\n");
 }
@@ -347,26 +435,21 @@ static void test_fetched_at()
 
 static void test_reaction_counter()
 {
-	static const int alloc_size = 1024 * 1024;
-	char *json = malloc(alloc_size);
 	struct ndb *ndb;
-	size_t len;
-	void *root;
-	int written, reactions, results;
-	NdbEventMeta_table_t meta;
+	int reactions, results;
 	struct ndb_txn txn;
+	struct ndb_note_meta_entry *entry;
+	struct ndb_note_meta *meta;
 	struct ndb_config config;
 	ndb_default_config(&config);
 	static const int num_reactions = 3;
 	uint64_t note_ids[num_reactions], subid;
+	union ndb_reaction_str str;
 
 	assert(ndb_init(&ndb, test_dir, &config));
-
-	read_file("testdata/reactions.json", (unsigned char*)json, alloc_size, &written);
-
 	assert((subid = ndb_subscribe(ndb, NULL, 0)));
 
-	assert(ndb_process_client_events(ndb, json, written));
+	db_load_events(ndb, "testdata/reactions.json");
 
 	for (reactions = 0; reactions < num_reactions;) {
 		results = ndb_wait_for_notes(ndb, subid, note_ids, num_reactions);
@@ -382,16 +465,19 @@ static void test_reaction_counter()
 	  0x18, 0x76, 0xeb, 0x0f, 0x62, 0x2c, 0x68, 0xe8
 	};
 
-	assert((root = ndb_get_note_meta(&txn, id, &len)));
-	assert(0 == NdbEventMeta_verify_as_root(root, len));
-	assert((meta = NdbEventMeta_as_root(root)));
-
-	reactions = NdbEventMeta_reactions_get(meta);
-	//printf("counted reactions: %d\n", reactions);
-	assert(reactions == 2);
+	assert((meta = ndb_get_note_meta(&txn, id)));
+	ndb_reaction_set(&str, "+");
+	entry = ndb_note_meta_find_entry(meta, NDB_NOTE_META_REACTION, &str.binmoji);
+	assert(entry);
+	//printf("+ count %d\n", *ndb_note_meta_reaction_count(entry));
+	assert(*ndb_note_meta_reaction_count(entry) == 1);
+	ndb_reaction_set(&str, "-");
+	entry = ndb_note_meta_find_entry(meta, NDB_NOTE_META_REACTION, &str.binmoji);
+	assert(entry);
+	assert(*ndb_note_meta_reaction_count(entry) == 1);
 	ndb_end_query(&txn);
 	ndb_destroy(ndb);
-	free(json);
+	delete_test_db();
 }
 
 static void test_profile_search(struct ndb *ndb)
@@ -2070,6 +2156,7 @@ static void test_custom_filter()
 	ndb_filter_destroy(f);
 	ndb_filter_destroy(f2);
 	ndb_destroy(ndb);
+	delete_test_db();
 
 	printf("ok test_custom_filter\n");
 }
@@ -2114,19 +2201,18 @@ void test_replay_attack() {
 
 	ndb_filter_destroy(f);
 	ndb_destroy(ndb);
+	delete_test_db();
 }
 
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
 	test_replay_attack();
-	delete_test_db();
-
 	test_custom_filter();
-	delete_test_db();
-
 	test_metadata();
+	test_count_metadata();
 	test_reaction_encoding();
+	test_reaction_counter();
 	test_note_relay_index();
 	test_filter_search();
 	test_filter_parse_search_json();
@@ -2151,7 +2237,6 @@ int main(int argc, const char *argv[]) {
 	//test_migrate();
 	test_fetched_at();
 	test_profile_updates();
-	test_reaction_counter();
 	test_load_profiles();
 	test_nip50_profile_search();
 	test_basic_event();

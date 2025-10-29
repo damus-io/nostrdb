@@ -1,55 +1,7 @@
 
 #include "nostrdb.h"
 #include "binmoji.h"
-
-// these must be byte-aligned, they are directly accessing the serialized data
-// representation
-#pragma pack(push, 1)
-
-// 16 bytes
-struct ndb_note_meta_entry {
-	// 4 byte entry header
-	uint16_t type;
-	uint16_t flags;
-
-	// additional 4 bytes of aux storage for payloads that are >8 bytes
-	//
-	// for reactions types, this is used for counts
-	// normally this would have been padding but we make use of it
-	// in our manually packed structure
-	uint32_t aux;
-
-	// 8 byte metadata payload
-	union {
-		uint64_t value;
-
-		struct {
-			uint32_t offset;
-			uint32_t padding;
-		} offset;
-
-		// the reaction binmoji[1] for reaction, count is stored in aux
-		union ndb_reaction_str reaction_str;
-	} payload;
-};
-STATIC_ASSERT(sizeof(struct ndb_note_meta_entry) == 16, note_meta_entry_should_be_16_bytes);
-
-/* newtype wrapper around the header entry */
-struct ndb_note_meta {
-	// 4 bytes
-	uint8_t version;
-	uint8_t padding;
-	uint16_t count;
-
-	// 4 bytes
-	uint32_t data_table_size;
-
-	// 8 bytes
-	uint64_t flags;
-};
-STATIC_ASSERT(sizeof(struct ndb_note_meta) == 16, note_meta_entry_should_be_16_bytes);
-
-#pragma pack(pop)
+#include "metadata.h"
 
 int ndb_reaction_str_is_emoji(union ndb_reaction_str str) 
 {
@@ -94,6 +46,19 @@ static int ndb_reaction_set_str(union ndb_reaction_str *reaction, const char *st
 	}
 
 	return 0;
+}
+
+const char *ndb_reaction_to_str(union ndb_reaction_str *str, char buf[128])
+{
+	struct binmoji binmoji;
+
+	if (ndb_reaction_str_is_emoji(*str)) {
+		binmoji_decode(str->binmoji, &binmoji);
+		binmoji_to_string(&binmoji, buf, 128);
+		return (const char *)buf;
+	} else {
+		return (const char *)str->packed.str;
+	}
 }
 
 /* set the value of an ndb_reaction_str to an emoji or small string */
@@ -215,9 +180,16 @@ static int compare_entries(const void *a, const void *b)
 struct ndb_note_meta_entry *ndb_note_meta_entries(struct ndb_note_meta *meta)
 {
 	/* entries start at the end of the header record */
-	return (struct ndb_note_meta_entry *)((uint8_t*)meta + sizeof(*meta));
+	return (struct ndb_note_meta_entry *)((unsigned char*)meta + sizeof(*meta));
 }
 
+struct ndb_note_meta_entry *ndb_note_meta_entry_at(struct ndb_note_meta *meta, int i)
+{
+	if (i >= ndb_note_meta_entries_count(meta))
+		return NULL;
+
+	return &ndb_note_meta_entries(meta)[i];
+}
 void ndb_note_meta_build(struct ndb_note_meta_builder *builder, struct ndb_note_meta **meta)
 {
 	/* sort entries */
@@ -227,16 +199,25 @@ void ndb_note_meta_build(struct ndb_note_meta_builder *builder, struct ndb_note_
 	/* not initialized */
 	assert(builder->cursor.start != builder->cursor.p);
 
-	if (header->count > 0) {
+	if (header->count > 1) {
 		entries = ndb_note_meta_entries(header);
+		/*assert(entries);*/
 
 		/* ensure entries are always sorted so bsearch is possible for large metadata
 		 * entries. probably won't need that for awhile though */
+
+		/* this also ensures our counts entry is near the front, which will be a very
+		 * hot and common entry to hit */
 		qsort(entries, header->count, sizeof(struct ndb_note_meta_entry), compare_entries);
 	}
 
 	*meta = header;
 	return;
+}
+
+uint16_t *ndb_note_meta_entry_type(struct ndb_note_meta_entry *entry)
+{
+	return &entry->type;
 }
 
 /* find a metadata entry, optionally matching a payload */
@@ -249,12 +230,19 @@ struct ndb_note_meta_entry *ndb_note_meta_find_entry(struct ndb_note_meta *meta,
 		return NULL;
 
 	entries = ndb_note_meta_entries(meta);
+	assert(((intptr_t)entries - (intptr_t)meta) == 16);
 
 	for (i = 0; i < meta->count; i++) {
 		entry = &entries[i];
+		assert(((uintptr_t)entry % 8) == 0);
+		/*
+		assert(entry->type < 100);
+		printf("finding %d/%d q:%d q:%"PRIx64" entry_type:%d entry:%"PRIx64"\n",
+			i+1, (int)meta->count, type, payload ? *payload : 0, entry->type, entry->payload.value);
+			*/
 		if (entry->type != type)
 			continue;
-		if (payload && *payload != entry->payload.value)
+		if (payload && (*payload != entry->payload.value))
 			continue;
 		return entry;
 	}
@@ -266,28 +254,135 @@ void ndb_note_meta_reaction_set(struct ndb_note_meta_entry *entry, uint32_t coun
 {
 	entry->type = NDB_NOTE_META_REACTION;
 	entry->flags = 0;
-	entry->aux = count;
+	entry->aux.value = count;
 	entry->payload.reaction_str = str;
 }
 
 /* sets the quote repost count for this note */
-void ndb_note_meta_quotes_set(struct ndb_note_meta_entry *entry, uint32_t count)
+void ndb_note_meta_counts_set(struct ndb_note_meta_entry *entry,
+		uint32_t total_reactions,
+		uint16_t quotes,
+		uint16_t direct_replies,
+		uint32_t thread_replies)
 {
-	entry->type = NDB_NOTE_META_QUOTES;
-	entry->flags = 0;
-	entry->aux = count;
-	/* unused */
-	entry->payload.value = 0;
+	entry->type = NDB_NOTE_META_COUNTS;
+	entry->aux.total_reactions = total_reactions;
+	entry->payload.counts.quotes = quotes;
+	entry->payload.counts.direct_replies = direct_replies;
+	entry->payload.counts.thread_replies = thread_replies;
 }
 
-uint32_t ndb_note_meta_reaction_count(struct ndb_note_meta_entry *entry)
+/* clones a metadata, either adding a new entry of a specific type, or returing
+ * a reference to it
+ *
+ * [in/out] meta:  pointer to an existing meta entry, can but overwritten to
+ * [out]    entry: pointer to the added entry
+ *
+ * */
+enum ndb_meta_clone_result ndb_note_meta_clone_with_entry(
+		struct ndb_note_meta **meta,
+		struct ndb_note_meta_entry **entry,
+		uint16_t type,
+		uint64_t *payload,
+		unsigned char *buf,
+		size_t bufsize)
 {
-	return entry->aux;
+	size_t size, offset;
+	struct ndb_note_meta_builder builder;
+
+	if (*meta == NULL) {
+		ndb_note_meta_builder_init(&builder, buf, bufsize);
+		*entry = ndb_note_meta_add_entry(&builder);
+		*meta = (struct ndb_note_meta*)buf;
+
+		assert(*entry);
+
+		ndb_note_meta_build(&builder, meta);
+		return NDB_META_CLONE_NEW_ENTRY;
+	} else if ((size = ndb_note_meta_total_size(*meta)) > bufsize) {
+		ndb_debug("buf size too small (%d < %d) for metadata entry\n", bufsize, size);
+		goto fail;
+	} else if ((*entry = ndb_note_meta_find_entry(*meta, type, payload))) {
+		offset = (unsigned char *)(*entry) - (unsigned char *)(*meta);
+
+		/* we have an existing entry. simply memcpy and return the new entry position */
+		assert(offset < size);
+		assert((offset % 16) == 0);
+		assert(((uintptr_t)buf % 8) == 0);
+
+		memcpy(buf, *meta, size);
+		*meta = (struct ndb_note_meta*)buf;
+		*entry = (struct ndb_note_meta_entry*)(((unsigned char *)(*meta)) + offset);
+		return NDB_META_CLONE_EXISTING_ENTRY;
+	} else if (size + sizeof(*entry) > bufsize) {
+		/* if we don't have an existing entry, make sure we have room to add one */
+
+		ndb_debug("note metadata is too big (%d > %d) to clone with entry\n",
+			  (int)(len + sizeof(*entry)), (int)scratch_size);
+		/* no room. this is bad, if this happens we should fix it */
+		goto fail;
+	} else {
+		/* we need to add a new entry */
+		ndb_note_meta_builder_init(&builder, buf, bufsize);
+
+		memcpy(buf, *meta, size);
+		builder.cursor.p = buf + size;
+
+		*entry = ndb_note_meta_add_entry(&builder);
+		assert(*entry);
+		(*entry)->type = type;
+		(*entry)->payload.value = payload? *payload : 0;
+
+		*meta = (struct ndb_note_meta*)buf;
+
+		assert(*entry);
+		assert(*meta);
+
+		ndb_note_meta_build(&builder, meta);
+
+		/* we re-find here since it could have been sorted */
+		*entry = ndb_note_meta_find_entry(*meta, type, payload);
+		assert(*entry);
+		assert(*ndb_note_meta_entry_type(*entry) == type);
+
+		return NDB_META_CLONE_NEW_ENTRY;
+	}
+
+	assert(!"should be impossible to get here");
+fail:
+	*entry = NULL;
+	*meta = NULL;
+	return 0;
+}
+
+uint32_t *ndb_note_meta_reaction_count(struct ndb_note_meta_entry *entry)
+{
+	return &entry->aux.value;
+}
+
+uint16_t *ndb_note_meta_counts_direct_replies(struct ndb_note_meta_entry *entry)
+{
+	return &entry->payload.counts.direct_replies;
+}
+
+uint32_t *ndb_note_meta_counts_total_reactions(struct ndb_note_meta_entry *entry)
+{
+	return &entry->aux.total_reactions;
+}
+
+uint32_t *ndb_note_meta_counts_thread_replies(struct ndb_note_meta_entry *entry)
+{
+	return &entry->payload.counts.thread_replies;
+}
+
+uint16_t *ndb_note_meta_counts_quotes(struct ndb_note_meta_entry *entry)
+{
+	return &entry->payload.counts.quotes;
 }
 
 void ndb_note_meta_reaction_set_count(struct ndb_note_meta_entry *entry, uint32_t count)
 {
-	entry->aux = count;
+	entry->aux.value = count;
 }
 
 union ndb_reaction_str ndb_note_meta_reaction_str(struct ndb_note_meta_entry *entry)

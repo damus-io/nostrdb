@@ -49,8 +49,8 @@ struct bolt11;
  */
 enum ndb_metadata_type {
     NDB_NOTE_META_RESERVED = 0, /* not used */
-    NDB_NOTE_META_REACTION = 2, /* count of all the reactions on a post, grouped by different reaction strings */
-    NDB_NOTE_META_QUOTES   = 4, /* count of all the all the notes with q tag references to this note */
+    NDB_NOTE_META_COUNTS   = 2, /* replies, quotes, etc */
+    NDB_NOTE_META_REACTION = 4, /* count of all the reactions on a post, grouped by different reaction strings */
 };
 
 // some bindings like swift needs help with forward declared pointers
@@ -654,7 +654,7 @@ void ndb_text_search_config_set_limit(struct ndb_text_search_config *, int limit
 int ndb_query(struct ndb_txn *txn, struct ndb_filter *filters, int num_filters, struct ndb_query_result *results, int result_capacity, int *count);
 
 // NOTE METADATA
-void *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char *id, size_t *len);
+struct ndb_note_meta *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char *id);
 int ndb_set_note_meta(struct ndb *ndb, const unsigned char *id, struct ndb_note_meta *meta);
 size_t ndb_note_meta_total_size(struct ndb_note_meta *header);
 int ndb_note_meta_builder_init(struct ndb_note_meta_builder *builder, unsigned char *, size_t);
@@ -664,12 +664,20 @@ struct ndb_note_meta_entry *ndb_note_meta_entries(struct ndb_note_meta *meta);
 struct ndb_note_meta_entry *ndb_note_meta_add_entry(struct ndb_note_meta_builder *builder);
 size_t ndb_note_meta_total_size(struct ndb_note_meta *meta);
 void ndb_note_meta_reaction_set(struct ndb_note_meta_entry *entry, uint32_t count, union ndb_reaction_str str);
-void ndb_note_meta_quotes_set(struct ndb_note_meta_entry *entry, uint32_t count);
-uint32_t ndb_note_meta_reaction_count(struct ndb_note_meta_entry *entry);
+void ndb_note_meta_counts_set(struct ndb_note_meta_entry *entry, uint32_t total_reactions, uint16_t quotes, uint16_t direct_replies, uint32_t thread_replies);
+uint32_t *ndb_note_meta_reaction_count(struct ndb_note_meta_entry *entry);
+struct ndb_note_meta_entry *ndb_note_meta_find_entry(struct ndb_note_meta *meta, uint16_t type, uint64_t *payload);
+uint16_t *ndb_note_meta_counts_quotes(struct ndb_note_meta_entry *entry);
+uint32_t *ndb_note_meta_counts_total_reactions(struct ndb_note_meta_entry *entry);
+uint16_t *ndb_note_meta_counts_direct_replies(struct ndb_note_meta_entry *entry);
+uint32_t *ndb_note_meta_counts_thread_replies(struct ndb_note_meta_entry *entry);
+uint16_t *ndb_note_meta_entry_type(struct ndb_note_meta_entry *entry);
+struct ndb_note_meta_entry *ndb_note_meta_entry_at(struct ndb_note_meta *meta, int ind);
 
 // META STRINGS
 int ndb_reaction_set(union ndb_reaction_str *reaction, const char *str);
 int ndb_reaction_str_is_emoji(union ndb_reaction_str);
+const char *ndb_reaction_to_str(union ndb_reaction_str *str, char buf[128]);
 
 // STATS
 int ndb_stat(struct ndb *ndb, struct ndb_stat *stat);
