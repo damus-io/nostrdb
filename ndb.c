@@ -323,7 +323,32 @@ int main(int argc, char *argv[])
 
 				argv += 2;
 				argc -= 2;
-			} else if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--author")) {
+			} else if (!strcmp(argv[0], "-q")) {
+				if (current_field != 'q') {
+					if (!ndb_filter_start_tag_field(f, 'q')) {
+						fprintf(stderr, "field already started\n");
+						res = 44;
+						goto cleanup;
+					}
+				}
+				current_field = 'q';
+
+				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
+					fprintf(stderr, "invalid hex id\n");
+					res = 42;
+					goto cleanup;
+				}
+
+				if (!ndb_filter_add_id_element(f, tmp_id)) {
+					fprintf(stderr, "too many event ids\n");
+					res = 43;
+					goto cleanup;
+				}
+
+				argv += 2;
+				argc -= 2;
+			} 
+			else if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--author")) {
 				if (current_field != NDB_FILTER_AUTHORS) {
 					ndb_filter_end_field(f);
 					ndb_filter_start_field(f, NDB_FILTER_AUTHORS);
