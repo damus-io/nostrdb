@@ -30,7 +30,7 @@ static void delete_test_db() {
     unlink(TEST_DIR "/data.lock");
 }
 
-int ndb_count_reactions(struct ndb_txn *txn, const unsigned char *note_id, uint32_t *count);
+int ndb_rebuild_reaction_metadata(struct ndb_txn *txn, const unsigned char *note_id, struct ndb_note_meta_builder *builder, uint32_t *count);
 int ndb_count_replies(struct ndb_txn *txn, const unsigned char *note_id, uint16_t *direct_replies, uint32_t *thread_replies);
 
 static void db_load_events(struct ndb *ndb, const char *filename)
@@ -141,7 +141,7 @@ static void test_count_metadata()
 	ndb_begin_query(ndb, &txn);
 	/* this is used in the migration code,
 	 * let's make sure it matches the online logic */
-	ndb_count_reactions(&txn, id, &reactions);
+	ndb_rebuild_reaction_metadata(&txn, id, NULL, &reactions);
 	printf("\t# after-counted reactions %d\n", reactions);
 	assert(reactions == total_reactions);
 

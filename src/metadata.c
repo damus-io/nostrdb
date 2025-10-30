@@ -221,7 +221,7 @@ uint16_t *ndb_note_meta_entry_type(struct ndb_note_meta_entry *entry)
 }
 
 /* find a metadata entry, optionally matching a payload */
-struct ndb_note_meta_entry *ndb_note_meta_find_entry(struct ndb_note_meta *meta, uint16_t type, uint64_t *payload)
+static struct ndb_note_meta_entry *ndb_note_meta_find_entry_impl(struct ndb_note_meta *meta, uint16_t type, uint64_t *payload, int sorted)
 {
 	struct ndb_note_meta_entry *entries, *entry;
 	int i;
@@ -231,6 +231,8 @@ struct ndb_note_meta_entry *ndb_note_meta_find_entry(struct ndb_note_meta *meta,
 
 	entries = ndb_note_meta_entries(meta);
 	assert(((intptr_t)entries - (intptr_t)meta) == 16);
+
+	/* TODO(jb55): do bsearch for large sorted entries */
 
 	for (i = 0; i < meta->count; i++) {
 		entry = &entries[i];
@@ -248,6 +250,22 @@ struct ndb_note_meta_entry *ndb_note_meta_find_entry(struct ndb_note_meta *meta,
 	}
 
 	return NULL;
+}
+
+struct ndb_note_meta_entry *ndb_note_meta_find_entry(struct ndb_note_meta *meta, uint16_t type, uint64_t *payload)
+{
+	int sorted = 1;
+	return ndb_note_meta_find_entry_impl(meta, type, payload, sorted);
+}
+
+struct ndb_note_meta_entry *ndb_note_meta_builder_find_entry(
+		struct ndb_note_meta_builder *builder,
+		uint16_t type,
+		uint64_t *payload)
+{
+	/* meta building in progress is not necessarily sorted */
+	int sorted = 0;
+	return ndb_note_meta_find_entry_impl((struct ndb_note_meta *)builder->cursor.start, type, payload, sorted);
 }
 
 void ndb_note_meta_reaction_set(struct ndb_note_meta_entry *entry, uint32_t count, union ndb_reaction_str str)
@@ -388,4 +406,36 @@ void ndb_note_meta_reaction_set_count(struct ndb_note_meta_entry *entry, uint32_
 union ndb_reaction_str ndb_note_meta_reaction_str(struct ndb_note_meta_entry *entry)
 {
 	return entry->payload.reaction_str;
+}
+
+void print_note_meta(struct ndb_note_meta *meta)
+{
+	int count, i;
+	struct ndb_note_meta_entry *entries, *entry;
+	union ndb_reaction_str reaction;
+	char strbuf[128];
+
+	count = ndb_note_meta_entries_count(meta);
+	entries = ndb_note_meta_entries(meta);
+
+	for (i = 0; i < count; i++) {
+		entry = &entries[i];
+		switch (entry->type) {
+		case NDB_NOTE_META_REACTION:
+			reaction = ndb_note_meta_reaction_str(entry);
+
+			ndb_reaction_to_str(&reaction, strbuf);
+			printf("%s%d ", strbuf, *ndb_note_meta_reaction_count(entry));
+			break;
+		case NDB_NOTE_META_COUNTS:
+			printf("quotes %d\treplies %d\tall_replies %d\treactions %d\t",
+					*ndb_note_meta_counts_quotes(entry),
+					*ndb_note_meta_counts_direct_replies(entry),
+					*ndb_note_meta_counts_thread_replies(entry),
+					*ndb_note_meta_counts_total_reactions(entry));
+			break;
+		}
+	}
+
+	printf("\n");
 }

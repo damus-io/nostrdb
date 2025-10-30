@@ -2178,7 +2178,7 @@ cleanup:
 }
 
 /* count all of the reactions for a note */
-int ndb_count_reactions(struct ndb_txn *txn, const unsigned char *note_id, uint32_t *count)
+int ndb_rebuild_reaction_metadata(struct ndb_txn *txn, const unsigned char *note_id, struct ndb_note_meta_builder *builder, uint32_t *count)
 {
 	MDB_val k, v;
 	MDB_cursor *cur;
@@ -2189,6 +2189,8 @@ int ndb_count_reactions(struct ndb_txn *txn, const unsigned char *note_id, uint3
 	size_t size;
 	struct ndb_note *note;
 	unsigned char *keybuf, *last_id;
+	struct ndb_note_meta_entry *entry;
+	union ndb_reaction_str reaction_str;
 	char buffer[41]; /* 1 + 32 + 8 */
 	*count = 0;
 
@@ -2227,6 +2229,21 @@ int ndb_count_reactions(struct ndb_txn *txn, const unsigned char *note_id, uint3
 			continue;
 		if (memcmp(last_id, note_id, 32))
 			continue;
+
+		if (builder) {
+			if (!ndb_reaction_set(&reaction_str, ndb_note_content(note)))
+				ndb_reaction_set(&reaction_str, "+");
+
+			if ((entry = ndb_note_meta_builder_find_entry(builder, NDB_NOTE_META_REACTION, &reaction_str.binmoji))) {
+				(*ndb_note_meta_reaction_count(entry))++;
+			} else if ((entry = ndb_note_meta_add_entry(builder))) {
+				ndb_note_meta_reaction_set(entry, 1, reaction_str);
+			} else {
+				/* couldn't add reaction entry ? */
+				ndb_debug("ndb_rebuild_note_indices: couldn't add reaction count entry to metadata builder\n");
+			}
+		}
+
 		(*count)++;
 	} while (mdb_cursor_get(cur, &k, &v, MDB_NEXT) == 0);
 
@@ -2301,19 +2318,22 @@ static int ndb_note_meta_builder_counts(struct ndb_txn *txn,
 	thread_replies = 0;
 	total_reactions = 0;
 
-	if (!(entry = ndb_note_meta_add_entry(builder)))
-		return 0;
-
-	rcs[0] = ndb_count_reactions(txn, note_id, &total_reactions);
+	rcs[0] = ndb_rebuild_reaction_metadata(txn, note_id, builder, &total_reactions);
 	rcs[1] = ndb_count_quotes(txn, note_id, &quotes);
 	rcs[2] = ndb_count_replies(txn, note_id, &direct_replies, &thread_replies);
 
-	if (!rcs[0] && !rcs[1] && !rcs[2])
+	if (!rcs[0] && !rcs[1] && !rcs[2]) {
 		return 0;
+	}
 
 	/* no entry needed */
-	if (quotes == 0 && direct_replies == 0 && thread_replies == 0 && quotes == 0)
-		return 1;
+	if (quotes == 0 && direct_replies == 0 && thread_replies == 0 && quotes == 0) {
+		return 0;
+	}
+
+	if (!(entry = ndb_note_meta_add_entry(builder))) {
+		return 0;
+	}
 
 	ndb_note_meta_counts_set(entry, total_reactions, quotes, direct_replies, thread_replies);
 
@@ -2334,49 +2354,64 @@ static int ndb_migrate_metadata(struct ndb_txn *txn)
 {
 	MDB_val k, k2, v, v2;
 	MDB_cursor *cur;
-	MDB_dbi db;
+	MDB_dbi note_db, meta_db;
 	unsigned char *id;
-	unsigned char buffer[4096];
-	int rc;
+	size_t scratch_size = 1024 * 1024;
+	unsigned char *buffer = malloc(scratch_size);
+	int rc, count;
 	struct ndb_note_meta_builder builder;
+	struct ndb_note *note;
 	struct ndb_note_meta *meta;
 
-	db = txn->lmdb->dbs[NDB_DB_META];
+	meta_db = txn->lmdb->dbs[NDB_DB_META];
+	note_db = txn->lmdb->dbs[NDB_DB_NOTE];
 
-	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur))) {
-		fprintf(stderr, "ndb_migrate_reaction_stats: mdb_cursor_open failed, error %d\n", rc);
+	/* drop metadata table to avoid issues */
+	if (mdb_drop(txn->mdb_txn, meta_db, 0)) {
+		fprintf(stderr, "ndb_migrate_metadata: mdb_drop failed\n");
 		return -1;
 	}
 
+	if ((rc = mdb_cursor_open(txn->mdb_txn, note_db, &cur))) {
+		fprintf(stderr, "ndb_migrate_metadata: mdb_cursor_open failed, error %d\n", rc);
+		return -1;
+	}
+
+	count = 0;
+
 	/* loop through every metadata entry */
 	while (mdb_cursor_get(cur, &k, &v, MDB_NEXT) == 0) {
-		ndb_note_meta_builder_init(&builder, buffer, sizeof(buffer));
+		ndb_note_meta_builder_init(&builder, buffer, scratch_size);
 
-		id = (unsigned char *)k.mv_data;
-		ndb_note_meta_builder_count_reactions(txn, &builder);
-		ndb_note_meta_builder_counts(txn, id, &builder);
-		ndb_note_meta_build(&builder, &meta);
+		note = (struct ndb_note *)v.mv_data;
+		id = ndb_note_id(note);
+		k2.mv_data = (unsigned char *)id;
+		k2.mv_size = 32;
 
-		/* no counts found, just delete this entry */
-		if (ndb_note_meta_entries_count(meta) == 0) {
-			if ((rc = mdb_del(txn->mdb_txn, db, &k, &v))) {
-				ndb_debug("delete old metadata entry failed: %s\n", mdb_strerror(rc));
-				return -1;
-			}
+		rc = ndb_note_meta_builder_counts(txn, id, &builder);
+		if (!rc) {
+			mdb_del(txn->mdb_txn, meta_db, &k2, NULL);
 			continue;
 		}
 
-		k2.mv_data = (unsigned char *)id;
-		k2.mv_size = 32;
+		ndb_note_meta_build(&builder, &meta);
+		assert(ndb_note_meta_entries(meta)->type != 0);
+
 		v2.mv_data = meta;
 		v2.mv_size = ndb_note_meta_total_size(meta);
 
 		/* set entry */
-		if ((rc = mdb_put(txn->mdb_txn, db, &k2, &v2, 0))) {
+		if ((rc = mdb_put(txn->mdb_txn, meta_db, &k2, &v2, 0))) {
 			ndb_debug("migrate metadata entry failed on write: %s\n", mdb_strerror(rc));
 		}
+
+		count++;
 	}
 
+	fprintf(stderr, "nostrdb: migrated %d metadata entries\n", count);
+
+	free(buffer);
+	mdb_cursor_close(cur);
 	return 1;
 }
 
@@ -2713,7 +2748,7 @@ static struct ndb_migration MIGRATIONS[] = {
 	{ .fn = ndb_migrate_lower_user_search_indices },
 	{ .fn = ndb_migrate_utf8_profile_names },
 	{ .fn = ndb_migrate_profile_indices },
-	//{ .fn = ndb_migrate_metadata },
+	{ .fn = ndb_migrate_metadata },
 };
 
 
@@ -8514,6 +8549,29 @@ void ndb_config_set_ingest_filter(struct ndb_config *config,
 	config->ingest_filter = fn;
 	config->filter_context = filter_ctx;
 }
+
+int ndb_print_note_metadata(struct ndb_txn *txn)
+{
+	MDB_cursor *cur;
+	MDB_val k, v;
+	int i;
+
+	if (mdb_cursor_open(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], &cur))
+		return 0;
+
+	i = 1;
+	while (mdb_cursor_get(cur, &k, &v, MDB_NEXT) == 0) {
+		print_hex(k.mv_data, 32);
+		printf("\t");
+		print_note_meta((struct ndb_note_meta*)v.mv_data);
+		i++;
+	}
+
+	mdb_cursor_close(cur);
+
+	return i;
+}
+
 
 int ndb_print_author_kind_index(struct ndb_txn *txn)
 {

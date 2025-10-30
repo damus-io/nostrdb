@@ -49,8 +49,8 @@ struct bolt11;
  */
 enum ndb_metadata_type {
     NDB_NOTE_META_RESERVED = 0, /* not used */
-    NDB_NOTE_META_COUNTS   = 2, /* replies, quotes, etc */
-    NDB_NOTE_META_REACTION = 4, /* count of all the reactions on a post, grouped by different reaction strings */
+    NDB_NOTE_META_COUNTS   = 100, /* replies, quotes, etc */
+    NDB_NOTE_META_REACTION = 200, /* count of all the reactions on a post, grouped by different reaction strings */
 };
 
 // some bindings like swift needs help with forward declared pointers
@@ -658,6 +658,7 @@ struct ndb_note_meta *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char
 int ndb_set_note_meta(struct ndb *ndb, const unsigned char *id, struct ndb_note_meta *meta);
 size_t ndb_note_meta_total_size(struct ndb_note_meta *header);
 int ndb_note_meta_builder_init(struct ndb_note_meta_builder *builder, unsigned char *, size_t);
+struct ndb_note_meta_entry *ndb_note_meta_builder_find_entry(struct ndb_note_meta_builder *builder, uint16_t type, uint64_t *payload);
 void ndb_note_meta_build(struct ndb_note_meta_builder *builder, struct ndb_note_meta **meta);
 uint16_t ndb_note_meta_entries_count(struct ndb_note_meta *meta);
 struct ndb_note_meta_entry *ndb_note_meta_entries(struct ndb_note_meta *meta);
@@ -673,6 +674,7 @@ uint16_t *ndb_note_meta_counts_direct_replies(struct ndb_note_meta_entry *entry)
 uint32_t *ndb_note_meta_counts_thread_replies(struct ndb_note_meta_entry *entry);
 uint16_t *ndb_note_meta_entry_type(struct ndb_note_meta_entry *entry);
 struct ndb_note_meta_entry *ndb_note_meta_entry_at(struct ndb_note_meta *meta, int ind);
+void print_note_meta(struct ndb_note_meta *meta);
 
 // META STRINGS
 int ndb_reaction_set(union ndb_reaction_str *reaction, const char *str);

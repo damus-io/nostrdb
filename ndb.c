@@ -28,6 +28,7 @@ static int usage()
 	printf("	print-tag-keys\n");
 	printf("	print-relay-kind-index-keys\n");
 	printf("	print-author-kind-index-keys\n");
+	printf("	print-note-metadata\n");
 	printf("	import <line-delimited json file>\n\n");
 
 	printf("settings\n\n");
@@ -108,6 +109,7 @@ int ndb_print_kind_keys(struct ndb_txn *txn);
 int ndb_print_tag_index(struct ndb_txn *txn);
 int ndb_print_relay_kind_index(struct ndb_txn *txn);
 int ndb_print_author_kind_index(struct ndb_txn *txn);
+int ndb_print_note_metadata(struct ndb_txn *txn);
 
 static void print_note(struct ndb_note *note)
 {
@@ -442,6 +444,10 @@ int main(int argc, char *argv[])
 	} else if (argc == 2 && !strcmp(argv[1], "print-author-kind-index-keys")) {
 		ndb_begin_query(ndb, &txn);
 		ndb_print_author_kind_index(&txn);
+		ndb_end_query(&txn);
+	} else if (argc == 2 && !strcmp(argv[1], "print-note-metadata")) {
+		ndb_begin_query(ndb, &txn);
+		ndb_print_note_metadata(&txn);
 		ndb_end_query(&txn);
 	} else if (argc == 3 && !strcmp(argv[1], "note-relays")) {
 		struct ndb_note_relay_iterator iter;
