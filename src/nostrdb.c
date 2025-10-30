@@ -2029,9 +2029,151 @@ static unsigned char *ndb_note_last_id_tag(struct ndb_note *note, char type)
 	return last;
 }
 
-
-static int ndb_count_replies(struct ndb_txn *txn, const unsigned char *note_id, uint16_t *direct_replies, uint32_t *thread_replies)
+/* get reply information from a note */
+static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_reply)
 {
+	unsigned char *root, *reply, *mention, *id;
+	const char *marker;
+	struct ndb_iterator iter;
+	struct ndb_str str;
+	uint16_t count;
+	int any_marker, first;
+
+	any_marker = 0;
+	first = 1;
+	root = NULL;
+	reply = NULL;
+	mention = NULL;
+
+	// get the liked event id (last id)
+	ndb_tags_iterate_start(note, &iter);
+	while (ndb_tags_iterate_next(&iter)) {
+		if (root && reply && mention)
+			break;
+
+		marker = NULL;
+		count = ndb_tag_count(iter.tag);
+
+		if (count < 2)
+			continue;
+
+		str = ndb_tag_str(note, iter.tag, 0);
+		if (!(str.flag == NDB_PACKED_STR && str.str[0] == 'e'))
+			continue;
+
+		str = ndb_tag_str(note, iter.tag, 1);
+		if (str.flag != NDB_PACKED_ID)
+			continue;
+		id = str.id;
+
+		/* if we have the marker, assign it */
+		if (count >= 4) {
+			str = ndb_tag_str(note, iter.tag, 3);
+			if (str.flag == NDB_PACKED_STR)
+				marker = str.str;
+		}
+
+		if (marker) {
+			any_marker = true;
+			if (!strcmp(marker, "root"))
+				root = id;
+			else if (!strcmp(marker, "reply"))
+				reply = id;
+			else if (!strcmp(marker, "mention"))
+				mention = id;
+		} else if (!any_marker && first) {
+			root = id;
+			first = 0;
+		} else if (!any_marker && !reply) {
+			reply = id;
+		}
+	}
+
+	note_reply->reply = reply;
+	note_reply->root = root;
+	note_reply->mention = mention;
+}
+
+static int ndb_is_reply_to_root(struct ndb_note_reply *reply)
+{
+	if (reply->root && !reply->reply)
+		return 0;
+	else if (reply->root && reply->reply)
+		return !memcmp(reply->root, reply->reply, 32);
+	else
+		return 0;
+}
+
+
+int ndb_count_replies(struct ndb_txn *txn, const unsigned char *note_id, uint16_t *direct_replies, uint32_t *thread_replies)
+{
+	MDB_val k, v;
+	MDB_cursor *cur;
+	MDB_dbi db;
+
+	int rc;
+	uint64_t note_key;
+	size_t size;
+	struct ndb_note *note;
+	unsigned char *keybuf, *reply_id;
+	struct ndb_note_reply reply;
+	char buffer[41]; /* 1 + 32 + 8 */
+
+	*direct_replies = 0;
+	*thread_replies = 0;
+
+	db = txn->lmdb->dbs[NDB_DB_NOTE_TAGS];
+	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur))) {
+		fprintf(stderr, "ndb_count_reactions: mdb_cursor_open failed, error %d\n", rc);
+		return 0;
+	}
+
+	buffer[0] = 'e';
+	memcpy(&buffer[1], note_id, 32);
+	memset(&buffer[33], 0x00, 8);
+
+	k.mv_data = buffer;
+	k.mv_size = sizeof(buffer);
+	v.mv_data = NULL;
+	v.mv_size = 0;
+
+	if (mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE))
+		goto cleanup;
+
+	do {
+		keybuf = (unsigned char *)k.mv_data;
+		note_key = *((uint64_t*)v.mv_data);
+		if (k.mv_size < sizeof(buffer))
+			break;
+		if (keybuf[0] != 'e')
+			break;
+		if (memcmp(&keybuf[1], note_id, 32))
+			break;
+		if (!(note = ndb_get_note_by_key(txn, note_key, &size)))
+			continue;
+		if (ndb_note_kind(note) != 1)
+			continue;
+
+		ndb_parse_reply(note, &reply);
+
+		if (ndb_is_reply_to_root(&reply)) {
+			reply_id = reply.root;
+		} else {
+			reply_id = reply.reply;
+		}
+
+		if (reply_id && !memcmp(reply_id, note_id, 32)) {
+			(*direct_replies)++;
+		}
+
+		if (reply.root && !memcmp(reply.root, note_id, 32)) {
+			(*thread_replies)++;
+		}
+
+	} while (mdb_cursor_get(cur, &k, &v, MDB_NEXT) == 0);
+
+cleanup:
+	mdb_cursor_close(cur);
 	return 1;
 }
 
@@ -5630,81 +5772,6 @@ static unsigned char *ndb_note_first_tag_id(struct ndb_note *note, char tag)
 	}
 
 	return NULL;
-}
-
-/* get reply information from a note */
-static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_reply)
-{
-	unsigned char *root, *reply, *mention, *id;
-	const char *marker;
-	struct ndb_iterator iter;
-	struct ndb_str str;
-	uint16_t count;
-	int any_marker, first;
-
-	any_marker = 0;
-	first = 1;
-	root = NULL;
-	reply = NULL;
-	mention = NULL;
-
-	// get the liked event id (last id)
-	ndb_tags_iterate_start(note, &iter);
-	while (ndb_tags_iterate_next(&iter)) {
-		if (root && reply && mention)
-			break;
-
-		marker = NULL;
-		count = ndb_tag_count(iter.tag);
-
-		if (count < 2)
-			continue;
-
-		str = ndb_tag_str(note, iter.tag, 0);
-		if (!(str.flag == NDB_PACKED_STR && str.str[0] == 'e'))
-			continue;
-
-		str = ndb_tag_str(note, iter.tag, 1);
-		if (str.flag != NDB_PACKED_ID)
-			continue;
-		id = str.id;
-
-		/* if we have the marker, assign it */
-		if (count >= 4) {
-			str = ndb_tag_str(note, iter.tag, 3);
-			if (str.flag == NDB_PACKED_STR)
-				marker = str.str;
-		}
-
-		if (marker) {
-			any_marker = true;
-			if (!strcmp(marker, "root"))
-				root = id;
-			else if (!strcmp(marker, "reply"))
-				reply = id;
-			else if (!strcmp(marker, "mention"))
-				mention = id;
-		} else if (!any_marker && first) {
-			root = id;
-			first = 0;
-		} else if (!any_marker && !reply) {
-			reply = id;
-		}
-	}
-
-	note_reply->reply = reply;
-	note_reply->root = root;
-	note_reply->mention = mention;
-}
-
-static int ndb_is_reply_to_root(struct ndb_note_reply *reply)
-{
-	if (reply->root && !reply->reply)
-		return 0;
-	else if (reply->root && reply->reply)
-		return !memcmp(reply->root, reply->reply, 32);
-	else
-		return 0;
 }
 
 static int ndb_increment_quote_metadata(

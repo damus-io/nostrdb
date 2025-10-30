@@ -31,6 +31,7 @@ static void delete_test_db() {
 }
 
 int ndb_count_reactions(struct ndb_txn *txn, const unsigned char *note_id, uint32_t *count);
+int ndb_count_replies(struct ndb_txn *txn, const unsigned char *note_id, uint16_t *direct_replies, uint32_t *thread_replies);
 
 static void db_load_events(struct ndb *ndb, const char *filename)
 {
@@ -78,8 +79,8 @@ static void test_count_metadata()
 	struct ndb_note_meta *meta;
 	//struct ndb_note_meta_entry *counts;
 	struct ndb_note_meta_entry *entry;
-	uint16_t count;
-	uint32_t total_reactions, reactions, replies;
+	uint16_t count, direct_replies[2];
+	uint32_t total_reactions, reactions, thread_replies[2];
 	int i;
 
 	reactions = 0;
@@ -118,13 +119,13 @@ static void test_count_metadata()
 	assert(entry);
 	assert(*ndb_note_meta_counts_quotes(entry) == 2);
 
-	replies = *ndb_note_meta_counts_thread_replies(entry);
-	printf("\t# thread replies %d\n", replies);
-	assert(replies == 93);
+	thread_replies[0] = *ndb_note_meta_counts_thread_replies(entry);
+	printf("\t# thread replies %d\n", thread_replies[0]);
+	assert(thread_replies[0] == 93);
 
-	replies = *ndb_note_meta_counts_direct_replies(entry);
-	printf("\t# direct replies %d\n", replies);
-	assert(replies == 14);
+	direct_replies[0] = *ndb_note_meta_counts_direct_replies(entry);
+	printf("\t# direct replies %d\n", direct_replies[0]);
+	assert(direct_replies[0] == 14);
 
 	total_reactions = *ndb_note_meta_counts_total_reactions(entry);
 	printf("\t# total reactions %d\n", reactions);
@@ -143,6 +144,12 @@ static void test_count_metadata()
 	ndb_count_reactions(&txn, id, &reactions);
 	printf("\t# after-counted reactions %d\n", reactions);
 	assert(reactions == total_reactions);
+
+	ndb_count_replies(&txn, id, &direct_replies[1], &thread_replies[1]);
+	printf("\t# after-counted replies direct:%d thread:%d\n", direct_replies[1], thread_replies[1]);
+	assert(direct_replies[0] == direct_replies[1]);
+	assert(thread_replies[0] == thread_replies[1]);
+
 	ndb_end_query(&txn);
 
 	ndb_destroy(ndb);
