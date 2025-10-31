@@ -2094,18 +2094,25 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 				reply = id;
 			else if (!strcmp(marker, "mention"))
 				mention = id;
-		} else if (!any_marker) {
-			if (first) {
-				first = 0;
-				if (!have_explicit_root) {
-					root = id;
-				} else if (!reply) {
-					reply = id;
-				}
-			} else if (!reply) {
-				reply = id;
-			}
+			continue;
 		}
+
+		if (any_marker)
+			continue;
+
+		if (first) {
+			first = 0;
+			if (!have_explicit_root) {
+				root = id;
+				continue;
+			}
+			if (!reply)
+				reply = id;
+			continue;
+		}
+
+		if (!reply)
+			reply = id;
 
 	}
 
