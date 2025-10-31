@@ -2097,7 +2097,7 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 static int ndb_is_reply_to_root(struct ndb_note_reply *reply)
 {
 	if (reply->root && !reply->reply)
-		return 0;
+		return 1;
 	else if (reply->root && reply->reply)
 		return !memcmp(reply->root, reply->reply, 32);
 	else
