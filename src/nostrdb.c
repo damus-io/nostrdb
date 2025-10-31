@@ -2062,10 +2062,11 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 	struct ndb_iterator iter;
 	struct ndb_str str;
 	uint16_t count;
-	int any_marker, first;
+	int any_marker, first, have_explicit_root;
 
 	any_marker = 0;
 	first = 1;
+	have_explicit_root = 0;
 	root = NULL;
 	reply = NULL;
 	mention = NULL;
@@ -2083,7 +2084,19 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 			continue;
 
 		str = ndb_tag_str(note, iter.tag, 0);
-		if (!(str.flag == NDB_PACKED_STR && str.str[0] == 'e'))
+		if (str.flag != NDB_PACKED_STR)
+			continue;
+
+		if (str.str[0] == 'E') {
+			str = ndb_tag_str(note, iter.tag, 1);
+			if (str.flag == NDB_PACKED_ID) {
+				root = str.id;
+				have_explicit_root = 1;
+			}
+			continue;
+		}
+
+		if (str.str[0] != 'e')
 			continue;
 
 		str = ndb_tag_str(note, iter.tag, 1);
@@ -2106,12 +2119,19 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 				reply = id;
 			else if (!strcmp(marker, "mention"))
 				mention = id;
-		} else if (!any_marker && first) {
-			root = id;
-			first = 0;
-		} else if (!any_marker && !reply) {
-			reply = id;
+		} else if (!any_marker) {
+			if (first) {
+				first = 0;
+				if (!have_explicit_root) {
+					root = id;
+				} else if (!reply) {
+					reply = id;
+				}
+			} else if (!reply) {
+				reply = id;
+			}
 		}
+
 	}
 
 	note_reply->reply = reply;
@@ -2176,7 +2196,7 @@ int ndb_count_replies(struct ndb_txn *txn, const unsigned char *note_id, uint16_
 			break;
 		if (!(note = ndb_get_note_by_key(txn, note_key, &size)))
 			continue;
-		if (ndb_note_kind(note) != 1)
+		if (ndb_note_kind(note) != 1 && ndb_note_kind(note) != 1111)
 			continue;
 
 		ndb_parse_reply(note, &reply);
@@ -6271,7 +6291,7 @@ static uint64_t ndb_write_note(secp256k1_context *secp,
 		ndb_write_note_relay_indexes(txn, &relay_key);
 
 	// only parse content and do fulltext index on text and longform notes
-	if (kind == 1 || kind == 30023) {
+	if (kind == 1 || kind == 30023 || kind == 1111) {
 		if (!ndb_flag_set(ndb_flags, NDB_FLAG_NO_FULLTEXT)) {
 			if (!ndb_write_note_fulltext_index(txn, note->note, note_key))
 				return 0;
@@ -9585,6 +9605,7 @@ enum ndb_common_kind ndb_kind_to_common_kind(int kind)
 	{
 		case 0:     return NDB_CKIND_PROFILE;
 		case 1:     return NDB_CKIND_TEXT;
+		case 1111:  return NDB_CKIND_COMMENT;
 		case 3:     return NDB_CKIND_CONTACTS;
 		case 4:     return NDB_CKIND_DM;
 		case 5:     return NDB_CKIND_DELETE;
@@ -9608,6 +9629,7 @@ const char *ndb_kind_name(enum ndb_common_kind ck)
 	switch (ck) {
 		case NDB_CKIND_PROFILE:      return "profile";
 		case NDB_CKIND_TEXT:         return "text";
+		case NDB_CKIND_COMMENT:      return "comment";
 		case NDB_CKIND_CONTACTS:     return "contacts";
 		case NDB_CKIND_DM:           return "dm";
 		case NDB_CKIND_DELETE:       return "delete";
