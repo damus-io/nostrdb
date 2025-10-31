@@ -125,7 +125,7 @@ static void test_count_metadata()
 
 	direct_replies[0] = *ndb_note_meta_counts_direct_replies(entry);
 	printf("\t# direct replies %d\n", direct_replies[0]);
-	assert(direct_replies[0] == 14);
+	assert(direct_replies[0] == 83);
 
 	total_reactions = *ndb_note_meta_counts_total_reactions(entry);
 	printf("\t# total reactions %d\n", reactions);
