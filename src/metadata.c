@@ -138,9 +138,9 @@ int ndb_note_meta_builder_init(struct ndb_note_meta_builder *builder, unsigned c
 }
 
 /* note flags are stored in the header entry */
-uint32_t ndb_note_meta_flags(struct ndb_note_meta *meta)
+uint64_t *ndb_note_meta_flags(struct ndb_note_meta *meta)
 {
-	return meta->flags;
+	return &meta->flags;
 }
 
 /* note flags are stored in the header entry */
@@ -271,7 +271,7 @@ struct ndb_note_meta_entry *ndb_note_meta_builder_find_entry(
 void ndb_note_meta_reaction_set(struct ndb_note_meta_entry *entry, uint32_t count, union ndb_reaction_str str)
 {
 	entry->type = NDB_NOTE_META_REACTION;
-	entry->flags = 0;
+	entry->aux2.flags = 0;
 	entry->aux.value = count;
 	entry->payload.reaction_str = str;
 }
@@ -281,10 +281,12 @@ void ndb_note_meta_counts_set(struct ndb_note_meta_entry *entry,
 		uint32_t total_reactions,
 		uint16_t quotes,
 		uint16_t direct_replies,
-		uint32_t thread_replies)
+		uint32_t thread_replies,
+		uint16_t reposts)
 {
 	entry->type = NDB_NOTE_META_COUNTS;
 	entry->aux.total_reactions = total_reactions;
+	entry->aux2.reposts = reposts;
 	entry->payload.counts.quotes = quotes;
 	entry->payload.counts.direct_replies = direct_replies;
 	entry->payload.counts.thread_replies = thread_replies;
@@ -398,6 +400,11 @@ uint16_t *ndb_note_meta_counts_quotes(struct ndb_note_meta_entry *entry)
 	return &entry->payload.counts.quotes;
 }
 
+uint16_t *ndb_note_meta_counts_reposts(struct ndb_note_meta_entry *entry)
+{
+	return &entry->aux2.reposts;
+}
+
 void ndb_note_meta_reaction_set_count(struct ndb_note_meta_entry *entry, uint32_t count)
 {
 	entry->aux.value = count;
@@ -428,7 +435,8 @@ void print_note_meta(struct ndb_note_meta *meta)
 			printf("%s%d ", strbuf, *ndb_note_meta_reaction_count(entry));
 			break;
 		case NDB_NOTE_META_COUNTS:
-			printf("quotes %d\treplies %d\tall_replies %d\treactions %d\t",
+			printf("reposts %d\tquotes %d\treplies %d\tall_replies %d\treactions %d\t",
+					*ndb_note_meta_counts_reposts(entry),
 					*ndb_note_meta_counts_quotes(entry),
 					*ndb_note_meta_counts_direct_replies(entry),
 					*ndb_note_meta_counts_thread_replies(entry),

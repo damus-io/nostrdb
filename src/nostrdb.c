@@ -2252,6 +2252,61 @@ cleanup:
 	return 1;
 }
 
+static int ndb_count_reposts(struct ndb_txn *txn, const unsigned char *note_id, uint16_t *count)
+{
+	MDB_val k, v;
+	MDB_cursor *cur;
+	MDB_dbi db;
+	int rc;
+	unsigned char *keybuf;
+	struct ndb_note *note;
+	uint64_t note_key, kind;
+	char buffer[41]; /* 1 + 32 + 8 */
+
+	*count = 0;
+	db = txn->lmdb->dbs[NDB_DB_NOTE_TAGS];
+
+	/* we will iterate q tags for this particular id */
+	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur))) {
+		fprintf(stderr, "ndb_count_quotes: mdb_cursor_open failed, error %d\n", rc);
+		return 0;
+	}
+
+	buffer[0] = 'e';
+	memcpy(&buffer[1], note_id, 32);
+	memset(&buffer[33], 0x00, 8);
+
+	k.mv_data = buffer;
+	k.mv_size = sizeof(buffer);
+	v.mv_data = NULL;
+	v.mv_size = 0;
+
+	if (mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE))
+		goto cleanup;
+
+	do {
+		keybuf = (unsigned char *)k.mv_data;
+		note_key = *((uint64_t*)v.mv_data);
+
+		if (k.mv_size < sizeof(buffer))
+			break;
+		if (keybuf[0] != 'e')
+			break;
+		if (memcmp(&keybuf[1], note_id, 32) != 0)
+			break;
+		if (!(note = ndb_get_note_by_key(txn, note_key, NULL)))
+			continue;
+		kind = ndb_note_kind(note);
+		if (!(kind == 6 || kind == 16))
+			continue;
+		(*count)++;
+	} while (mdb_cursor_get(cur, &k, &v, MDB_NEXT) == 0);
+
+cleanup:
+	mdb_cursor_close(cur);
+	return 1;
+}
+
 /* count all of the quote reposts for a note id */
 static int ndb_count_quotes(struct ndb_txn *txn, const unsigned char *note_id, uint16_t *count)
 {
@@ -2291,6 +2346,11 @@ static int ndb_count_quotes(struct ndb_txn *txn, const unsigned char *note_id, u
 			break;
 		if (memcmp(&keybuf[1], note_id, 32) != 0)
 			break;
+		/* TODO(jb55): technically we should check to see if this is a kind 1.
+		 * there could be other kinds with q tags that reference this note
+		 *
+		 * Starting to think we should have tag-kind index
+		 */
 		(*count)++;
 
 		if (mdb_cursor_get(cur, &k, &v, MDB_NEXT))
@@ -2309,9 +2369,9 @@ static int ndb_note_meta_builder_counts(struct ndb_txn *txn,
 					struct ndb_note_meta_builder *builder)
 {
 	uint32_t thread_replies, total_reactions;
-	uint16_t direct_replies, quotes;
+	uint16_t direct_replies, quotes, reposts;
 	struct ndb_note_meta_entry *entry;
-	int rcs[3];
+	int rcs[4];
 
 	quotes = 0;
 	direct_replies = 0;
@@ -2321,13 +2381,14 @@ static int ndb_note_meta_builder_counts(struct ndb_txn *txn,
 	rcs[0] = ndb_rebuild_reaction_metadata(txn, note_id, builder, &total_reactions);
 	rcs[1] = ndb_count_quotes(txn, note_id, &quotes);
 	rcs[2] = ndb_count_replies(txn, note_id, &direct_replies, &thread_replies);
+	rcs[3] = ndb_count_reposts(txn, note_id, &reposts);
 
-	if (!rcs[0] && !rcs[1] && !rcs[2]) {
+	if (!rcs[0] && !rcs[1] && !rcs[2] && !rcs[3]) {
 		return 0;
 	}
 
 	/* no entry needed */
-	if (quotes == 0 && direct_replies == 0 && thread_replies == 0 && quotes == 0) {
+	if (quotes == 0 && direct_replies == 0 && thread_replies == 0 && quotes == 0 && reposts == 0) {
 		return 0;
 	}
 
@@ -2335,7 +2396,7 @@ static int ndb_note_meta_builder_counts(struct ndb_txn *txn,
 		return 0;
 	}
 
-	ndb_note_meta_counts_set(entry, total_reactions, quotes, direct_replies, thread_replies);
+	ndb_note_meta_counts_set(entry, total_reactions, quotes, direct_replies, thread_replies, reposts);
 
 	return 1;
 }
@@ -3785,21 +3846,6 @@ struct ndb_note_meta *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char
 	return v.mv_data;
 }
 
-static void print_meta_data(struct ndb_note_meta *meta)
-{
-	struct ndb_note_meta_entry *entry;
-	int i;
-
-	printf("<metadata ver:%d count:%d dt_size:%d flags:%ld>\n",
-			meta->version, meta->count, meta->data_table_size, meta->flags);
-
-	for (i = 0; i < meta->count; i++) {
-		entry = ndb_note_meta_entry_at(meta, i);
-		printf("<meta_entry type:%d flags:%d aux:%d payload:%" PRIx64 "\n",
-				entry->type, entry->flags, entry->aux.value, entry->payload.value);
-	}
-}
-
 /* write reaction stats if its a valid reaction */
 static int ndb_process_reaction(
 		struct ndb_txn *txn,
@@ -3894,7 +3940,7 @@ static int ndb_increment_total_reactions(
 	case NDB_META_CLONE_FAILED:
 		return 0;
 	case NDB_META_CLONE_NEW_ENTRY:
-		ndb_note_meta_counts_set(entry, 1, 0, 0, 0);
+		ndb_note_meta_counts_set(entry, 1, 0, 0, 0, 0);
 		break;
 	case NDB_META_CLONE_EXISTING_ENTRY:
 		total_reactions = ndb_note_meta_counts_total_reactions(entry);
@@ -5832,7 +5878,7 @@ static int ndb_increment_quote_metadata(
 	case NDB_META_CLONE_FAILED:
 		return 0;
 	case NDB_META_CLONE_NEW_ENTRY:
-		ndb_note_meta_counts_set(entry, 0, 1, 0, 0);
+		ndb_note_meta_counts_set(entry, 0, 1, 0, 0, 0);
 		break;
 	case NDB_META_CLONE_EXISTING_ENTRY:
 		quotes = ndb_note_meta_counts_quotes(entry);
@@ -5879,7 +5925,7 @@ static int ndb_increment_direct_reply_metadata(
 	case NDB_META_CLONE_FAILED:
 		return 0;
 	case NDB_META_CLONE_NEW_ENTRY:
-		ndb_note_meta_counts_set(entry, 0, 0, 1, 0);
+		ndb_note_meta_counts_set(entry, 0, 0, 1, 0, 0);
 		break;
 	case NDB_META_CLONE_EXISTING_ENTRY:
 		direct_replies = ndb_note_meta_counts_direct_replies(entry);
@@ -5926,7 +5972,7 @@ static int ndb_increment_thread_reply_metadata(
 	case NDB_META_CLONE_FAILED:
 		return 0;
 	case NDB_META_CLONE_NEW_ENTRY:
-		ndb_note_meta_counts_set(entry, 0, 0, 0, 1);
+		ndb_note_meta_counts_set(entry, 0, 0, 0, 1, 0);
 		break;
 	case NDB_META_CLONE_EXISTING_ENTRY:
 		replies = ndb_note_meta_counts_thread_replies(entry);
@@ -5949,6 +5995,63 @@ static int ndb_increment_thread_reply_metadata(
 	return 1;
 }
 
+/* update reply count metadata for a specific note id */
+static int ndb_increment_repost_metadata(
+		struct ndb_txn *txn,
+		unsigned char *id,
+		unsigned char *scratch,
+		size_t scratch_size)
+{
+	MDB_val key, val;
+	uint16_t *reposts;
+	struct ndb_note_meta *meta;
+	struct ndb_note_meta_entry *entry;
+	int rc;
+
+	meta = ndb_get_note_meta(txn, id);
+	rc = ndb_note_meta_clone_with_entry(&meta, &entry,
+		NDB_NOTE_META_COUNTS,
+		NULL, /* payload to match. only relevant for reactions */
+		scratch,
+		scratch_size);
+
+	switch (rc) {
+	case NDB_META_CLONE_FAILED:
+		return 0;
+	case NDB_META_CLONE_NEW_ENTRY:
+		ndb_note_meta_counts_set(entry, 0, 0, 0, 0, 1);
+		break;
+	case NDB_META_CLONE_EXISTING_ENTRY:
+		reposts = ndb_note_meta_counts_reposts(entry);
+		(*reposts)++;
+		break;
+	}
+
+	key.mv_data = id;
+	key.mv_size = 32;
+
+	val.mv_data = meta;
+	val.mv_size = ndb_note_meta_total_size(meta);
+	assert((val.mv_size % 8) == 0);
+
+	if ((rc = mdb_put(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], &key, &val, 0))) {
+		ndb_debug("write reaction stats to db failed: %s\n", mdb_strerror(rc));
+		return 0;
+	}
+
+	return 1;
+}
+
+static void ndb_process_repost_stats(struct ndb_txn *txn, struct ndb_note *note, unsigned char *scratch, size_t scratch_size)
+{
+	unsigned char *reposted_note_id;
+	reposted_note_id = ndb_note_first_tag_id(note, 'e');
+
+	/* find q tag to see if we are quoting anything */
+	if (reposted_note_id) {
+		ndb_increment_repost_metadata(txn, reposted_note_id, scratch, scratch_size);
+	}
+}
 
 /* process quote and reply count metadata */
 static void ndb_process_note_stats(
@@ -6044,6 +6147,8 @@ static uint64_t ndb_write_note(struct ndb_txn *txn,
 		ndb_process_note_stats(txn, note->note, scratch, scratch_size);
 	} else if (kind == 7 && !ndb_flag_set(ndb_flags, NDB_FLAG_NO_STATS)) {
 		ndb_write_reaction_stats(txn, note->note, scratch, scratch_size);
+	} else if (kind == 6 || kind == 16) {
+		ndb_process_repost_stats(txn, note->note, scratch, scratch_size);
 	}
 
 	return note_key;
