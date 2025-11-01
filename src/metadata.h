@@ -25,7 +25,11 @@ enum ndb_meta_clone_result ndb_note_meta_clone_with_entry(
 struct ndb_note_meta_entry {
 	// 4 byte entry header
 	uint16_t type;
-	uint16_t flags;
+
+	union {
+		uint16_t flags;
+		uint16_t reposts;
+	} aux2;
 
 	// additional 4 bytes of aux storage for payloads that are >8 bytes
 	//
