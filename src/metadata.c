@@ -83,7 +83,7 @@ int ndb_reaction_set(union ndb_reaction_str *reaction, const char *str)
 	return ndb_reaction_set_str(reaction, str);
 }
 
-static void ndb_note_meta_header_init(struct ndb_note_meta *meta)
+void ndb_note_meta_header_init(struct ndb_note_meta *meta)
 {
 	meta->version = 1;
 	meta->flags = 0;
