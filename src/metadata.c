@@ -124,9 +124,14 @@ struct ndb_note_meta_entry *ndb_note_meta_add_entry(struct ndb_note_meta_builder
 	return entry;
 }
 
-int ndb_note_meta_builder_init(struct ndb_note_meta_builder *builder, unsigned char *buf, size_t bufsize)
+void ndb_note_meta_builder_resized(struct ndb_note_meta_builder *builder, unsigned char *buf, size_t bufsize)
 {
 	make_cursor(buf, buf + bufsize, &builder->cursor);
+}
+
+int ndb_note_meta_builder_init(struct ndb_note_meta_builder *builder, unsigned char *buf, size_t bufsize)
+{
+	ndb_note_meta_builder_resized(builder, buf, bufsize);
 
 	/* allocate some space for the header */
 	if (!cursor_malloc(&builder->cursor, sizeof(struct ndb_note_meta)))
