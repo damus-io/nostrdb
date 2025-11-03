@@ -415,16 +415,15 @@ void ndb_note_meta_reaction_set_count(struct ndb_note_meta_entry *entry, uint32_
 	entry->aux.value = count;
 }
 
-union ndb_reaction_str ndb_note_meta_reaction_str(struct ndb_note_meta_entry *entry)
+union ndb_reaction_str *ndb_note_meta_reaction_str(struct ndb_note_meta_entry *entry)
 {
-	return entry->payload.reaction_str;
+	return &entry->payload.reaction_str;
 }
 
 void print_note_meta(struct ndb_note_meta *meta)
 {
 	int count, i;
 	struct ndb_note_meta_entry *entries, *entry;
-	union ndb_reaction_str reaction;
 	char strbuf[128];
 
 	count = ndb_note_meta_entries_count(meta);
@@ -434,9 +433,7 @@ void print_note_meta(struct ndb_note_meta *meta)
 		entry = &entries[i];
 		switch (entry->type) {
 		case NDB_NOTE_META_REACTION:
-			reaction = ndb_note_meta_reaction_str(entry);
-
-			ndb_reaction_to_str(&reaction, strbuf);
+			ndb_reaction_to_str(ndb_note_meta_reaction_str(entry), strbuf);
 			printf("%s%d ", strbuf, *ndb_note_meta_reaction_count(entry));
 			break;
 		case NDB_NOTE_META_COUNTS:

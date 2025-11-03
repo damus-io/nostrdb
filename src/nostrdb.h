@@ -672,6 +672,7 @@ uint16_t ndb_note_meta_entries_count(struct ndb_note_meta *meta);
 uint32_t *ndb_note_meta_counts_thread_replies(struct ndb_note_meta_entry *entry);
 uint32_t *ndb_note_meta_counts_total_reactions(struct ndb_note_meta_entry *entry);
 uint32_t *ndb_note_meta_reaction_count(struct ndb_note_meta_entry *entry);
+union ndb_reaction_str *ndb_note_meta_reaction_str(struct ndb_note_meta_entry *entry);
 uint64_t *ndb_note_meta_flags(struct ndb_note_meta *meta);
 void ndb_note_meta_build(struct ndb_note_meta_builder *builder, struct ndb_note_meta **meta);
 void ndb_note_meta_builder_resized(struct ndb_note_meta_builder *builder, unsigned char *buf, size_t bufsize);
