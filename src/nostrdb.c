@@ -84,13 +84,6 @@ typedef int (*ndb_migrate_fn)(struct ndb_txn *);
 typedef int (*ndb_word_parser_fn)(void *, const char *word, int word_len,
 				  int word_index);
 
-/* parsed nip10 reply data */
-struct ndb_note_reply {
-	unsigned char *root;
-	unsigned char *reply;
-	unsigned char *mention;
-};
-
 // these must be byte-aligned, they are directly accessing the serialized data
 // representation
 #pragma pack(push, 1)
@@ -2062,7 +2055,7 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 	struct ndb_iterator iter;
 	struct ndb_str str;
 	uint16_t count;
-	int any_marker, first, have_explicit_root;
+	int any_marker, first, have_explicit_root, marker_len;
 
 	any_marker = 0;
 	first = 1;
@@ -2078,6 +2071,7 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 			break;
 
 		marker = NULL;
+		marker_len = 0;
 		count = ndb_tag_count(iter.tag);
 
 		if (count < 2)
@@ -2106,18 +2100,20 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 
 		/* if we have the marker, assign it */
 		if (count >= 4) {
-			str = ndb_tag_str(note, iter.tag, 3);
-			if (str.flag == NDB_PACKED_STR)
-				marker = str.str;
+			struct ndb_str marker_str = ndb_tag_str(note, iter.tag, 3);
+			if (marker_str.flag != NDB_PACKED_ID) {
+				marker = marker_str.str;
+				marker_len = ndb_str_len(&marker_str);
+			}
 		}
 
 		if (marker) {
 			any_marker = true;
-			if (!strcmp(marker, "root"))
+			if (marker_len == 4 && !memcmp(marker, "root", 4))
 				root = id;
-			else if (!strcmp(marker, "reply"))
+			else if (marker_len == 5 && !memcmp(marker, "reply", 5))
 				reply = id;
-			else if (!strcmp(marker, "mention"))
+			else if (marker_len == 7 && !memcmp(marker, "mention", 7))
 				mention = id;
 			continue;
 		}
@@ -2154,6 +2150,16 @@ static int ndb_is_reply_to_root(struct ndb_note_reply *reply)
 		return !memcmp(reply->root, reply->reply, 32);
 	else
 		return 0;
+}
+
+void ndb_note_get_reply(struct ndb_note *note, struct ndb_note_reply *reply)
+{
+	ndb_parse_reply(note, reply);
+}
+
+int ndb_note_reply_is_to_root(struct ndb_note_reply *reply)
+{
+	return ndb_is_reply_to_root(reply);
 }
 
 
