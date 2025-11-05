@@ -131,6 +131,8 @@ static void test_count_metadata()
 	struct ndb_note_meta_entry *entry;
 	uint16_t count, direct_replies[2];
 	uint32_t total_reactions, reactions, thread_replies[2];
+	const uint16_t expected_direct_replies = 59;
+	const uint32_t expected_thread_replies = 99;
 	int i;
 
 	reactions = 0;
@@ -171,11 +173,11 @@ static void test_count_metadata()
 
 	thread_replies[0] = *ndb_note_meta_counts_thread_replies(entry);
 	printf("\t# thread replies %d\n", thread_replies[0]);
-	assert(thread_replies[0] == 99);
+	assert(thread_replies[0] == expected_thread_replies);
 
 	direct_replies[0] = *ndb_note_meta_counts_direct_replies(entry);
 	printf("\t# direct replies %d\n", direct_replies[0]);
-	assert(direct_replies[0] == 59);
+	assert(direct_replies[0] == expected_direct_replies);
 
 	total_reactions = *ndb_note_meta_counts_total_reactions(entry);
 	printf("\t# total reactions %d\n", reactions);

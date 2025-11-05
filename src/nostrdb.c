@@ -2048,7 +2048,7 @@ static unsigned char *ndb_note_last_id_tag(struct ndb_note *note, char type)
 }
 
 /* get reply information from a note */
-static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_reply)
+void ndb_note_get_reply(struct ndb_note *note, struct ndb_note_reply *note_reply)
 {
 	unsigned char *root, *reply, *mention, *id;
 	const char *marker;
@@ -2142,7 +2142,7 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 	note_reply->mention = mention;
 }
 
-static int ndb_is_reply_to_root(struct ndb_note_reply *reply)
+int ndb_note_reply_is_to_root(struct ndb_note_reply *reply)
 {
 	if (reply->root && !reply->reply)
 		return 1;
@@ -2150,16 +2150,6 @@ static int ndb_is_reply_to_root(struct ndb_note_reply *reply)
 		return !memcmp(reply->root, reply->reply, 32);
 	else
 		return 0;
-}
-
-void ndb_note_get_reply(struct ndb_note *note, struct ndb_note_reply *reply)
-{
-	ndb_parse_reply(note, reply);
-}
-
-int ndb_note_reply_is_to_root(struct ndb_note_reply *reply)
-{
-	return ndb_is_reply_to_root(reply);
 }
 
 
@@ -2212,9 +2202,9 @@ int ndb_count_replies(struct ndb_txn *txn, const unsigned char *note_id, uint16_
 		if (ndb_note_kind(note) != 1 && ndb_note_kind(note) != 1111)
 			continue;
 
-		ndb_parse_reply(note, &reply);
+		ndb_note_get_reply(note, &reply);
 
-		if (ndb_is_reply_to_root(&reply)) {
+		if (ndb_note_reply_is_to_root(&reply)) {
 			reply_id = reply.root;
 		} else {
 			reply_id = reply.reply;
@@ -6181,8 +6171,8 @@ static void ndb_process_note_stats(
 		ndb_increment_quote_metadata(txn, quoted_note_id, scratch, scratch_size);
 	}
 
-	ndb_parse_reply(note, &reply);
-	if (ndb_is_reply_to_root(&reply)) {
+	ndb_note_get_reply(note, &reply);
+	if (ndb_note_reply_is_to_root(&reply)) {
 		reply_id = reply.root;
 	} else {
 		reply_id = reply.reply;
