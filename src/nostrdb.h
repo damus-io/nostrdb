@@ -581,6 +581,103 @@ struct ndb_note *ndb_get_note_by_key(struct ndb_txn *txn, uint64_t key, size_t *
 int ndb_note_seen_on_relay(struct ndb_txn *txn, uint64_t note_key, const char *relay);
 void ndb_destroy(struct ndb *);
 
+// SOCIAL GRAPH
+/**
+ * Get follow distance from the root user (configured at init)
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param pubkey 32-byte pubkey to query
+ * @return Distance (0 = root, 1 = followed by root, etc), 1000 if not in graph
+ */
+uint32_t ndb_socialgraph_get_follow_distance(struct ndb_txn *txn, struct ndb *ndb,
+                                               const unsigned char *pubkey);
+
+/**
+ * Check if one user follows another
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param follower_pubkey 32-byte follower pubkey
+ * @param followed_pubkey 32-byte followed pubkey
+ * @return 1 if following, 0 otherwise
+ */
+int ndb_socialgraph_is_following(struct ndb_txn *txn, struct ndb *ndb,
+                                  const unsigned char *follower_pubkey,
+                                  const unsigned char *followed_pubkey);
+
+/**
+ * Get list of users followed by a user
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param pubkey 32-byte pubkey
+ * @param followed_out Output array of 32-byte pubkeys (caller allocates)
+ * @param max_out Maximum number of entries in output array
+ * @return Number of followed users written to output (may be less than actual count)
+ */
+int ndb_socialgraph_get_followed(struct ndb_txn *txn, struct ndb *ndb,
+                                  const unsigned char *pubkey,
+                                  unsigned char *followed_out, int max_out);
+
+/**
+ * Get list of followers of a user
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param pubkey 32-byte pubkey
+ * @param followers_out Output array of 32-byte pubkeys (caller allocates)
+ * @param max_out Maximum number of entries in output array
+ * @return Number of followers written to output (may be less than actual count)
+ */
+int ndb_socialgraph_get_followers(struct ndb_txn *txn, struct ndb *ndb,
+                                   const unsigned char *pubkey,
+                                   unsigned char *followers_out, int max_out);
+
+/**
+ * Get follower count for a user
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param pubkey 32-byte pubkey
+ * @return Number of followers
+ */
+int ndb_socialgraph_follower_count(struct ndb_txn *txn, struct ndb *ndb,
+                                    const unsigned char *pubkey);
+
+/**
+ * Check if one user mutes another
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param muter_pubkey 32-byte muter pubkey
+ * @param muted_pubkey 32-byte muted pubkey
+ * @return 1 if muting, 0 otherwise
+ */
+int ndb_socialgraph_is_muting(struct ndb_txn *txn, struct ndb *ndb,
+                               const unsigned char *muter_pubkey,
+                               const unsigned char *muted_pubkey);
+
+/**
+ * Get list of users muted by a user
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param pubkey 32-byte pubkey
+ * @param muted_out Output array of 32-byte pubkeys (caller allocates)
+ * @param max_out Maximum number of entries in output array
+ * @return Number of muted users written to output (may be less than actual count)
+ */
+int ndb_socialgraph_get_muted(struct ndb_txn *txn, struct ndb *ndb,
+                               const unsigned char *pubkey,
+                               unsigned char *muted_out, int max_out);
+
+/**
+ * Get list of users who mute this user
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param pubkey 32-byte pubkey
+ * @param muters_out Output array of 32-byte pubkeys (caller allocates)
+ * @param max_out Maximum number of entries in output array
+ * @return Number of muters written to output (may be less than actual count)
+ */
+int ndb_socialgraph_get_muters(struct ndb_txn *txn, struct ndb *ndb,
+                                const unsigned char *pubkey,
+                                unsigned char *muters_out, int max_out);
+
 // BUILDER
 int ndb_parse_json_note(struct ndb_json_parser *, struct ndb_note **);
 int ndb_client_event_from_json(const char *json, int len, struct ndb_fce *fce, unsigned char *buf, int bufsize, struct ndb_id_cb *cb);

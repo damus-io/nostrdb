@@ -17,6 +17,7 @@
 #include "protected_queue.h"
 #include "memchr.h"
 #include "print_util.h"
+#include "ndb_socialgraph.h"
 #include <stdlib.h>
 #include <limits.h>
 #include <assert.h>
@@ -189,6 +190,7 @@ struct ndb_writer {
 
 struct ndb_ingester {
 	struct ndb_lmdb *lmdb;
+	struct ndb_socialgraph *socialgraph;
 	uint32_t flags;
 	struct threadpool tp;
 	struct prot_queue *writer_inbox;
@@ -226,6 +228,7 @@ struct ndb {
 	struct ndb_ingester ingester;
 	struct ndb_monitor monitor;
 	struct ndb_writer writer;
+	struct ndb_socialgraph socialgraph;
 	int version;
 	uint32_t flags; // setting flags
 	// lmdb environ handles, etc
@@ -3313,6 +3316,24 @@ static int ndb_ingester_process_note(secp256k1_context *ctx,
 		out->type = NDB_WRITER_PROFILE;
 		ndb_writer_note_init(&out->profile.note, note, note_size, relay);
 		return 1;
+	} else if (note->kind == 3) {
+		// process contact list for social graph
+		if (ingester->socialgraph) {
+			MDB_txn *txn;
+			if (mdb_txn_begin(ingester->lmdb->env, NULL, 0, &txn) == 0) {
+				ndb_socialgraph_handle_contact_list((void*)txn, ingester->socialgraph, note);
+				mdb_txn_commit(txn);
+			}
+		}
+	} else if (note->kind == 10000) {
+		// process mute list for social graph
+		if (ingester->socialgraph) {
+			MDB_txn *txn;
+			if (mdb_txn_begin(ingester->lmdb->env, NULL, 0, &txn) == 0) {
+				ndb_socialgraph_handle_mute_list((void*)txn, ingester->socialgraph, note);
+				mdb_txn_commit(txn);
+			}
+		}
 	} else if (note->kind == 6) {
 		// process the repost if we have a repost event
 		ndb_debug("processing kind 6 repost\n");
@@ -6580,7 +6601,8 @@ static int ndb_ingester_init(struct ndb_ingester *ingester,
 			     struct ndb_lmdb *lmdb,
 			     struct prot_queue *writer_inbox,
 			     int scratch_size,
-			     const struct ndb_config *config)
+			     const struct ndb_config *config,
+			     struct ndb_socialgraph *socialgraph)
 {
 	int elem_size, num_elems;
 	static struct ndb_ingester_msg quit_msg = { .type = NDB_INGEST_QUIT };
@@ -6592,6 +6614,7 @@ static int ndb_ingester_init(struct ndb_ingester *ingester,
 	ingester->scratch_size = scratch_size;
 	ingester->writer_inbox = writer_inbox;
 	ingester->lmdb = lmdb;
+	ingester->socialgraph = socialgraph;
 	ingester->flags = config->flags;
 	ingester->filter = config->ingest_filter;
 	ingester->filter_context = config->filter_context;
@@ -6653,7 +6676,8 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 		return 0;
 	}
 
-	if ((rc = mdb_env_set_maxdbs(lmdb->env, NDB_DBS))) {
+	// NDB_DBS + 9 extra for social graph (2 for uid mapping, 7 for graph data: 4 follow + 3 mute)
+	if ((rc = mdb_env_set_maxdbs(lmdb->env, NDB_DBS + 9))) {
 		fprintf(stderr, "mdb_env_set_maxdbs failed, error %d\n", rc);
 		return 0;
 	}
@@ -6866,8 +6890,16 @@ int ndb_init(struct ndb **pndb, const char *filename, const struct ndb_config *c
 		return 0;
 	}
 
+	// Initialize social graph with a default root (can be updated later via API)
+	// Using zero pubkey as default - user should set their own root
+	unsigned char zero_pubkey[32] = {0};
+	if (!ndb_socialgraph_init(&ndb->socialgraph, ndb->lmdb.env, zero_pubkey)) {
+		fprintf(stderr, "ndb_socialgraph_init failed\n");
+		return 0;
+	}
+
 	if (!ndb_ingester_init(&ndb->ingester, &ndb->lmdb, &ndb->writer.inbox,
-			       config->writer_scratch_buffer_size, config)) {
+			       config->writer_scratch_buffer_size, config, &ndb->socialgraph)) {
 		fprintf(stderr, "failed to initialize %d ingester thread(s)\n",
 				config->ingester_threads);
 		return 0;
@@ -6894,6 +6926,8 @@ void ndb_destroy(struct ndb *ndb)
 	ndb_writer_destroy(&ndb->writer);
 	ndb_debug("destroying monitor\n");
 	ndb_monitor_destroy(&ndb->monitor);
+	ndb_debug("destroying socialgraph\n");
+	ndb_socialgraph_destroy(&ndb->socialgraph);
 
 	ndb_debug("closing env\n");
 	mdb_env_close(ndb->lmdb.env);
@@ -9290,4 +9324,65 @@ done:
 	ndb_monitor_unlock(&ndb->monitor);
 
 	return subid;
+}
+
+// Social graph API wrappers
+uint32_t ndb_socialgraph_get_follow_distance(struct ndb_txn *txn, struct ndb *ndb,
+                                               const unsigned char *pubkey)
+{
+	return ndb_sg_get_follow_distance(txn->mdb_txn, &ndb->socialgraph, pubkey);
+}
+
+int ndb_socialgraph_is_following(struct ndb_txn *txn, struct ndb *ndb,
+                                  const unsigned char *follower_pubkey,
+                                  const unsigned char *followed_pubkey)
+{
+	return ndb_sg_is_following(txn->mdb_txn, &ndb->socialgraph,
+	                           follower_pubkey, followed_pubkey);
+}
+
+int ndb_socialgraph_get_followed(struct ndb_txn *txn, struct ndb *ndb,
+                                  const unsigned char *pubkey,
+                                  unsigned char *followed_out, int max_out)
+{
+	return ndb_sg_get_followed(txn->mdb_txn, &ndb->socialgraph,
+	                           pubkey, followed_out, max_out);
+}
+
+int ndb_socialgraph_get_followers(struct ndb_txn *txn, struct ndb *ndb,
+                                   const unsigned char *pubkey,
+                                   unsigned char *followers_out, int max_out)
+{
+	return ndb_sg_get_followers(txn->mdb_txn, &ndb->socialgraph,
+	                            pubkey, followers_out, max_out);
+}
+
+int ndb_socialgraph_follower_count(struct ndb_txn *txn, struct ndb *ndb,
+                                    const unsigned char *pubkey)
+{
+	return ndb_sg_follower_count(txn->mdb_txn, &ndb->socialgraph, pubkey);
+}
+
+int ndb_socialgraph_is_muting(struct ndb_txn *txn, struct ndb *ndb,
+                               const unsigned char *muter_pubkey,
+                               const unsigned char *muted_pubkey)
+{
+	return ndb_sg_is_muting(txn->mdb_txn, &ndb->socialgraph,
+	                        muter_pubkey, muted_pubkey);
+}
+
+int ndb_socialgraph_get_muted(struct ndb_txn *txn, struct ndb *ndb,
+                               const unsigned char *pubkey,
+                               unsigned char *muted_out, int max_out)
+{
+	return ndb_sg_get_muted(txn->mdb_txn, &ndb->socialgraph,
+	                        pubkey, muted_out, max_out);
+}
+
+int ndb_socialgraph_get_muters(struct ndb_txn *txn, struct ndb *ndb,
+                                const unsigned char *pubkey,
+                                unsigned char *muters_out, int max_out)
+{
+	return ndb_sg_get_muters(txn->mdb_txn, &ndb->socialgraph,
+	                         pubkey, muters_out, max_out);
 }
