@@ -6689,8 +6689,8 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 		return 0;
 	}
 
-	// NDB_DBS + 9 extra for social graph (2 for uid mapping, 7 for graph data: 4 follow + 3 mute)
-	if ((rc = mdb_env_set_maxdbs(lmdb->env, NDB_DBS + 9))) {
+	// NDB_DBS + 10 extra for social graph (2 for uid mapping, 8 for graph data: 5 follow + 3 mute)
+	if ((rc = mdb_env_set_maxdbs(lmdb->env, NDB_DBS + 10))) {
 		fprintf(stderr, "mdb_env_set_maxdbs failed, error %d\n", rc);
 		return 0;
 	}

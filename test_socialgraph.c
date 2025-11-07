@@ -96,6 +96,9 @@ static void test_socialgraph_follow_distance() {
 	memset(alice_pk, 0xAA, 32);
 	memset(bob_pk, 0xBB, 32);
 
+	// Set root user
+	ndb_socialgraph_set_root(ndb, root_pk);
+
 	// Root follows Alice
 	const char *root_contact_list =
 		"{\"id\":\"0000000000000000000000000000000000000000000000000000000000000001\","

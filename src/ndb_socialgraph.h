@@ -14,6 +14,7 @@ struct ndb_socialgraph {
 
 	// LMDB databases (MDB_dbi stored as void*)
 	void *follow_distance_db;      // UID -> u32 distance from root
+	void *users_by_follow_distance_db; // (u32 distance, UID) -> empty (composite key index)
 	void *followed_by_user_db;     // UID -> array of UIDs they follow
 	void *followers_by_user_db;    // UID -> array of UIDs following them
 	void *follow_list_created_at_db; // UID -> u64 timestamp
