@@ -140,6 +140,10 @@ struct ndb_delete_a_ref {
 	size_t identifier_len;
 };
 
+#define NDB_META_PREFIX_NOTE_DELETE 'D'
+#define NDB_META_PREFIX_A_DELETE 'A'
+#define NDB_META_NOTE_DELETE_KEY_SIZE (1 + 32)
+
 enum ndb_writer_msgtype {
 	NDB_WRITER_QUIT, // kill thread immediately
 	NDB_WRITER_NOTE, // write a note to the db
@@ -1629,8 +1633,6 @@ static int ndb_db_is_index(enum ndb_dbs index)
 		case NDB_DB_PROFILE_SEARCH:
 	case NDB_DB_PROFILE_LAST_FETCH:
 	case NDB_DB_NOTE_RELAYS:
-	case NDB_DB_NOTE_DELETE:
-	case NDB_DB_DELETE_A:
 	case NDB_DBS:
 		return 0;
 		case NDB_DB_PROFILE_PK:
@@ -1970,11 +1972,6 @@ static int ndb_rebuild_note_indices(struct ndb_txn *txn, enum ndb_dbs *indices, 
 			case NDB_DB_NOTE_TEXT:
 			case NDB_DB_NOTE_BLOCKS:
 		case NDB_DB_NOTE_TAGS:
-			fprintf(stderr, "%s index rebuild not supported yet. sorry.\n", ndb_db_name(index));
-			count = -1;
-			goto cleanup;
-		case NDB_DB_NOTE_DELETE:
-		case NDB_DB_DELETE_A:
 			fprintf(stderr, "%s index rebuild not supported yet. sorry.\n", ndb_db_name(index));
 			count = -1;
 			goto cleanup;
@@ -3494,41 +3491,50 @@ static int ndb_build_a_key(const struct ndb_delete_a_ref *ref,
 	return 1;
 }
 
-// fetch a previously stored delete marker for a raw event id
-static int ndb_lookup_delete_marker_raw(struct ndb_txn *txn,
-					  const unsigned char *event_id,
-					  struct ndb_delete_marker *marker)
+static void ndb_meta_note_delete_key(unsigned char *buf,
+				     const unsigned char *event_id)
 {
-	MDB_val key, val;
-	int rc;
+	buf[0] = NDB_META_PREFIX_NOTE_DELETE;
+	memcpy(buf + 1, event_id, 32);
+}
 
-	key.mv_data = (void *)event_id;
-	key.mv_size = 32;
+static int ndb_build_meta_a_key(const struct ndb_delete_a_ref *ref,
+				char **out_key, size_t *out_len)
+{
+	char *encoded = NULL;
+	size_t encoded_len = 0;
+	char *prefixed;
 
-	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE_DELETE], &key, &val);
-	if (rc)
+	if (!ndb_build_a_key(ref, &encoded, &encoded_len))
 		return 0;
 
-	if (marker)
-		*marker = *(struct ndb_delete_marker *)val.mv_data;
+	prefixed = malloc(encoded_len + 1);
+	if (!prefixed) {
+		free(encoded);
+		return 0;
+	}
+
+	prefixed[0] = NDB_META_PREFIX_A_DELETE;
+	memcpy(prefixed + 1, encoded, encoded_len);
+
+	free(encoded);
+	*out_key = prefixed;
+	if (out_len)
+		*out_len = encoded_len + 1;
+
 	return 1;
 }
 
-// upsert a delete marker if the incoming request is newer
-static int ndb_store_delete_marker(struct ndb_txn *txn,
-					 const unsigned char *event_id,
-					 const unsigned char *pubkey,
-					 const unsigned char *request_id,
-					 uint64_t deleted_at)
+static int ndb_store_delete_marker_key(struct ndb_txn *txn,
+				       MDB_val *key,
+				       const unsigned char *pubkey,
+				       const unsigned char *request_id,
+				       uint64_t deleted_at)
 {
-	MDB_val key, val, existing_val;
+	MDB_val val, existing_val;
 	int rc;
 
-	key.mv_data = (void *)event_id;
-	key.mv_size = 32;
-
-	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE_DELETE],
-		     &key, &existing_val);
+	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], key, &existing_val);
 	if (rc && rc != MDB_NOTFOUND)
 		return 0;
 
@@ -3546,13 +3552,52 @@ static int ndb_store_delete_marker(struct ndb_txn *txn,
 	val.mv_data = &marker;
 	val.mv_size = sizeof(marker);
 
-	if ((rc = mdb_put(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE_DELETE],
-			     &key, &val, 0))) {
-		ndb_debug("write note_delete failed: %s\n", mdb_strerror(rc));
+	rc = mdb_put(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], key, &val, 0);
+	if (rc) {
+		ndb_debug("write delete marker failed: %s\n", mdb_strerror(rc));
 		return 0;
 	}
 
 	return 1;
+}
+
+// fetch a previously stored delete marker for a raw event id
+static int ndb_lookup_delete_marker_raw(struct ndb_txn *txn,
+					  const unsigned char *event_id,
+					  struct ndb_delete_marker *marker)
+{
+	MDB_val key, val;
+	unsigned char keybuf[NDB_META_NOTE_DELETE_KEY_SIZE];
+	int rc;
+
+	ndb_meta_note_delete_key(keybuf, event_id);
+	key.mv_data = keybuf;
+	key.mv_size = sizeof(keybuf);
+
+	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], &key, &val);
+	if (rc)
+		return 0;
+
+	if (marker)
+		*marker = *(struct ndb_delete_marker *)val.mv_data;
+	return 1;
+}
+
+// upsert a delete marker if the incoming request is newer
+static int ndb_store_delete_marker(struct ndb_txn *txn,
+					 const unsigned char *event_id,
+					 const unsigned char *pubkey,
+					 const unsigned char *request_id,
+					 uint64_t deleted_at)
+{
+	unsigned char keybuf[NDB_META_NOTE_DELETE_KEY_SIZE];
+	MDB_val key;
+
+	ndb_meta_note_delete_key(keybuf, event_id);
+	key.mv_data = keybuf;
+	key.mv_size = sizeof(keybuf);
+
+	return ndb_store_delete_marker_key(txn, &key, pubkey, request_id, deleted_at);
 }
 
 // remember the latest delete marker that targets an "a" reference
@@ -3561,49 +3606,20 @@ static int ndb_delete_store_a_entry(struct ndb_txn *txn,
 				       const unsigned char *request_id,
 				       uint64_t deleted_at)
 {
-	MDB_val key, val, existing_val;
+	MDB_val key;
 	char *encoded = NULL;
 	size_t key_len = 0;
-	int rc;
+	int ok;
 
-	if (!ndb_build_a_key(ref, &encoded, &key_len))
+	if (!ndb_build_meta_a_key(ref, &encoded, &key_len))
 		return 0;
 
 	key.mv_data = encoded;
 	key.mv_size = key_len;
 
-	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_DELETE_A], &key,
-		     &existing_val);
-	if (rc && rc != MDB_NOTFOUND) {
-		free(encoded);
-		return 0;
-	}
-
-	if (rc == 0) {
-		struct ndb_delete_marker *existing = existing_val.mv_data;
-		if (existing->deleted_at >= deleted_at) {
-			free(encoded);
-			return 1;
-		}
-	}
-
-	struct ndb_delete_marker marker;
-	memcpy(marker.pubkey, ref->pubkey, 32);
-	memcpy(marker.request_id, request_id, 32);
-	marker.deleted_at = deleted_at;
-
-	val.mv_data = &marker;
-	val.mv_size = sizeof(marker);
-
-	rc = mdb_put(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_DELETE_A], &key,
-		      &val, 0);
+	ok = ndb_store_delete_marker_key(txn, &key, ref->pubkey, request_id, deleted_at);
 	free(encoded);
-	if (rc) {
-		ndb_debug("write delete_a failed: %s\n", mdb_strerror(rc));
-		return 0;
-	}
-
-	return 1;
+	return ok;
 }
 
 // see whether we already have a delete marker for this replaceable slot
@@ -3628,12 +3644,12 @@ static int ndb_lookup_a_marker_for_note(struct ndb_txn *txn,
 	ref.identifier = identifier;
 	ref.identifier_len = identifier_len;
 
-	if (!ndb_build_a_key(&ref, &encoded, &key_len))
+	if (!ndb_build_meta_a_key(&ref, &encoded, &key_len))
 		return 0;
 
 	key.mv_data = encoded;
 	key.mv_size = key_len;
-	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_DELETE_A], &key, &val);
+	rc = mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], &key, &val);
 	free(encoded);
 	if (rc)
 		return 0;
@@ -6375,16 +6391,6 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 		return 0;
 	}
 
-	if ((rc = mdb_dbi_open(txn, "note_delete", MDB_CREATE, &lmdb->dbs[NDB_DB_NOTE_DELETE]))) {
-		fprintf(stderr, "mdb_dbi_open note_delete failed: %s\n", mdb_strerror(rc));
-		return 0;
-	}
-
-	if ((rc = mdb_dbi_open(txn, "delete_a", MDB_CREATE, &lmdb->dbs[NDB_DB_DELETE_A]))) {
-		fprintf(stderr, "mdb_dbi_open delete_a failed: %s\n", mdb_strerror(rc));
-		return 0;
-	}
-
 	// id+ts index flags
 	unsigned int tsid_flags = MDB_CREATE | MDB_DUPSORT | MDB_DUPFIXED;
 
@@ -8730,10 +8736,6 @@ const char *ndb_db_name(enum ndb_dbs db)
 		return "note_relay_kind_index";
 	case NDB_DB_NOTE_RELAYS:
 		return "note_relays";
-	case NDB_DB_NOTE_DELETE:
-		return "note_delete";
-	case NDB_DB_DELETE_A:
-		return "delete_a";
 	case NDB_DBS:
 		return "count";
 	}

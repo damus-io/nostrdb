@@ -207,8 +207,6 @@ enum ndb_dbs {
 	NDB_DB_NOTE_PUBKEY_KIND, // note pubkey kind index
 	NDB_DB_NOTE_RELAY_KIND, // relay+kind+created -> note_id
 	NDB_DB_NOTE_RELAYS, // note_id -> relays
-	NDB_DB_NOTE_DELETE, // note_id -> deletion metadata
-	NDB_DB_DELETE_A, // canonical a-tag -> deletion metadata
 	NDB_DBS,
 };
 
