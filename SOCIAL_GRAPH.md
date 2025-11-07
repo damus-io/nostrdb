@@ -1,6 +1,6 @@
 # Social Graph
 
-nostrdb includes an integrated social graph index that builds follow relationships from kind 3 (contact list) events.
+nostrdb includes an integrated social graph index that builds follow relationships from kind 3 (contact list) events and mute relationships from kind 10000 (mute list) events.
 
 ## Architecture
 
@@ -9,8 +9,8 @@ nostrdb includes an integrated social graph index that builds follow relationshi
 Pubkeys (32 bytes) are mapped to locally unique 32-bit integer IDs (UIDs) to reduce index size.
 
 - **Type**: `uint32_t` (4.29 billion user capacity)
-- **Storage savings**: ~28 bytes per pubkey reference in adjacency lists
-- **Memory impact**: For 10M edges, saves ~100MB vs using full pubkeys
+- **Storage savings**: 28 bytes per UID reference (32-byte pubkey → 4-byte UID)
+- **Memory impact**: For 10M edges with bidirectional indices, saves ~560MB vs using full pubkeys (56 bytes per edge: 28 bytes in forward index + 28 bytes in reverse index)
 
 If you need >4B users, change `typedef uint32_t ndb_uid_t` to `uint64_t` in `src/ndb_uid.h`.
 
@@ -44,21 +44,32 @@ The set pattern is optimal for Nostr's access patterns where retrieving full fol
 - `sg_followed_by_user`: UID → array of UIDs they follow
 - `sg_followers_by_user`: UID → array of UIDs following them
 - `sg_follow_list_created_at`: UID → contact list timestamp (prevents processing older contact lists)
-- `sg_users_by_follow_distance`: distance → array of UIDs at that distance (reverse index, semi-essential)
+- `sg_users_by_follow_distance`: (distance, UID) → empty (composite key index, semi-essential)
+- `sg_muted_by_user`: UID → array of UIDs they mute
+- `sg_user_muted_by`: UID → array of UIDs muting them
+- `sg_mute_list_created_at`: UID → mute list timestamp (prevents processing older mute lists)
 
-The `users_by_follow_distance` index enables efficient distance-based queries and iteration. It's primarily used for stats and serialization. Could be made optional/togglable if you only need direct follow lookups.
+The `users_by_follow_distance` index enables efficient distance-based queries and iteration. It uses a composite key of (distance, uid) with empty values, allowing efficient prefix queries by distance. It's primarily used for stats and serialization. Could be made optional/togglable if you only need direct follow lookups.
 
 ## Usage
 
-Contact lists (kind 3) are automatically processed during event ingestion. Query the graph via:
+Contact lists (kind 3) and mute lists (kind 10000) are automatically processed during event ingestion. Query the graph via:
 
 ```c
 struct ndb_txn txn;
 ndb_begin_query(ndb, &txn);
 
-uint32_t distance = ndb_socialgraph_get_follow_distance(&txn, ndb, pubkey);
-int follows = ndb_socialgraph_is_following(&txn, ndb, follower_pk, followed_pk);
-int count = ndb_socialgraph_follower_count(&txn, ndb, pubkey);
+// Follow graph queries
+uint32_t distance = ndb_sg_get_follow_distance(&txn, graph, pubkey);
+int follows = ndb_sg_is_following(&txn, graph, follower_pk, followed_pk);
+int count = ndb_sg_follower_count(&txn, graph, pubkey);
+int followed_count = ndb_sg_get_followed(&txn, graph, pubkey, followed_out, max_out);
+int followers_count = ndb_sg_get_followers(&txn, graph, pubkey, followers_out, max_out);
+
+// Mute list queries
+int mutes = ndb_sg_is_muting(&txn, graph, muter_pk, muted_pk);
+int muted_count = ndb_sg_get_muted(&txn, graph, pubkey, muted_out, max_out);
+int muter_count = ndb_sg_get_muters(&txn, graph, pubkey, muters_out, max_out);
 
 ndb_end_query(&txn);
 ```
