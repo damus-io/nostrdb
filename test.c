@@ -240,7 +240,6 @@ static void test_timeline_query()
 			 sizeof(results)/sizeof(results[0]), &count));
 	ndb_end_query(&txn);
 	ndb_filter_destroy(&filter);
-
 	assert(count == 10);
 }
 
@@ -756,9 +755,13 @@ static void test_fetch_last_noteid()
 	struct ndb_config config;
 	ndb_default_config(&config);
 
+	delete_test_db();
 	assert(ndb_init(&ndb, test_dir, &config));
 
 	read_file("testdata/random.json", (unsigned char*)json, alloc_size, &written);
+	assert(ndb_process_events(ndb, json, written));
+
+	read_file("testdata/profiles.json", (unsigned char*)json, alloc_size, &written);
 	assert(ndb_process_events(ndb, json, written));
 
 	ndb_destroy(ndb);
