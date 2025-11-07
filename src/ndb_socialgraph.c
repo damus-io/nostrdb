@@ -526,13 +526,14 @@ int ndb_socialgraph_handle_contact_list(void *txn, struct ndb_socialgraph *graph
 
 		if ((rc = mdb_get(txn, followers_by_user_dbi, &follower_key, &follower_val)) == 0) {
 			// Existing followers list
-			followers = malloc(follower_val.mv_size);
+			followers_capacity = ((struct uid_list*)follower_val.mv_data)->count + 16; // Some headroom
+			size_t alloc_size = sizeof(struct uid_list) + followers_capacity * sizeof(ndb_uid_t);
+			followers = malloc(alloc_size);
 			if (!followers) {
 				free(new_followed_list);
 				return 0;
 			}
 			memcpy(followers, follower_val.mv_data, follower_val.mv_size);
-			followers_capacity = followers->count + 16; // Some headroom
 		} else {
 			// New followers list
 			followers = uid_list_create(followers_capacity);
@@ -1003,13 +1004,14 @@ int ndb_socialgraph_handle_mute_list(void *txn, struct ndb_socialgraph *graph,
 
 		if ((rc = mdb_get(txn, user_muted_by_dbi, &muter_key, &muter_val)) == 0) {
 			// Existing muters list
-			muters = malloc(muter_val.mv_size);
+			muters_capacity = ((struct uid_list*)muter_val.mv_data)->count + 16; // Some headroom
+			size_t alloc_size = sizeof(struct uid_list) + muters_capacity * sizeof(ndb_uid_t);
+			muters = malloc(alloc_size);
 			if (!muters) {
 				free(new_muted_list);
 				return 0;
 			}
 			memcpy(muters, muter_val.mv_data, muter_val.mv_size);
-			muters_capacity = muters->count + 16; // Some headroom
 		} else {
 			// New muters list
 			muters = uid_list_create(muters_capacity);
