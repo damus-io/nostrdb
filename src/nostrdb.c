@@ -1216,13 +1216,11 @@ static int compare_kinds(const void *pa, const void *pb)
 	uint64_t a = *(uint64_t *)pa;
 	uint64_t b = *(uint64_t *)pb;
 
-	if (a < b) {
+	if (a < b)
 		return -1;
-	} else if (a > b) {
+	if (a > b)
 		return 1;
-	} else {
-		return 0;
-	}
+	return 0;
 }
 
 //
@@ -4069,13 +4067,11 @@ static int compare_query_results(const void *pa, const void *pb)
 	a = (struct ndb_query_result *)pa;
 	b = (struct ndb_query_result *)pb;
 
-	if (a->note->created_at == b->note->created_at) {
+	if (a->note->created_at == b->note->created_at)
 		return 0;
-	} else if (a->note->created_at > b->note->created_at) {
+	if (a->note->created_at > b->note->created_at)
 		return -1;
-	} else {
-		return 1;
-	}
+	return 1;
 }
 
 static void ndb_query_result_init(struct ndb_query_result *res,
