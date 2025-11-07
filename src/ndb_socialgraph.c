@@ -110,28 +110,52 @@ int ndb_socialgraph_init(struct ndb_socialgraph *graph, void *env,
 	graph->user_muted_by_db = (void*)(intptr_t)user_muted_by_dbi;
 	graph->mute_list_created_at_db = (void*)(intptr_t)mute_list_created_at_dbi;
 
-	// Get or create UID for root
-	if (!ndb_uid_get_or_create(txn, &graph->uid_map, root_pubkey, &graph->root_uid)) {
-		fprintf(stderr, "ndb_socialgraph_init: failed to get root uid\n");
-		mdb_txn_abort(txn);
-		ndb_uid_map_destroy(&graph->uid_map);
-		return 0;
+	// Check if a root already exists (distance 0 user)
+	MDB_cursor *cursor;
+	MDB_val key, val;
+	int found_existing_root = 0;
+
+	if ((rc = mdb_cursor_open(txn, follow_distance_dbi, &cursor)) == 0) {
+		if ((rc = mdb_cursor_get(cursor, &key, &val, MDB_FIRST)) == 0) {
+			do {
+				if (val.mv_size == sizeof(uint32_t)) {
+					uint32_t distance;
+					memcpy(&distance, val.mv_data, sizeof(uint32_t));
+					if (distance == 0 && key.mv_size == sizeof(ndb_uid_t)) {
+						// Found existing root
+						memcpy(&graph->root_uid, key.mv_data, sizeof(ndb_uid_t));
+						found_existing_root = 1;
+						break;
+					}
+				}
+			} while ((rc = mdb_cursor_get(cursor, &key, &val, MDB_NEXT)) == 0);
+		}
+		mdb_cursor_close(cursor);
 	}
 
-	// Set root distance to 0
-	MDB_val key, val;
-	key.mv_data = &graph->root_uid;
-	key.mv_size = sizeof(ndb_uid_t);
-	uint32_t zero = 0;
-	val.mv_data = &zero;
-	val.mv_size = sizeof(uint32_t);
+	if (!found_existing_root) {
+		// No existing root, use provided root_pubkey
+		if (!ndb_uid_get_or_create(txn, &graph->uid_map, root_pubkey, &graph->root_uid)) {
+			fprintf(stderr, "ndb_socialgraph_init: failed to get root uid\n");
+			mdb_txn_abort(txn);
+			ndb_uid_map_destroy(&graph->uid_map);
+			return 0;
+		}
 
-	if ((rc = mdb_put(txn, follow_distance_dbi, &key, &val, 0))) {
-		fprintf(stderr, "ndb_socialgraph_init: failed to set root distance: %s\n",
-			mdb_strerror(rc));
-		mdb_txn_abort(txn);
-		ndb_uid_map_destroy(&graph->uid_map);
-		return 0;
+		// Set root distance to 0
+		key.mv_data = &graph->root_uid;
+		key.mv_size = sizeof(ndb_uid_t);
+		uint32_t zero = 0;
+		val.mv_data = &zero;
+		val.mv_size = sizeof(uint32_t);
+
+		if ((rc = mdb_put(txn, follow_distance_dbi, &key, &val, 0))) {
+			fprintf(stderr, "ndb_socialgraph_init: failed to set root distance: %s\n",
+				mdb_strerror(rc));
+			mdb_txn_abort(txn);
+			ndb_uid_map_destroy(&graph->uid_map);
+			return 0;
+		}
 	}
 
 	if ((rc = mdb_txn_commit(txn))) {

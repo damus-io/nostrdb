@@ -362,12 +362,68 @@ static void test_socialgraph_set_root() {
 	printf("✓ test_socialgraph_set_root passed\n");
 }
 
+static void test_socialgraph_root_persistence() {
+	struct ndb *ndb;
+	struct ndb_config config;
+	struct ndb_txn txn;
+
+	ndb_default_config(&config);
+	config.flags |= NDB_FLAG_SKIP_NOTE_VERIFY;
+	delete_test_db();
+	mkdir(TEST_DB_DIR, 0755);
+
+	// First init with zero pubkey default
+	assert(ndb_init(&ndb, TEST_DB_DIR, &config));
+
+	unsigned char alice_pk[32], bob_pk[32];
+	memset(alice_pk, 0xAA, 32);
+	memset(bob_pk, 0xBB, 32);
+
+	// Alice follows Bob
+	const char *alice_contact_list =
+		"{\"id\":\"0000000000000000000000000000000000000000000000000000000000000001\","
+		" \"pubkey\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
+		" \"created_at\":1234567890,"
+		" \"kind\":3,"
+		" \"tags\":[[\"p\",\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"]],"
+		" \"content\":\"\","
+		" \"sig\":\"0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"}";
+
+	assert(ndb_process_event(ndb, alice_contact_list, strlen(alice_contact_list)));
+	usleep(200000);
+
+	// Set root to Alice
+	ndb_socialgraph_set_root(ndb, alice_pk);
+	usleep(100000);
+
+	// Verify Alice is root
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_socialgraph_get_follow_distance(&txn, ndb, alice_pk) == 0);
+	assert(ndb_socialgraph_get_follow_distance(&txn, ndb, bob_pk) == 1);
+	ndb_end_query(&txn);
+
+	ndb_destroy(ndb);
+
+	// Restart ndb - root should persist
+	assert(ndb_init(&ndb, TEST_DB_DIR, &config));
+
+	// Verify Alice is still root without calling set_root
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_socialgraph_get_follow_distance(&txn, ndb, alice_pk) == 0);
+	assert(ndb_socialgraph_get_follow_distance(&txn, ndb, bob_pk) == 1);
+	ndb_end_query(&txn);
+
+	ndb_destroy(ndb);
+	printf("✓ test_socialgraph_root_persistence passed\n");
+}
+
 int main() {
 	test_socialgraph_basic();
 	test_socialgraph_follow_distance();
 	test_socialgraph_mute_list();
 	test_socialgraph_mute_update();
 	test_socialgraph_set_root();
+	test_socialgraph_root_persistence();
 
 	printf("\nAll social graph tests passed!\n");
 	return 0;
