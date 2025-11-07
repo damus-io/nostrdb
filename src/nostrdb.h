@@ -641,6 +641,17 @@ int ndb_socialgraph_follower_count(struct ndb_txn *txn, struct ndb *ndb,
                                     const unsigned char *pubkey);
 
 /**
+ * Set the root user for follow distance calculations
+ * Recalculates all distances from the new root if changed
+ * NOTE: This requires a write transaction and should only be called
+ * from the writer thread. For application use, consider calling during
+ * initialization or account switching in a deferred manner.
+ * @param ndb Database handle
+ * @param root_pubkey 32-byte root user pubkey
+ */
+void ndb_socialgraph_set_root(struct ndb *ndb, const unsigned char *root_pubkey);
+
+/**
  * Check if one user mutes another
  * @param txn Active transaction
  * @param ndb Database handle

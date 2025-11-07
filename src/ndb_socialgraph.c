@@ -866,6 +866,43 @@ int ndb_sg_get_muters(void *txn, struct ndb_socialgraph *graph,
 	return count;
 }
 
+int ndb_sg_set_root(void *txn, struct ndb_socialgraph *graph,
+                    const unsigned char *root_pubkey)
+{
+	MDB_txn *mdb_txn = (MDB_txn*)txn;
+	MDB_dbi distance_dbi = (MDB_dbi)(intptr_t)graph->follow_distance_db;
+	ndb_uid_t new_root_uid;
+	MDB_val key, val;
+	int rc;
+
+	// Get or create UID for new root
+	if (!ndb_uid_get_or_create(txn, &graph->uid_map, root_pubkey, &new_root_uid)) {
+		return 0;
+	}
+
+	// Check if root actually changed
+	if (new_root_uid == graph->root_uid) {
+		return 1; // No change needed
+	}
+
+	// Update root_uid
+	graph->root_uid = new_root_uid;
+
+	// Set new root distance to 0
+	key.mv_data = &graph->root_uid;
+	key.mv_size = sizeof(ndb_uid_t);
+	uint32_t zero = 0;
+	val.mv_data = &zero;
+	val.mv_size = sizeof(uint32_t);
+
+	if ((rc = mdb_put(mdb_txn, distance_dbi, &key, &val, 0))) {
+		return 0;
+	}
+
+	// Recalculate all distances from new root
+	return ndb_socialgraph_recalculate_distances(txn, graph);
+}
+
 void ndb_socialgraph_destroy(struct ndb_socialgraph *graph)
 {
 	ndb_uid_map_destroy(&graph->uid_map);

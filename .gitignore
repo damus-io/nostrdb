@@ -18,6 +18,7 @@ perf.data.old
 perf.out
 ndb.svg
 flamegraph.html
+testdata/sg_test_db
 testdata/many-events.json
 testdata/db/ndb-v0.tar
 testdata/db/v0
@@ -39,3 +40,4 @@ ndb
 
 /target
 /Cargo.lock
+test_socialgraph

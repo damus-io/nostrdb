@@ -155,6 +155,18 @@ int ndb_sg_get_muters(void *txn, struct ndb_socialgraph *graph,
                       unsigned char *muters_out, int max_out);
 
 /**
+ * Set the root user for distance calculations (internal API)
+ * Recalculates all distances from the new root if changed
+ * Must be called within a write transaction
+ * @param txn Active write transaction
+ * @param graph Social graph
+ * @param root_pubkey 32-byte root user pubkey
+ * @return 1 on success, 0 on failure
+ */
+int ndb_sg_set_root(void *txn, struct ndb_socialgraph *graph,
+                    const unsigned char *root_pubkey);
+
+/**
  * Recalculate follow distances from root user via BFS
  * Must be called within a write transaction
  * @param txn Active write transaction
