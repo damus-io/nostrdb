@@ -28,6 +28,7 @@ static int usage()
 	printf("	print-tag-keys\n");
 	printf("	print-relay-kind-index-keys\n");
 	printf("	print-author-kind-index-keys\n");
+	printf("	print-note-metadata\n");
 	printf("	import <line-delimited json file>\n\n");
 
 	printf("settings\n\n");
@@ -108,6 +109,7 @@ int ndb_print_kind_keys(struct ndb_txn *txn);
 int ndb_print_tag_index(struct ndb_txn *txn);
 int ndb_print_relay_kind_index(struct ndb_txn *txn);
 int ndb_print_author_kind_index(struct ndb_txn *txn);
+int ndb_print_note_metadata(struct ndb_txn *txn);
 
 static void print_note(struct ndb_note *note)
 {
@@ -323,7 +325,32 @@ int main(int argc, char *argv[])
 
 				argv += 2;
 				argc -= 2;
-			} else if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--author")) {
+			} else if (!strcmp(argv[0], "-q")) {
+				if (current_field != 'q') {
+					if (!ndb_filter_start_tag_field(f, 'q')) {
+						fprintf(stderr, "field already started\n");
+						res = 44;
+						goto cleanup;
+					}
+				}
+				current_field = 'q';
+
+				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
+					fprintf(stderr, "invalid hex id\n");
+					res = 42;
+					goto cleanup;
+				}
+
+				if (!ndb_filter_add_id_element(f, tmp_id)) {
+					fprintf(stderr, "too many event ids\n");
+					res = 43;
+					goto cleanup;
+				}
+
+				argv += 2;
+				argc -= 2;
+			} 
+			else if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--author")) {
 				if (current_field != NDB_FILTER_AUTHORS) {
 					ndb_filter_end_field(f);
 					ndb_filter_start_field(f, NDB_FILTER_AUTHORS);
@@ -417,6 +444,10 @@ int main(int argc, char *argv[])
 	} else if (argc == 2 && !strcmp(argv[1], "print-author-kind-index-keys")) {
 		ndb_begin_query(ndb, &txn);
 		ndb_print_author_kind_index(&txn);
+		ndb_end_query(&txn);
+	} else if (argc == 2 && !strcmp(argv[1], "print-note-metadata")) {
+		ndb_begin_query(ndb, &txn);
+		ndb_print_note_metadata(&txn);
 		ndb_end_query(&txn);
 	} else if (argc == 3 && !strcmp(argv[1], "note-relays")) {
 		struct ndb_note_relay_iterator iter;

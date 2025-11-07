@@ -6,6 +6,10 @@
 #include "win.h"
 #include "cursor.h"
 
+/* static assert helper */
+#define STATIC_ASSERT(cond, msg) typedef char static_assert_##msg[(cond) ? 1 : -1]
+/* #define STATIC_ASSERT(cond, msg)  */
+
 // maximum number of filters allowed in a filter group
 #define NDB_PACKED_STR     0x1
 #define NDB_PACKED_ID      0x2
@@ -34,8 +38,20 @@ struct ndb_note;
 struct ndb_tag;
 struct ndb_tags;
 struct ndb_lmdb;
+struct ndb_note_meta;
+struct ndb_note_meta_entry;
+struct ndb_note_meta_builder;
 union ndb_packed_str;
 struct bolt11;
+
+/* Types, standard types are multiplied by 2, since odd types are user defined.
+ * We explicitly multiply by two in the enum to be unambiguous
+ */
+enum ndb_metadata_type {
+    NDB_NOTE_META_RESERVED = 0, /* not used */
+    NDB_NOTE_META_COUNTS   = 100, /* replies, quotes, etc */
+    NDB_NOTE_META_REACTION = 200, /* count of all the reactions on a post, grouped by different reaction strings */
+};
 
 // some bindings like swift needs help with forward declared pointers
 struct ndb_tag_ptr { struct ndb_tag *ptr; };
@@ -46,6 +62,33 @@ struct ndb_note_ptr { struct ndb_note *ptr; };
 
 struct ndb_t {
 	struct ndb *ndb;
+};
+
+/* Compact reaction strings for the metadata table.
+ *
+ * We compact all emojis into 64bits using binmojis (github.com/jb55/binmoji)
+ *
+ * 6-byte non-emoji strings are also supported in the same memory layout. This
+ * is achieved by reserving the LSB byte of the compact string, which overlaps
+ * with the binmojis user flag bit. If this flag is set, then we know its not
+ * really a bitmoji, its a compact string.
+ */
+union ndb_reaction_str {
+	uint64_t binmoji;
+	struct {
+		/* flag is at LSB, which aligns with our binmoji user flag */
+		uint8_t flag;
+		char str[7];
+	} packed;
+};
+STATIC_ASSERT(sizeof(union ndb_reaction_str) == 8, reaction_string_must_be_8_bytes);
+
+/* An ndb_note_meta builder. Maintains a cursor of a fixed sized buffer while adding
+ * metadata entries.
+ *
+ */
+struct ndb_note_meta_builder {
+	struct cursor cursor;
 };
 
 struct ndb_str {
@@ -245,6 +288,14 @@ struct ndb_note_relay_iterator {
 	uint64_t note_key;
 	int cursor_op;
 	void *mdb_cur;
+};
+
+struct ndb_note_meta_iterator {
+	struct ndb_note_meta *header;
+	struct ndb_note_meta *cur;
+
+	// current outer index
+	int index;
 };
 
 struct ndb_iterator {
@@ -533,7 +584,6 @@ uint64_t ndb_get_notekey_by_id(struct ndb_txn *txn, const unsigned char *id);
 uint64_t ndb_get_profilekey_by_pubkey(struct ndb_txn *txn, const unsigned char *id);
 struct ndb_note *ndb_get_note_by_id(struct ndb_txn *txn, const unsigned char *id, size_t *len, uint64_t *primkey);
 struct ndb_note *ndb_get_note_by_key(struct ndb_txn *txn, uint64_t key, size_t *len);
-void *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char *id, size_t *len);
 int ndb_note_seen_on_relay(struct ndb_txn *txn, uint64_t note_key, const char *relay);
 void ndb_destroy(struct ndb *);
 
@@ -611,6 +661,39 @@ void ndb_text_search_config_set_limit(struct ndb_text_search_config *, int limit
 
 // QUERY
 int ndb_query(struct ndb_txn *txn, struct ndb_filter *filters, int num_filters, struct ndb_query_result *results, int result_capacity, int *count);
+
+// NOTE METADATA
+int ndb_note_meta_builder_init(struct ndb_note_meta_builder *builder, unsigned char *, size_t);
+int ndb_set_note_meta(struct ndb *ndb, const unsigned char *id, struct ndb_note_meta *meta);
+size_t ndb_note_meta_total_size(struct ndb_note_meta *header);
+size_t ndb_note_meta_total_size(struct ndb_note_meta *meta);
+struct ndb_note_meta *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char *id);
+struct ndb_note_meta_entry *ndb_note_meta_add_entry(struct ndb_note_meta_builder *builder);
+struct ndb_note_meta_entry *ndb_note_meta_builder_find_entry(struct ndb_note_meta_builder *builder, uint16_t type, uint64_t *payload);
+struct ndb_note_meta_entry *ndb_note_meta_entries(struct ndb_note_meta *meta);
+struct ndb_note_meta_entry *ndb_note_meta_entry_at(struct ndb_note_meta *meta, int ind);
+struct ndb_note_meta_entry *ndb_note_meta_find_entry(struct ndb_note_meta *meta, uint16_t type, uint64_t *payload);
+uint16_t *ndb_note_meta_counts_direct_replies(struct ndb_note_meta_entry *entry);
+uint16_t *ndb_note_meta_counts_quotes(struct ndb_note_meta_entry *entry);
+uint16_t *ndb_note_meta_counts_reposts(struct ndb_note_meta_entry *entry);
+uint16_t *ndb_note_meta_entry_type(struct ndb_note_meta_entry *entry);
+uint16_t ndb_note_meta_entries_count(struct ndb_note_meta *meta);
+uint32_t *ndb_note_meta_counts_thread_replies(struct ndb_note_meta_entry *entry);
+uint32_t *ndb_note_meta_counts_total_reactions(struct ndb_note_meta_entry *entry);
+uint32_t *ndb_note_meta_reaction_count(struct ndb_note_meta_entry *entry);
+union ndb_reaction_str *ndb_note_meta_reaction_str(struct ndb_note_meta_entry *entry);
+uint64_t *ndb_note_meta_flags(struct ndb_note_meta *meta);
+void ndb_note_meta_build(struct ndb_note_meta_builder *builder, struct ndb_note_meta **meta);
+void ndb_note_meta_builder_resized(struct ndb_note_meta_builder *builder, unsigned char *buf, size_t bufsize);
+void ndb_note_meta_counts_set(struct ndb_note_meta_entry *entry, uint32_t total_reactions, uint16_t quotes, uint16_t direct_replies, uint32_t thread_replies, uint16_t reposts);
+void ndb_note_meta_header_init(struct ndb_note_meta *);
+void ndb_note_meta_reaction_set(struct ndb_note_meta_entry *entry, uint32_t count, union ndb_reaction_str str);
+void print_note_meta(struct ndb_note_meta *meta);
+
+// META STRINGS
+int ndb_reaction_set(union ndb_reaction_str *reaction, const char *str);
+int ndb_reaction_str_is_emoji(union ndb_reaction_str);
+const char *ndb_reaction_to_str(union ndb_reaction_str *str, char buf[128]);
 
 // STATS
 int ndb_stat(struct ndb *ndb, struct ndb_stat *stat);
