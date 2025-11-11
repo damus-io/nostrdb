@@ -65,13 +65,6 @@ typedef int (*ndb_migrate_fn)(struct ndb_txn *);
 typedef int (*ndb_word_parser_fn)(void *, const char *word, int word_len,
 				  int word_index);
 
-/* parsed nip10 reply data */
-struct ndb_note_reply {
-	unsigned char *root;
-	unsigned char *reply;
-	unsigned char *mention;
-};
-
 // these must be byte-aligned, they are directly accessing the serialized data
 // representation
 #pragma pack(push, 1)
@@ -2030,17 +2023,18 @@ static unsigned char *ndb_note_last_id_tag(struct ndb_note *note, char type)
 }
 
 /* get reply information from a note */
-static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_reply)
+void ndb_note_get_reply(struct ndb_note *note, struct ndb_note_reply *note_reply)
 {
 	unsigned char *root, *reply, *mention, *id;
 	const char *marker;
 	struct ndb_iterator iter;
 	struct ndb_str str;
 	uint16_t count;
-	int any_marker, first;
+	int any_marker, first, have_explicit_root, marker_len;
 
 	any_marker = 0;
 	first = 1;
+	have_explicit_root = 0;
 	root = NULL;
 	reply = NULL;
 	mention = NULL;
@@ -2052,13 +2046,26 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 			break;
 
 		marker = NULL;
+		marker_len = 0;
 		count = ndb_tag_count(iter.tag);
 
 		if (count < 2)
 			continue;
 
 		str = ndb_tag_str(note, iter.tag, 0);
-		if (!(str.flag == NDB_PACKED_STR && str.str[0] == 'e'))
+		if (str.flag != NDB_PACKED_STR)
+			continue;
+
+		if (str.str[0] == 'E') {
+			str = ndb_tag_str(note, iter.tag, 1);
+			if (str.flag == NDB_PACKED_ID) {
+				root = str.id;
+				have_explicit_root = 1;
+			}
+			continue;
+		}
+
+		if (str.str[0] != 'e')
 			continue;
 
 		str = ndb_tag_str(note, iter.tag, 1);
@@ -2068,25 +2075,41 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 
 		/* if we have the marker, assign it */
 		if (count >= 4) {
-			str = ndb_tag_str(note, iter.tag, 3);
-			if (str.flag == NDB_PACKED_STR)
-				marker = str.str;
+			struct ndb_str marker_str = ndb_tag_str(note, iter.tag, 3);
+			if (marker_str.flag != NDB_PACKED_ID) {
+				marker = marker_str.str;
+				marker_len = ndb_str_len(&marker_str);
+			}
 		}
 
 		if (marker) {
 			any_marker = true;
-			if (!strcmp(marker, "root"))
+			if (marker_len == 4 && !memcmp(marker, "root", 4))
 				root = id;
-			else if (!strcmp(marker, "reply"))
+			else if (marker_len == 5 && !memcmp(marker, "reply", 5))
 				reply = id;
-			else if (!strcmp(marker, "mention"))
+			else if (marker_len == 7 && !memcmp(marker, "mention", 7))
 				mention = id;
-		} else if (!any_marker && first) {
-			root = id;
-			first = 0;
-		} else if (!any_marker && !reply) {
-			reply = id;
+			continue;
 		}
+
+		if (any_marker)
+			continue;
+
+		if (first) {
+			first = 0;
+			if (!have_explicit_root) {
+				root = id;
+				continue;
+			}
+			if (!reply)
+				reply = id;
+			continue;
+		}
+
+		if (!reply)
+			reply = id;
+
 	}
 
 	note_reply->reply = reply;
@@ -2094,7 +2117,7 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 	note_reply->mention = mention;
 }
 
-static int ndb_is_reply_to_root(struct ndb_note_reply *reply)
+int ndb_note_reply_is_to_root(struct ndb_note_reply *reply)
 {
 	if (reply->root && !reply->reply)
 		return 1;
@@ -2151,12 +2174,12 @@ int ndb_count_replies(struct ndb_txn *txn, const unsigned char *note_id, uint16_
 			break;
 		if (!(note = ndb_get_note_by_key(txn, note_key, &size)))
 			continue;
-		if (ndb_note_kind(note) != 1)
+		if (ndb_note_kind(note) != 1 && ndb_note_kind(note) != 1111)
 			continue;
 
-		ndb_parse_reply(note, &reply);
+		ndb_note_get_reply(note, &reply);
 
-		if (ndb_is_reply_to_root(&reply)) {
+		if (ndb_note_reply_is_to_root(&reply)) {
 			reply_id = reply.root;
 		} else {
 			reply_id = reply.reply;
@@ -6070,8 +6093,8 @@ static void ndb_process_note_stats(
 		ndb_increment_quote_metadata(txn, quoted_note_id, scratch, scratch_size);
 	}
 
-	ndb_parse_reply(note, &reply);
-	if (ndb_is_reply_to_root(&reply)) {
+	ndb_note_get_reply(note, &reply);
+	if (ndb_note_reply_is_to_root(&reply)) {
 		reply_id = reply.root;
 	} else {
 		reply_id = reply.reply;
@@ -6133,7 +6156,7 @@ static uint64_t ndb_write_note(struct ndb_txn *txn,
 		ndb_write_note_relay_indexes(txn, &relay_key);
 
 	// only parse content and do fulltext index on text and longform notes
-	if (kind == 1 || kind == 30023) {
+	if (kind == 1 || kind == 30023 || kind == 1111) {
 		if (!ndb_flag_set(ndb_flags, NDB_FLAG_NO_FULLTEXT)) {
 			if (!ndb_write_note_fulltext_index(txn, note->note, note_key))
 				return 0;
@@ -8987,6 +9010,7 @@ enum ndb_common_kind ndb_kind_to_common_kind(int kind)
 	{
 		case 0:     return NDB_CKIND_PROFILE;
 		case 1:     return NDB_CKIND_TEXT;
+		case 1111:  return NDB_CKIND_COMMENT;
 		case 3:     return NDB_CKIND_CONTACTS;
 		case 4:     return NDB_CKIND_DM;
 		case 5:     return NDB_CKIND_DELETE;
@@ -9010,6 +9034,7 @@ const char *ndb_kind_name(enum ndb_common_kind ck)
 	switch (ck) {
 		case NDB_CKIND_PROFILE:      return "profile";
 		case NDB_CKIND_TEXT:         return "text";
+		case NDB_CKIND_COMMENT:      return "comment";
 		case NDB_CKIND_CONTACTS:     return "contacts";
 		case NDB_CKIND_DM:           return "dm";
 		case NDB_CKIND_DELETE:       return "delete";
