@@ -95,6 +95,19 @@ at an existing relay database via `-d path/to/db`.
 - `docs/cli.md` – comprehensive CLI command reference.
 - `docs/bindings/index.md` – pointers for C, Rust, and Swift consumers.
 
+### Render the docs as a book
+
+The `docs/book` directory contains an [mdBook](https://rust-lang.github.io/mdBook/) configuration
+that stitches all documentation together into a browsable site:
+
+```bash
+cargo install mdbook        # once, if you don't already have it
+mdbook serve docs/book --open
+```
+
+The `serve` task watches for file changes and rebuilds automatically. Use `mdbook build docs/book`
+to emit static HTML under `docs/book/build/`.
+
 ## API
 
 The API is *very* unstable. nostrdb is in heavy development mode so don't
