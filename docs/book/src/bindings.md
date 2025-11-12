@@ -1,1 +1,1 @@
-{{#include ../bindings/index.md}}
+{{#include ../../bindings/index.md}}

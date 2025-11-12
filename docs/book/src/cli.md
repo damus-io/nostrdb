@@ -1,1 +1,1 @@
-{{#include ../cli.md}}
+{{#include ../../cli.md}}

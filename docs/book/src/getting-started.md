@@ -1,1 +1,1 @@
-{{#include ../getting-started.md}}
+{{#include ../../getting-started.md}}

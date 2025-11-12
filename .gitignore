@@ -39,3 +39,7 @@ ndb
 
 /target
 /Cargo.lock
+
+# mdBook output
+/book
+/docs/book/build

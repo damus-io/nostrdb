@@ -1,1 +1,1 @@
-{{#include ../architecture.md}}
+{{#include ../../architecture.md}}

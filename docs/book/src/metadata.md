@@ -1,1 +1,1 @@
-{{#include ../metadata.md}}
+{{#include ../../metadata.md}}

@@ -1,1 +1,1 @@
-{{#include ../api.md}}
+{{#include ../../api.md}}
