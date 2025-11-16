@@ -502,7 +502,6 @@ int ndb_socialgraph_handle_contact_list(void *txn, struct ndb_socialgraph *graph
 			// Incremental distance update for unfollow
 			remove_follower_incremental(txn, graph, unfollowed_uid, author_uid);
 		}
-		free(old_followed_list);
 	}
 
 	// Process new follows: add to followers_by_user
@@ -575,6 +574,10 @@ int ndb_socialgraph_handle_contact_list(void *txn, struct ndb_socialgraph *graph
 
 		add_follower_incremental(txn, graph, followed_uid, author_uid);
 	}
+
+	// Free old followed list after both loops complete
+	if (old_followed_list)
+		free(old_followed_list);
 
 	// Store new followed list
 	val.mv_data = new_followed_list;
