@@ -45,6 +45,16 @@ int ndb_uid_get(void *txn, struct ndb_uid_map *map,
                 const unsigned char *pubkey, ndb_uid_t *uid_out);
 
 /**
+ * Check if UID exists for a pubkey (internal API)
+ * @param txn Active read transaction
+ * @param map UID map
+ * @param pubkey 32-byte binary pubkey
+ * @return 1 if exists, 0 if not
+ */
+int ndb_uid_exists_map(void *txn, struct ndb_uid_map *map,
+                       const unsigned char *pubkey);
+
+/**
  * Get pubkey for a UID
  * @param txn Active transaction
  * @param map UID map

@@ -16,40 +16,47 @@ If you need >4B users, change `typedef uint32_t ndb_uid_t` to `uint64_t` in `src
 
 **UID Allocation**: Counter-based (`next_id++`), reconstructed from max existing UID on init. Thread-safe within nostrdb's single-writer architecture. **Not safe for multi-process access**—running multiple nostrdb processes against the same database will cause UID collisions.
 
-### Adjacency List Storage
+### Storage Strategy
 
-Follow relationships use the **set pattern**: `UID → array<UID>` rather than composite keys.
-
-**Set pattern** (current):
-- Key: follower UID
-- Value: packed array of followed UIDs
-- Storage: ~4 bytes per edge
-- `is_following(A,B)`: O(log N) btree + O(M) array scan (M = follow count, typically 100-500)
+**Forward indexes** (bounded by user behavior, typically 100-500 follows):
+- Use **bucketed UID lists** - space-optimized arrays partitioned by UID size (u8/u16/u32)
+- Key: follower UID → Value: bucketed array of followed UIDs
+- Storage: ~1.7 bytes per edge (78% savings vs naive array)
+- `is_following(A,B)`: O(log N) btree + O(log M) binary search in buckets
 - `get_followed(A)`: O(log N) btree, returns assembled array
+- Insert: O(M) rebuild entire array (acceptable for bounded M)
 
-**Composite key alternative**:
-- Key: (follower_uid, followed_uid)
-- Value: empty
-- Storage: ~8 bytes per edge
-- `is_following(A,B)`: O(log N) btree lookup
-- `get_followed(A)`: O(log N + M) range scan
+**Reverse indexes** (unbounded by popularity, can reach millions):
+- Use **composite keys** to avoid O(n) rewrites for popular users
+- Key: (followed_uid, follower_uid) → Value: empty
+- Storage: ~8 bytes per edge (higher overhead but scalable)
+- `get_followers(A)`: O(log N + M) cursor range scan
+- `follower_count(A)`: O(1) cached counter (updated on follow/unfollow)
+- Insert: O(log N) single key write (critical for viral accounts)
 
-The set pattern is optimal for Nostr's access patterns where retrieving full follow lists is more common than single edge checks. With typical follow counts of 100-500 users, linear array scans are negligible.
+Rationale: Users control who they follow (~500 max), but can't control follower count. Popular npubs with 1M+ followers need O(log n) insertion, not O(n) array rebuilds.
 
 ### Databases
 
-- `uid_str_to_id`: 32-byte pubkey → UID
-- `uid_id_to_str`: UID → 32-byte pubkey
-- `sg_follow_distance`: UID → distance from root
-- `sg_followed_by_user`: UID → array of UIDs they follow
-- `sg_followers_by_user`: UID → array of UIDs following them
-- `sg_follow_list_created_at`: UID → contact list timestamp (prevents processing older contact lists)
-- `sg_users_by_follow_distance`: (distance, UID) → empty (composite key index, semi-essential)
-- `sg_muted_by_user`: UID → array of UIDs they mute
-- `sg_user_muted_by`: UID → array of UIDs muting them
-- `sg_mute_list_created_at`: UID → mute list timestamp (prevents processing older mute lists)
+**UID mapping (2 databases):**
+- `uid_str_to_id`: 32-byte pubkey → UID (btree)
+- `uid_id_to_str`: UID → 32-byte pubkey (btree)
 
-The `users_by_follow_distance` index enables efficient distance-based queries and iteration. It uses a composite key of (distance, uid) with empty values, allowing efficient prefix queries by distance. It's primarily used for stats and serialization. Could be made optional/togglable if you only need direct follow lookups.
+**Follow graph (6 databases):**
+- `sg_followed_by_user`: UID → bucketed_list<UID> (forward index - who you follow)
+- `sg_followers_by_user`: (followed_uid, follower_uid) → empty (reverse index composite key)
+- `sg_follower_count`: UID → u32 (cached follower count for O(1) queries)
+- `sg_follow_distance`: UID → u32 distance from root user
+- `sg_users_by_follow_distance`: (distance, UID) → empty (composite key index for distance queries)
+- `sg_follow_list_created_at`: UID → u64 timestamp (prevents stale contact list processing)
+
+**Mute graph (4 databases):**
+- `sg_muted_by_user`: UID → bucketed_list<UID> (forward index - who you mute)
+- `sg_user_muted_by`: (muted_uid, muter_uid) → empty (reverse index composite key)
+- `sg_muter_count`: UID → u32 (cached muter count for O(1) queries)
+- `sg_mute_list_created_at`: UID → u64 timestamp (prevents stale mute list processing)
+
+All composite key indexes use LMDB's natural key ordering for efficient prefix scans. Counter databases provide O(1) follower/muter counts without cursor iteration.
 
 ## Usage
 
@@ -60,16 +67,18 @@ struct ndb_txn txn;
 ndb_begin_query(ndb, &txn);
 
 // Follow graph queries
-uint32_t distance = ndb_sg_get_follow_distance(&txn, graph, pubkey);
-int follows = ndb_sg_is_following(&txn, graph, follower_pk, followed_pk);
-int count = ndb_sg_follower_count(&txn, graph, pubkey);
-int followed_count = ndb_sg_get_followed(&txn, graph, pubkey, followed_out, max_out);
-int followers_count = ndb_sg_get_followers(&txn, graph, pubkey, followers_out, max_out);
+uint32_t distance = ndb_socialgraph_get_follow_distance(&txn, ndb, pubkey);
+int follows = ndb_socialgraph_is_following(&txn, ndb, follower_pk, followed_pk);
+int follower_count = ndb_socialgraph_follower_count(&txn, ndb, pubkey);
+int followed_count = ndb_socialgraph_followed_count(&txn, ndb, pubkey);
+int n_followed = ndb_socialgraph_get_followed(&txn, ndb, pubkey, followed_out, max_out);
+int n_followers = ndb_socialgraph_get_followers(&txn, ndb, pubkey, followers_out, max_out);
 
 // Mute list queries
-int mutes = ndb_sg_is_muting(&txn, graph, muter_pk, muted_pk);
-int muted_count = ndb_sg_get_muted(&txn, graph, pubkey, muted_out, max_out);
-int muter_count = ndb_sg_get_muters(&txn, graph, pubkey, muters_out, max_out);
+int mutes = ndb_socialgraph_is_muting(&txn, ndb, muter_pk, muted_pk);
+int n_muted = ndb_socialgraph_get_muted(&txn, ndb, pubkey, muted_out, max_out);
+int n_muters = ndb_socialgraph_get_muters(&txn, ndb, pubkey, muters_out, max_out);
+int muter_count = ndb_socialgraph_muter_count(&txn, ndb, pubkey);
 
 ndb_end_query(&txn);
 ```

@@ -15,11 +15,13 @@ struct ndb_socialgraph {
 	// LMDB databases (MDB_dbi stored as void*)
 	void *follow_distance_db;      // UID -> u32 distance from root
 	void *users_by_follow_distance_db; // (u32 distance, UID) -> empty (composite key index)
-	void *followed_by_user_db;     // UID -> array of UIDs they follow
-	void *followers_by_user_db;    // UID -> array of UIDs following them
+	void *followed_by_user_db;     // UID -> bucketed_list of UIDs they follow
+	void *followers_by_user_db;    // (followed_uid, follower_uid) -> empty (composite key index)
+	void *follower_count_db;       // UID -> u32 follower count
 	void *follow_list_created_at_db; // UID -> u64 timestamp
-	void *muted_by_user_db;        // UID -> array of UIDs they mute
-	void *user_muted_by_db;        // UID -> array of UIDs muting them
+	void *muted_by_user_db;        // UID -> bucketed_list of UIDs they mute
+	void *user_muted_by_db;        // (muted_uid, muter_uid) -> empty (composite key index)
+	void *muter_count_db;          // UID -> u32 muter count
 	void *mute_list_created_at_db; // UID -> u64 timestamp
 
 	ndb_uid_t root_uid;
@@ -118,6 +120,16 @@ int ndb_sg_follower_count(void *txn, struct ndb_socialgraph *graph,
                           const unsigned char *pubkey);
 
 /**
+ * Get followed count for a user (internal API)
+ * @param txn Active transaction
+ * @param graph Social graph
+ * @param pubkey 32-byte pubkey
+ * @return Number of users they follow
+ */
+int ndb_sg_followed_count(void *txn, struct ndb_socialgraph *graph,
+                          const unsigned char *pubkey);
+
+/**
  * Check if one user mutes another (internal API)
  * @param txn Active transaction
  * @param graph Social graph
@@ -154,6 +166,16 @@ int ndb_sg_get_muted(void *txn, struct ndb_socialgraph *graph,
 int ndb_sg_get_muters(void *txn, struct ndb_socialgraph *graph,
                       const unsigned char *pubkey,
                       unsigned char *muters_out, int max_out);
+
+/**
+ * Get muter count for a user (internal API)
+ * @param txn Active transaction
+ * @param graph Social graph
+ * @param pubkey 32-byte pubkey
+ * @return Number of users muting this user
+ */
+int ndb_sg_muter_count(void *txn, struct ndb_socialgraph *graph,
+                       const unsigned char *pubkey);
 
 /**
  * Set the root user for distance calculations (internal API)

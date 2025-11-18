@@ -6689,8 +6689,8 @@ static int ndb_init_lmdb(const char *filename, struct ndb_lmdb *lmdb, size_t map
 		return 0;
 	}
 
-	// NDB_DBS + 10 extra for social graph (2 for uid mapping, 8 for graph data: 5 follow + 3 mute)
-	if ((rc = mdb_env_set_maxdbs(lmdb->env, NDB_DBS + 10))) {
+	// NDB_DBS + 12 extra for social graph (2 for uid mapping, 10 for graph data: 6 follow + 4 mute)
+	if ((rc = mdb_env_set_maxdbs(lmdb->env, NDB_DBS + 12))) {
 		fprintf(stderr, "mdb_env_set_maxdbs failed, error %d\n", rc);
 		return 0;
 	}
@@ -9409,4 +9409,22 @@ int ndb_socialgraph_get_muters(struct ndb_txn *txn, struct ndb *ndb,
 {
 	return ndb_sg_get_muters(txn->mdb_txn, &ndb->socialgraph,
 	                         pubkey, muters_out, max_out);
+}
+
+int ndb_socialgraph_followed_count(struct ndb_txn *txn, struct ndb *ndb,
+                                    const unsigned char *pubkey)
+{
+	return ndb_sg_followed_count(txn->mdb_txn, &ndb->socialgraph, pubkey);
+}
+
+int ndb_socialgraph_muter_count(struct ndb_txn *txn, struct ndb *ndb,
+                                 const unsigned char *pubkey)
+{
+	return ndb_sg_muter_count(txn->mdb_txn, &ndb->socialgraph, pubkey);
+}
+
+int ndb_uid_exists(struct ndb_txn *txn, struct ndb *ndb,
+                   const unsigned char *pubkey)
+{
+	return ndb_uid_exists_map(txn->mdb_txn, &ndb->socialgraph.uid_map, pubkey);
 }

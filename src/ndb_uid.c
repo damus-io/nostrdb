@@ -86,6 +86,13 @@ int ndb_uid_get(void *txn, struct ndb_uid_map *map,
 	return 1;
 }
 
+int ndb_uid_exists_map(void *txn, struct ndb_uid_map *map,
+                       const unsigned char *pubkey)
+{
+	ndb_uid_t uid;
+	return ndb_uid_get(txn, map, pubkey, &uid);
+}
+
 int ndb_uid_get_or_create(void *txn, struct ndb_uid_map *map,
                           const unsigned char *pubkey, ndb_uid_t *uid_out)
 {

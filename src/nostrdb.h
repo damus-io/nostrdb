@@ -641,6 +641,16 @@ int ndb_socialgraph_follower_count(struct ndb_txn *txn, struct ndb *ndb,
                                     const unsigned char *pubkey);
 
 /**
+ * Get followed count for a user (how many users they follow)
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param pubkey 32-byte pubkey
+ * @return Number of users they follow
+ */
+int ndb_socialgraph_followed_count(struct ndb_txn *txn, struct ndb *ndb,
+                                    const unsigned char *pubkey);
+
+/**
  * Set the root user for follow distance calculations
  * Recalculates all distances from the new root if changed
  * NOTE: This requires a write transaction and should only be called
@@ -688,6 +698,26 @@ int ndb_socialgraph_get_muted(struct ndb_txn *txn, struct ndb *ndb,
 int ndb_socialgraph_get_muters(struct ndb_txn *txn, struct ndb *ndb,
                                 const unsigned char *pubkey,
                                 unsigned char *muters_out, int max_out);
+
+/**
+ * Get muter count for a user (how many users mute this user)
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param pubkey 32-byte pubkey
+ * @return Number of users muting this user
+ */
+int ndb_socialgraph_muter_count(struct ndb_txn *txn, struct ndb *ndb,
+                                 const unsigned char *pubkey);
+
+/**
+ * Check if a UID exists for a pubkey (has user been seen before)
+ * @param txn Active transaction
+ * @param ndb Database handle
+ * @param pubkey 32-byte pubkey
+ * @return 1 if user has been seen, 0 if not
+ */
+int ndb_uid_exists(struct ndb_txn *txn, struct ndb *ndb,
+                   const unsigned char *pubkey);
 
 // BUILDER
 int ndb_parse_json_note(struct ndb_json_parser *, struct ndb_note **);
