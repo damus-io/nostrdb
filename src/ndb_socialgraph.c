@@ -1,4 +1,5 @@
 #include "ndb_socialgraph.h"
+#include "bucketed_u32_list.h"
 #include "nostrdb.h"
 #include "hex.h"
 #include "lmdb.h"
@@ -6,65 +7,11 @@
 #include <string.h>
 #include <stdio.h>
 
-// Helper to pack/unpack UID arrays for storage
-// Format: 4-byte count + array of UIDs
-struct uid_list {
-	uint32_t count;
-	ndb_uid_t uids[];
-};
-
 // Composite key for users_by_follow_distance: (distance, uid)
 struct distance_uid_key {
 	uint32_t distance;
 	ndb_uid_t uid;
 };
-
-static int uid_list_contains(struct uid_list *list, ndb_uid_t uid)
-{
-	for (uint32_t i = 0; i < list->count; i++) {
-		if (list->uids[i] == uid)
-			return 1;
-	}
-	return 0;
-}
-
-static struct uid_list *uid_list_create(uint32_t capacity)
-{
-	size_t size = sizeof(struct uid_list) + capacity * sizeof(ndb_uid_t);
-	struct uid_list *list = malloc(size);
-	if (list)
-		list->count = 0;
-	return list;
-}
-
-static int uid_list_add(struct uid_list **list_ptr, uint32_t *capacity, ndb_uid_t uid)
-{
-	struct uid_list *list = *list_ptr;
-
-	// Check if already exists
-	if (uid_list_contains(list, uid))
-		return 1;
-
-	// Resize if needed
-	if (list->count >= *capacity) {
-		uint32_t new_capacity = *capacity * 2;
-		size_t new_size = sizeof(struct uid_list) + new_capacity * sizeof(ndb_uid_t);
-		struct uid_list *new_list = realloc(list, new_size);
-		if (!new_list)
-			return 0;
-		*list_ptr = new_list;
-		*capacity = new_capacity;
-		list = new_list;
-	}
-
-	list->uids[list->count++] = uid;
-	return 1;
-}
-
-static size_t uid_list_size(struct uid_list *list)
-{
-	return sizeof(struct uid_list) + list->count * sizeof(ndb_uid_t);
-}
 
 // Helper: update distance in both follow_distance and users_by_follow_distance
 // Pass old_distance = UINT32_MAX if user had no prior distance
@@ -205,7 +152,7 @@ static int remove_follower_incremental(void *txn, struct ndb_socialgraph *graph,
 	if ((rc = mdb_get(txn, followers_by_user_dbi, &key, &val)) == 0) {
 		struct uid_list *followers = (struct uid_list*)val.mv_data;
 		for (uint32_t i = 0; i < followers->count; i++) {
-			ndb_uid_t f = followers->uids[i];
+			ndb_uid_t f = uid_list_get(followers, i);
 			MDB_val f_key, f_val;
 			f_key.mv_data = &f;
 			f_key.mv_size = sizeof(ndb_uid_t);
@@ -460,7 +407,7 @@ int ndb_socialgraph_handle_contact_list(void *txn, struct ndb_socialgraph *graph
 	// Process unfollows: remove from followers_by_user and update distances
 	if (old_followed_list) {
 		for (uint32_t i = 0; i < old_followed_list->count; i++) {
-			ndb_uid_t unfollowed_uid = old_followed_list->uids[i];
+			ndb_uid_t unfollowed_uid = uid_list_get(old_followed_list, i);
 
 			// Skip if still followed
 			if (uid_list_contains(new_followed_list, unfollowed_uid))
@@ -478,11 +425,8 @@ int ndb_socialgraph_handle_contact_list(void *txn, struct ndb_socialgraph *graph
 
 					// Remove author_uid from followers list
 					for (uint32_t j = 0; j < followers->count; j++) {
-						if (followers->uids[j] == author_uid) {
-							// Shift remaining elements
-							memmove(&followers->uids[j], &followers->uids[j+1],
-							        (followers->count - j - 1) * sizeof(ndb_uid_t));
-							followers->count--;
+						if (uid_list_get(followers, j) == author_uid) {
+							uid_list_remove_at(followers, j);
 							break;
 						}
 					}
@@ -506,7 +450,7 @@ int ndb_socialgraph_handle_contact_list(void *txn, struct ndb_socialgraph *graph
 
 	// Process new follows: add to followers_by_user
 	for (uint32_t i = 0; i < new_followed_list->count; i++) {
-		ndb_uid_t followed_uid = new_followed_list->uids[i];
+		ndb_uid_t followed_uid = uid_list_get(new_followed_list, i);
 
 		// Check if this is a new follow (not in old list)
 		int is_new = 1;
@@ -562,7 +506,7 @@ int ndb_socialgraph_handle_contact_list(void *txn, struct ndb_socialgraph *graph
 
 	// After updating all follower relationships, update distances incrementally
 	for (uint32_t i = 0; i < new_followed_list->count; i++) {
-		ndb_uid_t followed_uid = new_followed_list->uids[i];
+		ndb_uid_t followed_uid = uid_list_get(new_followed_list, i);
 
 		// Check if this is a new follow (not in old list)
 		int is_new = 1;
@@ -679,7 +623,7 @@ int ndb_socialgraph_recalculate_distances(void *txn, struct ndb_socialgraph *gra
 		struct uid_list *followed = (struct uid_list*)val.mv_data;
 
 		for (uint32_t i = 0; i < followed->count; i++) {
-			ndb_uid_t followed_uid = followed->uids[i];
+			ndb_uid_t followed_uid = uid_list_get(followed, i);
 
 			// Check if already has a distance
 			MDB_val check_key, check_val;
@@ -794,7 +738,7 @@ int ndb_sg_get_followed(void *txn, struct ndb_socialgraph *graph,
 	int count = followed->count < max_out ? followed->count : max_out;
 
 	for (int i = 0; i < count; i++) {
-		if (!ndb_uid_to_pubkey(txn, &graph->uid_map, followed->uids[i],
+		if (!ndb_uid_to_pubkey(txn, &graph->uid_map, uid_list_get(followed, i),
 		                       &followed_out[i * 32])) {
 			return i;
 		}
@@ -824,7 +768,7 @@ int ndb_sg_get_followers(void *txn, struct ndb_socialgraph *graph,
 	int count = followers->count < max_out ? followers->count : max_out;
 
 	for (int i = 0; i < count; i++) {
-		if (!ndb_uid_to_pubkey(txn, &graph->uid_map, followers->uids[i],
+		if (!ndb_uid_to_pubkey(txn, &graph->uid_map, uid_list_get(followers, i),
 		                       &followers_out[i * 32])) {
 			return i;
 		}
@@ -952,7 +896,7 @@ int ndb_socialgraph_handle_mute_list(void *txn, struct ndb_socialgraph *graph,
 	// Process unmutes: remove from user_muted_by
 	if (old_muted_list) {
 		for (uint32_t i = 0; i < old_muted_list->count; i++) {
-			ndb_uid_t unmuted_uid = old_muted_list->uids[i];
+			ndb_uid_t unmuted_uid = uid_list_get(old_muted_list, i);
 
 			// Skip if still muted
 			if (uid_list_contains(new_muted_list, unmuted_uid))
@@ -970,11 +914,8 @@ int ndb_socialgraph_handle_mute_list(void *txn, struct ndb_socialgraph *graph,
 
 					// Remove author_uid from muters list
 					for (uint32_t j = 0; j < muters->count; j++) {
-						if (muters->uids[j] == author_uid) {
-							// Shift remaining elements
-							memmove(&muters->uids[j], &muters->uids[j+1],
-							        (muters->count - j - 1) * sizeof(ndb_uid_t));
-							muters->count--;
+						if (uid_list_get(muters, j) == author_uid) {
+							uid_list_remove_at(muters, j);
 							break;
 						}
 					}
@@ -996,7 +937,7 @@ int ndb_socialgraph_handle_mute_list(void *txn, struct ndb_socialgraph *graph,
 
 	// Process new mutes: add to user_muted_by
 	for (uint32_t i = 0; i < new_muted_list->count; i++) {
-		ndb_uid_t muted_uid = new_muted_list->uids[i];
+		ndb_uid_t muted_uid = uid_list_get(new_muted_list, i);
 
 		MDB_val muter_key, muter_val;
 		muter_key.mv_data = &muted_uid;
@@ -1106,7 +1047,7 @@ int ndb_sg_get_muted(void *txn, struct ndb_socialgraph *graph,
 	int count = muted->count < max_out ? muted->count : max_out;
 
 	for (int i = 0; i < count; i++) {
-		if (!ndb_uid_to_pubkey(txn, &graph->uid_map, muted->uids[i],
+		if (!ndb_uid_to_pubkey(txn, &graph->uid_map, uid_list_get(muted, i),
 		                       &muted_out[i * 32])) {
 			return i;
 		}
@@ -1136,7 +1077,7 @@ int ndb_sg_get_muters(void *txn, struct ndb_socialgraph *graph,
 	int count = muters->count < max_out ? muters->count : max_out;
 
 	for (int i = 0; i < count; i++) {
-		if (!ndb_uid_to_pubkey(txn, &graph->uid_map, muters->uids[i],
+		if (!ndb_uid_to_pubkey(txn, &graph->uid_map, uid_list_get(muters, i),
 		                       &muters_out[i * 32])) {
 			return i;
 		}
