@@ -2223,6 +2223,47 @@ void test_replay_attack() {
 	delete_test_db();
 }
 
+static void test_missing_pubkey()
+{
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	uint64_t fetched_at;
+	struct ndb_config config;
+	size_t len;
+	uint64_t primkey;
+	void *result;
+
+	ndb_default_config(&config);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	// Test with completely unknown pubkey (never seen before)
+	const unsigned char unknown_pubkey[] = {
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+	};
+
+	assert(ndb_begin_query(ndb, &txn));
+
+	// ndb_read_last_profile_fetch should return 0 for unknown pubkey
+	fetched_at = ndb_read_last_profile_fetch(&txn, unknown_pubkey);
+	assert(fetched_at == 0);
+
+	// ndb_get_profile_by_pubkey should return NULL for unknown pubkey
+	result = ndb_get_profile_by_pubkey(&txn, unknown_pubkey, &len, &primkey);
+	assert(result == NULL);
+
+	// ndb_get_profilekey_by_pubkey should return 0 for unknown pubkey
+	primkey = ndb_get_profilekey_by_pubkey(&txn, unknown_pubkey);
+	assert(primkey == 0);
+
+	ndb_end_query(&txn);
+
+	ndb_destroy(ndb);
+	delete_test_db();
+}
+
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
@@ -2255,6 +2296,7 @@ int main(int argc, const char *argv[]) {
 	test_filters();
 	//test_migrate();
 	test_fetched_at();
+	test_missing_pubkey();
 	test_profile_updates();
 	test_load_profiles();
 	test_nip50_profile_search();
