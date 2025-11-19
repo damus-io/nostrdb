@@ -2,10 +2,10 @@ CFLAGS = -Wall -Wno-misleading-indentation -Wno-unused-function -Werror -O2 -g -
 BOLT11_HDRS := src/bolt11/amount.h src/bolt11/bech32.h src/bolt11/bech32_util.h src/bolt11/bolt11.h src/bolt11/debug.h src/bolt11/error.h src/bolt11/hash_u5.h src/bolt11/node_id.h src/bolt11/overflows.h
 CCAN_SRCS := ccan/ccan/utf8/utf8.c ccan/ccan/tal/tal.c ccan/ccan/tal/str/str.c ccan/ccan/list/list.c ccan/ccan/mem/mem.c ccan/ccan/crypto/sha256/sha256.c ccan/ccan/take/take.c
 CCAN_HDRS := ccan/ccan/utf8/utf8.h ccan/ccan/container_of/container_of.h ccan/ccan/check_type/check_type.h ccan/ccan/str/str.h ccan/ccan/tal/str/str.h ccan/ccan/tal/tal.h ccan/ccan/list/list.h ccan/ccan/structeq/structeq.h ccan/ccan/typesafe_cb/typesafe_cb.h ccan/ccan/short_types/short_types.h ccan/ccan/mem/mem.h ccan/ccan/likely/likely.h ccan/ccan/alignof/alignof.h ccan/ccan/crypto/sha256/sha256.h ccan/ccan/array_size/array_size.h ccan/ccan/endian/endian.h ccan/ccan/take/take.h ccan/ccan/build_assert/build_assert.h ccan/ccan/cppmagic/cppmagic.h
-HEADERS = deps/lmdb/lmdb.h deps/secp256k1/include/secp256k1.h src/nostrdb.h src/cursor.h src/hex.h src/jsmn.h src/config.h src/random.h src/memchr.h src/cpu.h src/nostr_bech32.h src/block.h src/str_block.h src/print_util.h $(C_BINDINGS) $(CCAN_HDRS) $(BOLT11_HDRS)
+HEADERS = deps/lmdb/lmdb.h deps/secp256k1/include/secp256k1.h src/nostrdb.h src/cursor.h src/hex.h src/jsmn.h src/config.h src/random.h src/memchr.h src/cpu.h src/nostr_bech32.h src/block.h src/str_block.h src/print_util.h src/ndb_uid.h src/ndb_socialgraph.h src/bucketed_u32_list.h $(C_BINDINGS) $(CCAN_HDRS) $(BOLT11_HDRS)
 FLATCC_SRCS=deps/flatcc/src/runtime/json_parser.c deps/flatcc/src/runtime/verifier.c deps/flatcc/src/runtime/builder.c deps/flatcc/src/runtime/emitter.c deps/flatcc/src/runtime/refmap.c
 BOLT11_SRCS = src/bolt11/bolt11.c src/bolt11/bech32.c src/bolt11/amount.c src/bolt11/hash_u5.c
-SRCS = src/nostrdb.c src/invoice.c src/nostr_bech32.c src/content_parser.c src/block.c src/binmoji.c src/metadata.c $(BOLT11_SRCS) $(FLATCC_SRCS) $(CCAN_SRCS)
+SRCS = src/nostrdb.c src/invoice.c src/nostr_bech32.c src/content_parser.c src/block.c src/binmoji.c src/metadata.c src/ndb_uid.c src/ndb_socialgraph.c src/bucketed_u32_list.c $(BOLT11_SRCS) $(FLATCC_SRCS) $(CCAN_SRCS)
 LDS = $(OBJS) $(ARS) 
 OBJS = $(SRCS:.c=.o)
 DEPS = $(OBJS) $(HEADERS) $(ARS)
@@ -21,14 +21,15 @@ C_BINDINGS_COMMON=$(BINDINGS)/c/flatbuffers_common_builder.h $(BINDINGS)/c/flatb
 C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE) $(C_BINDINGS_META)
 BIN=ndb
 
-SANFLAGS = -fsanitize=leak
-
 # Detect operating system
 UNAME_S := $(shell uname -s)
 
 # macOS-specific flags
 ifeq ($(UNAME_S),Darwin)
     LDFLAGS += -framework Security
+    SANFLAGS =
+else
+    SANFLAGS = -fsanitize=leak
 endif
 
 CHECKDATA=testdata/db/v0/data.mdb
@@ -191,10 +192,19 @@ testdata/db/.dir:
 	@mkdir -p testdata/db
 	touch testdata/db/.dir
 
+testdata/sg_test_db/.dir:
+	@mkdir -p testdata/sg_test_db
+	touch testdata/sg_test_db/.dir
+
 test: CFLAGS  += $(SANFLAGS)   # compile test objects with ASan/UBSan
 test: LDFLAGS += $(SANFLAGS)   # link test binary with the sanitizer runtime
 test: test.c $(DEPS) testdata/db/.dir
 	$(CC) $(CFLAGS) test.c $(LDS) $(LDFLAGS) -o $@
+
+test_socialgraph: CFLAGS  += $(SANFLAGS)
+test_socialgraph: LDFLAGS += $(SANFLAGS)
+test_socialgraph: test_socialgraph.c $(DEPS) testdata/sg_test_db/.dir
+	$(CC) $(CFLAGS) test_socialgraph.c $(LDS) $(LDFLAGS) -o $@
 
 # Call this with CCAN_NEW="mod1 mod2..." to add new ccan modules.
 update-ccan:
