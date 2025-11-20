@@ -2,6 +2,7 @@
 #define CCAN_CRYPTO_HKDF_SHA256_H
 /* BSD-MIT - see LICENSE file for details */
 #include "config.h"
+#include "hmac_sha256.h"
 #include <stdlib.h>
 
 /**
@@ -21,7 +22,7 @@ void hkdf_sha256(void *okm, size_t okm_size,
 		 const void *info, size_t isize);
 
 void hkdf_expand(void *okm, size_t okm_size,
-		 struct hmac_sha256 *prk,
+		 const void *prk, size_t prksize,
 		 const void *info, size_t isize);
 
 #endif /* CCAN_CRYPTO_HKDF_SHA256_H */

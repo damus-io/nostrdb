@@ -7534,7 +7534,7 @@ int ndb_create_keypair(struct ndb_keypair *kp)
 	secp256k1_xonly_pubkey pubkey;
 
 	secp256k1_context *ctx =
-		secp256k1_context_create(SECP256K1_CONTEXT_NONE);;
+		secp256k1_context_create(SECP256K1_CONTEXT_NONE);
 
 	/* Try to create a keypair with a valid context, it should only
 	 * fail if the secret key is zero or out of range. */

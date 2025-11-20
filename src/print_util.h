@@ -1,5 +1,7 @@
 #include "hex.h"
 #include "lmdb.h"
+#include "nostrdb.h"
+#include <stdio.h>
 
 static void print_hex(unsigned char* data, size_t size) {
 	size_t i;

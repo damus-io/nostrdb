@@ -83,4 +83,9 @@ STATIC_ASSERT(sizeof(struct ndb_note_meta) == 16, note_meta_entry_should_be_16_b
 
 #pragma pack(pop)
 
+enum ndb_note_meta_flags {
+	NDB_NOTE_META_FLAG_DELETED = 0,
+	NDB_NOTE_META_FLAG_SEEN    = 2,
+};
+
 #endif /* NDB_METADATA_H */

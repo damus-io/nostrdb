@@ -12,6 +12,7 @@
 #include "bindings/c/profile_verifier.h"
 #include "bindings/c/meta_reader.h"
 #include "bindings/c/meta_verifier.h"
+#include "secp256k1.h"
 
 #include <stdio.h>
 #include <assert.h>
@@ -156,6 +157,132 @@ static void test_count_metadata()
 	delete_test_db();
 
 	printf("ok test_count_metadata\n");
+}
+
+static void test_nip44_test_vector()
+{
+	/*
+	{
+	  "sec1": "0000000000000000000000000000000000000000000000000000000000000001",
+	  "sec2": "0000000000000000000000000000000000000000000000000000000000000002",
+	  "conversation_key": "c41c775356fd92eadc63ff5a0dc1da211b268cbea22316767095b2871ea1412d",
+	  "nonce": "0000000000000000000000000000000000000000000000000000000000000001",
+	  "plaintext": "a",
+	  "payload": "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABee0G5VSK0/9YypIObAtDKfYEAjD35uVkHyB0F4DwrcNaCXlCWZKaArsGrY6M9wnuTMxWfp1RTN9Xga8no+kF5Vsb"
+	}
+	*/
+
+	/*
+	static const unsigned char recv_sec[32] = {
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x01
+	};
+
+	static const unsigned char sender_pub[32] = {
+		0xc6, 0x04, 0x7f, 0x94, 0x41, 0xed, 0x7d, 0x6d, 0x30, 0x45,
+		0x40, 0x6e, 0x95, 0xc0, 0x7c, 0xd8, 0x5c, 0x77, 0x8e, 0x4b,
+		0x8c, 0xef, 0x3c, 0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c, 0x70,
+		0x9e, 0xe5
+	};
+	*/
+	static const unsigned char recv_sec[32] = {
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x02
+	};
+
+	static const unsigned char sender_pub[32] = {
+		0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
+		0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb,
+		0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8,
+		0x17, 0x98
+	};
+
+	static const char payload[] = "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABee0G5VSK0/9YypIObAtDKfYEAjD35uVkHyB0F4DwrcNaCXlCWZKaArsGrY6M9wnuTMxWfp1RTN9Xga8no+kF5Vsb";
+
+	static const char *plaintext = "a";
+
+	unsigned char buffer[1024];
+	unsigned char *decrypted;
+	uint16_t decrypted_len;
+	enum ndb_decrypt_result res;
+	secp256k1_context *context;
+	context = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+
+	res = nip44_decrypt(context,
+			    sender_pub, recv_sec,
+			    payload, sizeof(payload)-1,
+			    buffer, sizeof(buffer),
+			    &decrypted, &decrypted_len);
+
+	if (res != NIP44_OK) {
+		fprintf(stderr, "nip44 error: %s\n", nip44_decrypt_err_msg(res));
+	}
+	printf("# decrypted(%d) '%.*s'\n", decrypted_len, decrypted_len, (char*)decrypted);
+	assert(res == NIP44_OK);
+	assert(memcmp(decrypted, plaintext, 1) == 0);
+
+	secp256k1_context_destroy(context);
+	printf("ok test_nip44_test_vector\n");
+}
+
+static void test_nip44_decrypt()
+{
+	static const unsigned char recv_sec[32] = {
+		0x81, 0xa5, 0x33, 0x9b, 0xf9, 0xfa, 0xf8, 0x91, 0x5c, 0x48,
+		0xf3, 0xdd, 0xca, 0xd4, 0xd3, 0xa5, 0x54, 0x06, 0xc7, 0x7b,
+		0x27, 0x81, 0xc8, 0xc9, 0x94, 0x5d, 0xfd, 0xad, 0xe6, 0xae,
+		0x11, 0x89
+	};
+
+	/* 81a5339bf9faf8915c48f3ddcad4d3a55406c77b2781c8c9945dfdade6ae1189 */
+ 
+	/*
+	static const unsigned char recv_pub[32] = {
+		0xf1, 0xec, 0xfe, 0xb2, 0xed, 0xa7, 0xe7, 0x7c, 0xd7, 0x2e,
+		0x63, 0x3c, 0x54, 0x12, 0xae, 0x99, 0x07, 0xb5, 0x0a, 0xd1,
+		0xaf, 0xd8, 0x16, 0xab, 0x5a, 0x61, 0xac, 0x6f, 0x2c, 0x3c,
+		0x6c, 0xb3
+	};
+	*/
+
+	static const unsigned char sender_pub[32] = {
+		  0x32, 0xe1, 0x82, 0x76, 0x35, 0x45, 0x0e, 0xbb, 0x3c, 0x5a,
+		  0x7d, 0x12, 0xc1, 0xf8, 0xe7, 0xb2, 0xb5, 0x14, 0x43, 0x9a,
+		  0xc1, 0x0a, 0x67, 0xee, 0xf3, 0xd9, 0xfd, 0x9c, 0x5c, 0x68,
+		  0xe2, 0x45
+	};
+
+	static const char encrypted[] = "Ake9vGvum3cJJrF62qHwVDb3HC3UEP2t0G1GLByJlXi7OP4awMDomJej0aVkiZUHYPJvqgsbL30BZwBCfkd8F1596jJcOFC5KUXsCb45mHS+EqA5rs13/37HlImp76PO/1ns";
+	//static const char encrypted[] = "AknLKK+v4mZyMpShz5+/iyADJk4SUEQwGV7BUWQRmCHDD6KBO7VStk16StpF4TFTGrEV1BmkZVSlNYVu4cl9C0egBXL0X9AzJBM0I3wotSUQEZwGXwnts0HdhFAQepq4kmrc";
+	
+	static const char *expected = "hello, test.c";
+
+	unsigned char buffer[1024];
+	unsigned char *decrypted;
+	uint16_t decrypted_len;
+	enum ndb_decrypt_result res;
+	secp256k1_context *context;
+
+	context = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+
+	res = nip44_decrypt(context,
+			    sender_pub, recv_sec,
+			    encrypted, sizeof(encrypted)-1,
+			    buffer, sizeof(buffer),
+			    &decrypted, &decrypted_len);
+
+	if (res != NIP44_OK) {
+		fprintf(stderr, "nip44 error: %s\n", nip44_decrypt_err_msg(res));
+	}
+	assert(res == NIP44_OK);
+	assert(strcmp((char *)decrypted, expected) == 0);
+
+	printf("ok test_nip44_decrypt\n");
+	secp256k1_context_destroy(context);
 }
 
 static void test_metadata()
@@ -2226,6 +2353,8 @@ void test_replay_attack() {
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
+	test_nip44_test_vector();
+	test_nip44_decrypt();
 	test_replay_attack();
 	test_custom_filter();
 	test_metadata();

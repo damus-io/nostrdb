@@ -1,11 +1,11 @@
 /* MIT (BSD) license - see LICENSE file for details */
-#include <ccan/crypto/hkdf_sha256/hkdf_sha256.h>
-#include <ccan/crypto/hmac_sha256/hmac_sha256.h>
+#include "hkdf_sha256.h"
+#include "hmac_sha256.h"
 #include <assert.h>
 #include <string.h>
 
 void hkdf_expand(void *okm, size_t okm_size,
-		 const struct hmac_sha256 *prk,
+		 const void *prk, size_t prksize,
 		 const void *info, size_t isize)
 {
 	struct hmac_sha256_ctx ctx;
@@ -50,7 +50,7 @@ void hkdf_expand(void *okm, size_t okm_size,
 	 *    single octet.)
 	 */
 	c = 1;
-	hmac_sha256_init(&ctx, prk, sizeof(*prk));
+	hmac_sha256_init(&ctx, prk, prksize);
 	hmac_sha256_update(&ctx, info, isize);
 	hmac_sha256_update(&ctx, &c, 1);
 	hmac_sha256_done(&ctx, &t);
@@ -61,7 +61,7 @@ void hkdf_expand(void *okm, size_t okm_size,
 		okm_size -= sizeof(t);
 
 		c++;
-		hmac_sha256_init(&ctx, prk, sizeof(*prk));
+		hmac_sha256_init(&ctx, prk, prksize);
 		hmac_sha256_update(&ctx, &t, sizeof(t));
 		hmac_sha256_update(&ctx, info, isize);
 		hmac_sha256_update(&ctx, &c, 1);
@@ -100,5 +100,5 @@ void hkdf_sha256(void *okm, size_t okm_size,
 	 *    PRK = HMAC-Hash(salt, IKM)
 	 */
 	hmac_sha256(&prk, s, ssize, k, ksize);
-	hkdf_expand(okm, okm_size, &prk, info, isize);
+	hkdf_expand(okm, okm_size, &prk, sizeof(prk), info, isize);
 }

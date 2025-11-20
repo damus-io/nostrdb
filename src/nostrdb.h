@@ -53,6 +53,8 @@ enum ndb_metadata_type {
     NDB_NOTE_META_REACTION = 200, /* count of all the reactions on a post, grouped by different reaction strings */
 };
 
+#include "nip44.h"
+
 // some bindings like swift needs help with forward declared pointers
 struct ndb_tag_ptr { struct ndb_tag *ptr; };
 struct ndb_tags_ptr { struct ndb_tags *ptr; };
