@@ -8,9 +8,16 @@ keys.txt
 test
 .buildcmd
 .build-result
+deps/libsodium/**/Makefile
+deps/libsodium/config.status
 *.dSYM
 *.zst
 *.o
+*.la
+*.lo
+*.a
+*.lai
+*.Plo
 libnostrdb.a
 perf.data
 perf.folded
@@ -27,6 +34,7 @@ bench
 bench-ingest
 bench-ingest-many
 configurator
+deps/libsodium/config.log
 libsecp256k1.a
 .direnv/
 deps/secp256k1

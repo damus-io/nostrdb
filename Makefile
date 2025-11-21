@@ -6,10 +6,11 @@ HEADERS = deps/lmdb/lmdb.h deps/secp256k1/include/secp256k1.h src/nostrdb.h src/
 FLATCC_SRCS=deps/flatcc/src/runtime/json_parser.c deps/flatcc/src/runtime/verifier.c deps/flatcc/src/runtime/builder.c deps/flatcc/src/runtime/emitter.c deps/flatcc/src/runtime/refmap.c
 BOLT11_SRCS = src/bolt11/bolt11.c src/bolt11/bech32.c src/bolt11/amount.c src/bolt11/hash_u5.c
 SRCS = src/nostrdb.c src/invoice.c src/nostr_bech32.c src/content_parser.c src/block.c src/binmoji.c src/metadata.c $(BOLT11_SRCS) $(FLATCC_SRCS) $(CCAN_SRCS)
+LIBSODIUM_AR=deps/libsodium/src/libsodium/.libs/libsodium.a
 LDS = $(OBJS) $(ARS) 
 OBJS = $(SRCS:.c=.o)
 DEPS = $(OBJS) $(HEADERS) $(ARS)
-ARS = deps/lmdb/liblmdb.a deps/secp256k1/.libs/libsecp256k1.a 
+ARS = deps/lmdb/liblmdb.a deps/secp256k1/.libs/libsecp256k1.a $(LIBSODIUM_AR)
 LMDB_VER=0.9.31
 FLATCC_VER=05dc16dc2b0316e61063bb1fc75426647badce48
 PREFIX ?= /usr/local
@@ -69,6 +70,14 @@ src/config.h: configurator
 	./configurator > $@
 
 bindings-c: $(C_BINDINGS)
+
+deps/libsodium/config.log: deps/libsodium/configure
+	cd deps/libsodium; \
+	./configure --disable-shared --enable-minimal
+
+$(LIBSODIUM_AR): deps/libsodium/config.log
+	cd deps/libsodium/src/libsodium; \
+	make -j libsodium.la
 
 src/bindings/%/.dir:
 	mkdir -p $(shell dirname $@)
