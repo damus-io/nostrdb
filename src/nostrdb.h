@@ -254,6 +254,7 @@ enum ndb_dbs {
 enum ndb_common_kind {
 	NDB_CKIND_PROFILE,
 	NDB_CKIND_TEXT,
+	NDB_CKIND_COMMENT,
 	NDB_CKIND_CONTACTS,
 	NDB_CKIND_DM,
 	NDB_CKIND_DELETE,
@@ -693,6 +694,12 @@ int ndb_stat(struct ndb *ndb, struct ndb_stat *stat);
 void ndb_stat_counts_init(struct ndb_stat_counts *counts);
 
 // NOTE
+struct ndb_note_reply {
+	unsigned char *root;
+	unsigned char *reply;
+	unsigned char *mention;
+};
+
 const char *ndb_note_content(struct ndb_note *note);
 struct ndb_str ndb_note_str(struct ndb_note *note, union ndb_packed_str *pstr);
 uint32_t ndb_note_content_length(struct ndb_note *note);
@@ -704,6 +711,8 @@ unsigned char *ndb_note_sig(struct ndb_note *note);
 void _ndb_note_set_kind(struct ndb_note *note, uint32_t kind);
 struct ndb_tags *ndb_note_tags(struct ndb_note *note);
 int ndb_str_len(struct ndb_str *str);
+void ndb_note_get_reply(struct ndb_note *note, struct ndb_note_reply *reply);
+int ndb_note_reply_is_to_root(struct ndb_note_reply *reply);
 
 /// write the note as json to a buffer
 int ndb_note_json(struct ndb_note *, char *buf, int buflen);

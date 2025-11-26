@@ -18,6 +18,8 @@
 #include <assert.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <string.h>
+#include <ctype.h>
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
@@ -29,6 +31,53 @@ static void delete_test_db() {
     // Delete ./testdata/db/data.mdb
     unlink(TEST_DIR "/data.mdb");
     unlink(TEST_DIR "/data.lock");
+}
+
+static void assert_optional_id_eq(unsigned char *actual, const char *expected_hex)
+{
+	if (!expected_hex) {
+		assert(actual == NULL);
+		return;
+	}
+
+	assert(actual != NULL);
+
+	char actual_hex[65];
+	char expected_lower[65];
+	size_t expected_len = strlen(expected_hex);
+
+	assert(hex_encode(actual, 32, actual_hex));
+	actual_hex[64] = '\0';
+
+	assert(expected_len == 64);
+
+	for (size_t i = 0; i < expected_len; i++) {
+		char c = expected_hex[i];
+		expected_lower[i] = (char)tolower((unsigned char)c);
+	}
+	expected_lower[expected_len] = '\0';
+
+	if (strcmp(actual_hex, expected_lower)) {
+		fprintf(stderr, "expected id %s but got %s\n", expected_lower, actual_hex);
+	}
+
+	assert(strcmp(actual_hex, expected_lower) == 0);
+}
+
+static unsigned char *nip10_effective_reply(struct ndb_note_reply *reply)
+{
+	if (reply->reply)
+		return reply->reply;
+	if (reply->root)
+		return reply->root;
+	return NULL;
+}
+
+static unsigned char *nip10_reply_to_root(struct ndb_note_reply *reply)
+{
+	if (ndb_note_reply_is_to_root(reply))
+		return reply->root;
+	return NULL;
 }
 
 int ndb_rebuild_reaction_metadata(struct ndb_txn *txn, const unsigned char *note_id, struct ndb_note_meta_builder *builder, uint32_t *count);
@@ -82,6 +131,8 @@ static void test_count_metadata()
 	struct ndb_note_meta_entry *entry;
 	uint16_t count, direct_replies[2];
 	uint32_t total_reactions, reactions, thread_replies[2];
+	const uint16_t expected_direct_replies = 59;
+	const uint32_t expected_thread_replies = 99;
 	int i;
 
 	reactions = 0;
@@ -122,11 +173,11 @@ static void test_count_metadata()
 
 	thread_replies[0] = *ndb_note_meta_counts_thread_replies(entry);
 	printf("\t# thread replies %d\n", thread_replies[0]);
-	assert(thread_replies[0] == 93);
+	assert(thread_replies[0] == expected_thread_replies);
 
 	direct_replies[0] = *ndb_note_meta_counts_direct_replies(entry);
 	printf("\t# direct replies %d\n", direct_replies[0]);
-	assert(direct_replies[0] == 83);
+	assert(direct_replies[0] == expected_direct_replies);
 
 	total_reactions = *ndb_note_meta_counts_total_reactions(entry);
 	printf("\t# total reactions %d\n", reactions);
@@ -2166,6 +2217,120 @@ static void test_note_relay_index()
 	printf("ok test_note_relay_index\n");
 }
 
+static void test_nip10_marker(void)
+{
+	struct ndb_note_reply reply;
+	struct ndb_note *note;
+	const char *event = "{\"id\":\"19377cb4b9b807561830ab6d4c1fae7b9c9f1b623c15d10590cacc859cf19d76\",\"pubkey\":\"4871687b7b0aee3f1649c866e61724d79d51e673936a5378f5ed90bf7580791f\",\"created_at\":1714170678,\"kind\":1,\"tags\":[[\"e\",\"7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3\",\"\",\"reply\"],[\"e\",\"7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d4\",\"wss://relay.damus.io\",\"root\"]],\"content\":\"hi\",\"sig\":\"53921b1572c2e4373180a9f71513a0dee286cba6193d983052f96285c08f0e0158773d82ac97991ba8d390f6f54f84d5272c2e945f2e854a750f9cf038c0f759\"}";
+	unsigned char buffer[4096];
+
+	assert(ndb_note_from_json(event, strlen(event), &note, buffer, sizeof(buffer)));
+	ndb_note_get_reply(note, &reply);
+	assert_optional_id_eq(reply.root, "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d4");
+	assert_optional_id_eq(reply.reply, "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3");
+	assert_optional_id_eq(reply.mention, NULL);
+	assert(ndb_note_reply_is_to_root(&reply) == 0);
+	assert_optional_id_eq(nip10_effective_reply(&reply), "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3");
+	assert_optional_id_eq(nip10_reply_to_root(&reply), NULL);
+
+	printf("ok test_nip10_marker\n");
+}
+
+static void test_nip10_deprecated(void)
+{
+	struct ndb_note_reply reply;
+	struct ndb_note *note;
+	const char *event = "{\"id\":\"ebac7df823ab975b6d2696505cf22a959067b74b1761c5581156f2a884036997\",\"pubkey\":\"118758f9a951c923b8502cfb8b2f329bee2a46356b6fc4f65c1b9b4730e0e9e5\",\"created_at\":1714175831,\"kind\":1,\"tags\":[[\"e\",\"7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d4\"],[\"e\",\"7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3\"]],\"content\":\"hi\",\"sig\":\"05913c7b19a70188d4dec5ac53d5da39fea4d5030c28176e52abb211e1bde60c5947aca8af359a00c8df8d96127b2f945af31f21fe01392b661bae12e7d14b1d\"}";
+	unsigned char buffer[4096];
+
+	assert(ndb_note_from_json(event, strlen(event), &note, buffer, sizeof(buffer)));
+	ndb_note_get_reply(note, &reply);
+	assert_optional_id_eq(reply.root, "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d4");
+	assert_optional_id_eq(reply.reply, "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3");
+	assert_optional_id_eq(reply.mention, NULL);
+	assert(ndb_note_reply_is_to_root(&reply) == 0);
+	assert_optional_id_eq(nip10_effective_reply(&reply), "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3");
+	assert_optional_id_eq(nip10_reply_to_root(&reply), NULL);
+
+	printf("ok test_nip10_deprecated\n");
+}
+
+static void test_nip10_mention(void)
+{
+	struct ndb_note_reply reply;
+	struct ndb_note *note;
+	const char *event = "{\"id\":\"9521de81704269f9f61c042355eaa97a845a90c0ce6637b290800fa5a3c0b48d\",\"pubkey\":\"b3aceb5b36a235377c80dc2a1b3594a1d49e394b4d74fa11bc7cb4cf0bf677b2\",\"created_at\":1714177990,\"kind\":1,\"tags\":[[\"e\",\"7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3\",\"\",\"mention\"],[\"e\",\"7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d4\",\"wss://relay.damus.io\",\"root\"]],\"content\":\"hi\",\"sig\":\"e908ec395f6ea907a4b562b3ebf1bf61653566a5648574a1f8c752285797e5870e57416a0be933ce580fc3d65c874909c9dacbd1575c15bd97b8a68ea2b5160b\"}";
+	unsigned char buffer[4096];
+
+	assert(ndb_note_from_json(event, strlen(event), &note, buffer, sizeof(buffer)));
+	ndb_note_get_reply(note, &reply);
+	assert_optional_id_eq(reply.root, "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d4");
+	assert_optional_id_eq(reply.reply, NULL);
+	assert_optional_id_eq(reply.mention, "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3");
+	assert(ndb_note_reply_is_to_root(&reply) == 1);
+	assert_optional_id_eq(nip10_effective_reply(&reply), "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d4");
+	assert_optional_id_eq(nip10_reply_to_root(&reply), "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d4");
+
+	printf("ok test_nip10_mention\n");
+}
+
+static void test_nip10_marker_mixed(void)
+{
+	struct ndb_note_reply reply;
+	struct ndb_note *note;
+	const char *event = "{\"content\":\"Go to pleblab plz\",\"created_at\":1714157088,\"id\":\"19ae8cd276185f6f48fd7e25736c260ea0ac25d9b591ec3194631e3196e19622\",\"kind\":1,\"pubkey\":\"ae1008d23930b776c18092f6eab41e4b09fcf3f03f3641b1b4e6ee3aa166d760\",\"sig\":\"fdafc7192a0f3b5fef5ae794ef61eb2b3c7cc70bace53f3aa6d4263347581d36add7e9468a4e329d9c986e3a5c46e4689a6b79f60c5cf7778a403316ac5b2629\",\"tags\":[[\"e\",\"27e71cf53299dafb5dc7bcc0a078357418a4375cb1097bf5184662493f79a627\",\"\",\"root\"],[\"e\",\"f99046bd87be7508d55e139de48517c06ef90830d77a5d3213df858d77bb2f8f\"],[\"e\",\"1a616998552cf76e9786f76ac68f6104cdae46377330735c68bfe0b9426d2fa8\",\"\",\"reply\"],[\"p\",\"3efdaebb1d8923ebd99c9e7ace3b4194ab45512e2be79c1b7d68d9243e0d2681\"],[\"p\",\"8ea485266b2285463b13bf835907161c22bb3da1e652b443db14f9cee6720a43\"],[\"p\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\"]]}";
+	unsigned char buffer[4096];
+
+	assert(ndb_note_from_json(event, strlen(event), &note, buffer, sizeof(buffer)));
+	ndb_note_get_reply(note, &reply);
+	assert_optional_id_eq(reply.root, "27e71cf53299dafb5dc7bcc0a078357418a4375cb1097bf5184662493f79a627");
+	assert_optional_id_eq(reply.reply, "1a616998552cf76e9786f76ac68f6104cdae46377330735c68bfe0b9426d2fa8");
+	assert_optional_id_eq(reply.mention, NULL);
+	assert(ndb_note_reply_is_to_root(&reply) == 0);
+	assert_optional_id_eq(nip10_effective_reply(&reply), "1a616998552cf76e9786f76ac68f6104cdae46377330735c68bfe0b9426d2fa8");
+	assert_optional_id_eq(nip10_reply_to_root(&reply), NULL);
+
+	printf("ok test_nip10_marker_mixed\n");
+}
+
+static void test_nip10_reply_to_root_with_reply_tag(void)
+{
+	struct ndb_note_reply reply;
+	struct ndb_note *note;
+	const char *event = "{\"id\":\"22c4986d970bb13a9337bdad4e462bc75c5105375669d87caeab0951e76af800\",\"pubkey\":\"592295cf2b09a7f9555f43adb734cbee8a84ee892ed3f9336e6a09b6413a0db9\",\"created_at\":1753380428,\"kind\":1,\"tags\":[[\"e\",\"343ff2fe97e352c7012a44dc85135dccef43acb73e459e71f7284c9627b57ab0\",\"ws://relay.jb55.com/\",\"root\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\"],[\"e\",\"343ff2fe97e352c7012a44dc85135dccef43acb73e459e71f7284c9627b57ab0\",\"ws://relay.jb55.com/\",\"reply\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\"],[\"p\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\",\"ws://relay.jb55.com/\"]],\"content\":\"So the user part is like nip-C0\",\"sig\":\"d2224177462f3cadfba2ab946005deb3f7485232a9aed78e5304a9f96a1170b45d48c925686293a0272c661db287e201924d49f1216d402fd1f34aa57da70b60\"}";
+	unsigned char buffer[4096];
+
+	assert(ndb_note_from_json(event, strlen(event), &note, buffer, sizeof(buffer)));
+	ndb_note_get_reply(note, &reply);
+	assert_optional_id_eq(reply.root, "343ff2fe97e352c7012a44dc85135dccef43acb73e459e71f7284c9627b57ab0");
+	assert_optional_id_eq(reply.reply, "343ff2fe97e352c7012a44dc85135dccef43acb73e459e71f7284c9627b57ab0");
+	assert_optional_id_eq(reply.mention, NULL);
+	assert(ndb_note_reply_is_to_root(&reply) == 1);
+	assert_optional_id_eq(nip10_effective_reply(&reply), "343ff2fe97e352c7012a44dc85135dccef43acb73e459e71f7284c9627b57ab0");
+	assert_optional_id_eq(nip10_reply_to_root(&reply), "343ff2fe97e352c7012a44dc85135dccef43acb73e459e71f7284c9627b57ab0");
+
+	printf("ok test_nip10_reply_to_root_with_reply_tag\n");
+}
+
+static void test_nip10_deprecated_reply_to_root(void)
+{
+	struct ndb_note_reply reply;
+	struct ndb_note *note;
+	const char *event = "{\"id\":\"140280b7886c48bddd99684b951c6bb61bebc8270a4989f316282c72aa35e5ba\",\"pubkey\":\"5ee7067e7155a9abf494e3e47e3249254cf95389a0c6e4f75cbbf35c8c675c23\",\"created_at\":1714178274,\"kind\":1,\"tags\":[[\"e\",\"7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3\"]],\"content\":\"hi\",\"sig\":\"e433d468d49fbc0f466b1a8ccefda71b0e17af471e579b56b8ce36477c116109c44d1065103ed6c01f838af92a13e51969d3b458f69c09b6f12785bd07053eb5\"}";
+	unsigned char buffer[4096];
+
+	assert(ndb_note_from_json(event, strlen(event), &note, buffer, sizeof(buffer)));
+	ndb_note_get_reply(note, &reply);
+	assert_optional_id_eq(reply.root, "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3");
+	assert_optional_id_eq(reply.reply, NULL);
+	assert_optional_id_eq(reply.mention, NULL);
+	assert(ndb_note_reply_is_to_root(&reply) == 1);
+	assert_optional_id_eq(nip10_effective_reply(&reply), "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3");
+	assert_optional_id_eq(nip10_reply_to_root(&reply), "7d33c272a74e75c7328b891ab69420dd820cc7544fc65cd29a058c3495fd27d3");
+
+	printf("ok test_nip10_deprecated_reply_to_root\n");
+}
+
 static void test_nip50_profile_search() {
 	struct ndb *ndb;
 	struct ndb_txn txn;
@@ -2357,6 +2522,12 @@ int main(int argc, const char *argv[]) {
 	test_nip44_decrypt();
 	test_replay_attack();
 	test_custom_filter();
+	test_nip10_marker();
+	test_nip10_deprecated();
+	test_nip10_mention();
+	test_nip10_marker_mixed();
+	test_nip10_reply_to_root_with_reply_tag();
+	test_nip10_deprecated_reply_to_root();
 	test_metadata();
 	test_count_metadata();
 	test_reaction_encoding();
@@ -2420,6 +2591,3 @@ int main(int argc, const char *argv[]) {
 
 	printf("All tests passed!\n");       // Print this if all tests pass.
 }
-
-
-
