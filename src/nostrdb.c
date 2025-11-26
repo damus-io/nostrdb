@@ -9,6 +9,7 @@
 #include "bolt11/amount.h"
 #include "lmdb.h"
 #include "metadata.h"
+#include "nip44.h"
 #include "util.h"
 #include "cpu.h"
 #include "block.h"
@@ -17,6 +18,7 @@
 #include "protected_queue.h"
 #include "memchr.h"
 #include "print_util.h"
+#include "secp256k1.h"
 #include <stdlib.h>
 #include <limits.h>
 #include <assert.h>
@@ -40,6 +42,7 @@
 #define MAX_SUBSCRIPTIONS 256
 #define MAX_SCAN_CURSORS 12
 #define MAX_FILTERS    16
+#define MAX_INGESTER_KEYS 128
 
 // the maximum size of inbox queues
 static const int DEFAULT_QUEUE_SIZE = 32768;
@@ -60,6 +63,22 @@ static const int DEFAULT_WRITER_SCRATCH_SIZE = 2097152;
 #define NDB_PARSED_CONTENT      (1 << 5)
 #define NDB_PARSED_TAGS         (1 << 6)
 #define NDB_PARSED_ALL          (NDB_PARSED_ID|NDB_PARSED_PUBKEY|NDB_PARSED_SIG|NDB_PARSED_CREATED_AT|NDB_PARSED_KIND|NDB_PARSED_CONTENT|NDB_PARSED_TAGS)
+
+/* we have ndb_keypair for official stuff, but this is just used internally
+ * in the ingester thread for unwrapping giftwraps
+ */
+struct keypair {
+	unsigned char seckey[32];
+	unsigned char pubkey[32];
+};
+
+struct ndb_ingester *ingester;
+int ndb_process_giftwrap(secp256k1_context *secp,
+			 struct ndb_ingester *ingester,
+			 struct ndb_note *note,
+			 struct keypair *keys, int nkeys,
+			 const char *relay,
+			 unsigned char *scratch, size_t scratch_size);
 
 typedef int (*ndb_migrate_fn)(struct ndb_txn *);
 typedef int (*ndb_word_parser_fn)(void *, const char *word, int word_len,
@@ -100,7 +119,13 @@ struct ndb_tags {
 // v1
 struct ndb_note {
 	unsigned char version;    // v=1
-	unsigned char padding[3]; // keep things aligned
+	union {
+		unsigned char padding[3]; // keep things aligned
+		struct {
+			unsigned char padding;
+			uint16_t flags;
+		} aux;
+	};
 	unsigned char id[32];
 	unsigned char pubkey[32];
 	unsigned char sig[64];
@@ -2401,12 +2426,6 @@ static int ndb_note_meta_builder_counts(struct ndb_txn *txn,
 	return 1;
 }
 
-/* count all of the reactions on a note and add it to metadata in progress */
-static void ndb_note_meta_builder_count_reactions(struct ndb_txn *txn, struct ndb_note_meta_builder *builder)
-{
-}
-
-
 // Migrations
 //
 
@@ -2648,6 +2667,7 @@ static int ndb_tsid_compare(const MDB_val *a, const MDB_val *b)
 enum ndb_ingester_msgtype {
 	NDB_INGEST_EVENT, // write json to the ingester queue for processing
 	NDB_INGEST_QUIT,  // kill ingester thread immediately
+	NDB_INGEST_ADD_KEY, // add a key for monitoring encrypted data
 };
 
 struct ndb_ingester_event {
@@ -2655,6 +2675,10 @@ struct ndb_ingester_event {
 	char *json;
 	unsigned client : 1; // ["EVENT", {...}] messages
 	unsigned len : 31;
+};
+
+struct ndb_ingester_add_key {
+	unsigned char key[32];
 };
 
 struct ndb_writer_note_relay {
@@ -2686,6 +2710,7 @@ struct ndb_ingester_msg {
 	enum ndb_ingester_msgtype type;
 	union {
 		struct ndb_ingester_event event;
+		struct ndb_ingester_add_key add_key;
 	};
 };
 
@@ -2733,7 +2758,7 @@ static inline int ndb_writer_queue_msg(struct ndb_writer *writer,
 	return prot_queue_push(&writer->inbox, msg);
 }
 
-static uint64_t ndb_write_note_and_profile(struct ndb_txn *txn, struct ndb_writer_profile *profile, unsigned char *scratch, size_t scratch_size, uint32_t ndb_flags);
+static uint64_t ndb_write_note_and_profile(secp256k1_context *secp, struct ndb_txn *txn, struct ndb_writer_profile *profile, unsigned char *scratch, size_t scratch_size, uint32_t ndb_flags);
 static int ndb_migrate_utf8_profile_names(struct ndb_txn *txn)
 {
 	int rc;
@@ -2746,6 +2771,9 @@ static int ndb_migrate_utf8_profile_names(struct ndb_txn *txn)
 	size_t len;
 	int count, failed, ret;
 	struct ndb_writer_profile profile;
+	secp256k1_context *secp;
+
+	secp = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
 
 	if ((rc = mdb_cursor_open(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_PROFILE], &cur))) {
 		fprintf(stderr, "ndb_migrate_utf8_profile_names: mdb_cursor_open failed, error %d\n", rc);
@@ -2787,7 +2815,9 @@ static int ndb_migrate_utf8_profile_names(struct ndb_txn *txn)
 
 		// we don't pass in flags when migrating... a bit sketchy but
 		// whatever. noone is using this to customize nostrdb atm
-		if (ndb_write_note_and_profile(txn, &profile, scratch, scratch_size, 0)) {
+		if (ndb_write_note_and_profile(secp, txn, &profile,
+					       scratch, scratch_size,
+					       0)) {
 			count++;
 		}
 	}
@@ -2798,6 +2828,7 @@ static int ndb_migrate_utf8_profile_names(struct ndb_txn *txn)
 		fprintf(stderr, "failed to migrate %d profiles to fix utf8 profile names\n", failed);
 	}
 
+	secp256k1_context_destroy(secp);
 	free(scratch);
 	mdb_cursor_close(cur);
 
@@ -3230,6 +3261,17 @@ static int ndb_ingester_queue_event(struct ndb_ingester *ingester,
 	return threadpool_dispatch(&ingester->tp, &msg);
 }
 
+int ndb_add_key(struct ndb *ndb, unsigned char *key)
+{
+	struct ndb_ingester_msg msg;
+	msg.type = NDB_INGEST_ADD_KEY;
+
+	memcpy(msg.add_key.key, key, 32);
+
+	/* add the key to all ingester threads */
+	return threadpool_dispatch_all_threads(&ndb->ingester.tp, &msg);
+}
+
 void ndb_ingest_meta_init(struct ndb_ingest_meta *meta, unsigned client, const char *relay)
 {
 	meta->client = client;
@@ -3267,16 +3309,19 @@ static int ndb_ingest_event(struct ndb_ingester *ingester, const char *json,
 }
 
 
-static int ndb_ingester_process_note(secp256k1_context *ctx,
+static int ndb_ingester_process_note(secp256k1_context *secp,
 				     struct ndb_note *note,
 				     size_t note_size,
-				     struct ndb_writer_msg *out,
 				     struct ndb_ingester *ingester,
 				     unsigned char *scratch,
-				     const char *relay)
+				     size_t scratch_size,
+				     const char *relay,
+				     struct keypair *keys, int nkeys)
 {
 	enum ndb_ingest_filter_action action;
 	struct ndb_ingest_meta meta;
+	struct ndb_writer_msg msg;
+	int is_rumor;
 
 	action = NDB_INGEST_ACCEPT;
 
@@ -3286,14 +3331,17 @@ static int ndb_ingester_process_note(secp256k1_context *ctx,
 	if (action == NDB_INGEST_REJECT)
 		return 0;
 
+	is_rumor = (*ndb_note_flags(note)) & NDB_NOTE_FLAG_RUMOR;
+
 	// some special situations we might want to skip sig validation,
 	// like during large imports
-	if (action == NDB_INGEST_SKIP_VALIDATION || (ingester->flags & NDB_FLAG_SKIP_NOTE_VERIFY)) {
+	if (is_rumor || action == NDB_INGEST_SKIP_VALIDATION ||
+	    (ingester->flags & NDB_FLAG_SKIP_NOTE_VERIFY)) {
 		// if we're skipping validation we don't need to verify
 	} else {
 		// verify! If it's an invalid note we don't need to
 		// bother writing it to the database
-		if (!ndb_note_verify(ctx, scratch, ingester->scratch_size, note)) {
+		if (!ndb_note_verify(secp, scratch, scratch_size, note)) {
 			ndb_debug("note verification failed\n");
 			return 0;
 		}
@@ -3305,13 +3353,15 @@ static int ndb_ingester_process_note(secp256k1_context *ctx,
 	assert(((uint64_t)note % 4) == 0);
 
 	if (note->kind == 0) {
-		struct ndb_profile_record_builder *b =
-			&out->profile.record;
+		struct ndb_profile_record_builder *b = &msg.profile.record;
 
 		ndb_process_profile_note(note, b);
 
-		out->type = NDB_WRITER_PROFILE;
-		ndb_writer_note_init(&out->profile.note, note, note_size, relay);
+		msg.type = NDB_WRITER_PROFILE;
+		ndb_writer_note_init(&msg.profile.note, note, note_size, relay);
+
+		prot_queue_push(ingester->writer_inbox, &msg);
+
 		return 1;
 	} else if (note->kind == 6) {
 		// process the repost if we have a repost event
@@ -3321,10 +3371,15 @@ static int ndb_ingester_process_note(secp256k1_context *ctx,
 		ndb_ingest_event(ingester, ndb_note_content(note),
 					   ndb_note_content_length(note),
 					   &meta);
+	} else if (note->kind == 1059) {
+		ndb_process_giftwrap(secp, ingester, note, keys, nkeys, relay,
+				     scratch, scratch_size);
 	}
 
-	out->type = NDB_WRITER_NOTE;
-	ndb_writer_note_init(&out->note, note, note_size, relay);
+	msg.type = NDB_WRITER_NOTE;
+	ndb_writer_note_init(&msg.note, note, note_size, relay);
+	
+	prot_queue_push(ingester->writer_inbox, &msg);
 
 	return 1;
 }
@@ -3365,23 +3420,27 @@ int ndb_note_seen_on_relay(struct ndb_txn *txn, uint64_t note_key, const char *r
 // process the relay for the note. this is called when we already have the
 // note in the database but still need to check if the relay needs to be
 // written to the relay indexes for corresponding note
-static int ndb_process_note_relay(struct ndb_txn *txn, struct ndb_writer_msg *out,
+static int ndb_process_note_relay(struct ndb_txn *txn,
+				  struct prot_queue *writer,
 				  uint64_t note_key, struct ndb_note *note,
 				  const char *relay)
 {
+	struct ndb_writer_msg msg;
 	// query to see if we already have the relay on this note
 	if (ndb_note_seen_on_relay(txn, note_key, relay)) {
 		return 0;
 	}
 
 	// if not, tell the writer thread to emit a NOTE_RELAY event
-	out->type = NDB_WRITER_NOTE_RELAY;
+	msg.type = NDB_WRITER_NOTE_RELAY;
 
 	ndb_debug("pushing NDB_WRITER_NOTE_RELAY with note_key %" PRIu64 "\n", note_key);
-	out->note_relay.relay = relay;
-	out->note_relay.note_key = note_key;
-	out->note_relay.kind = ndb_note_kind(note);
-	out->note_relay.created_at = ndb_note_created_at(note);
+	msg.note_relay.relay = relay;
+	msg.note_relay.note_key = note_key;
+	msg.note_relay.kind = ndb_note_kind(note);
+	msg.note_relay.created_at = ndb_note_created_at(note);
+
+	prot_queue_push(writer, &msg);
 
 	return 1;
 }
@@ -3389,8 +3448,8 @@ static int ndb_process_note_relay(struct ndb_txn *txn, struct ndb_writer_msg *ou
 static int ndb_ingester_process_event(secp256k1_context *ctx,
 				      struct ndb_ingester *ingester,
 				      struct ndb_ingester_event *ev,
-				      struct ndb_writer_msg *out,
 				      unsigned char *scratch,
+				      struct keypair *keys, int nkeys,
 				      MDB_txn *read_txn)
 {
 	struct ndb_tce tce;
@@ -3435,7 +3494,8 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 
 		// we still need to process the relays on the note even
 		// if we already have it
-	 	if (ev->relay && ndb_process_note_relay(&txn, out,
+	 	if (ev->relay && ndb_process_note_relay(&txn,
+							ingester->writer_inbox,
 							controller.note_key,
 							controller.note,
 							ev->relay))
@@ -3465,8 +3525,10 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 			}
 
 			if (!ndb_ingester_process_note(ctx, note, note_size,
-						       out, ingester, scratch,
-						       ev->relay)) {
+						       ingester,
+						       scratch,
+						       ingester->scratch_size,
+						       ev->relay, keys, nkeys)) {
 				ndb_debug("failed to process note\n");
 				goto cleanup;
 			} else {
@@ -3487,8 +3549,10 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 			}
 
 			if (!ndb_ingester_process_note(ctx, note, note_size,
-						       out, ingester, scratch,
-						       ev->relay)) {
+						       ingester, scratch,
+						       ingester->scratch_size,
+						       ev->relay,
+						       keys, nkeys)) {
 				ndb_debug("failed to process note\n");
 				goto cleanup;
 			} else {
@@ -5844,7 +5908,6 @@ static unsigned char *ndb_note_first_tag_id(struct ndb_note *note, char tag)
 
 		str = ndb_tag_str(note, iter.tag, 0);
 
-		// assign liked to the last e tag
 		if (str.flag == NDB_PACKED_STR && str.str[0] == tag) {
 			str = ndb_tag_str(note, iter.tag, 1);
 			if (str.flag == NDB_PACKED_ID)
@@ -6086,7 +6149,8 @@ static void ndb_process_note_stats(
 	}
 }
 
-static uint64_t ndb_write_note(struct ndb_txn *txn,
+static uint64_t ndb_write_note(secp256k1_context *secp,
+			       struct ndb_txn *txn,
 			       struct ndb_writer_note *note,
 			       unsigned char *scratch, size_t scratch_size,
 			       uint32_t ndb_flags)
@@ -6154,6 +6218,198 @@ static uint64_t ndb_write_note(struct ndb_txn *txn,
 	return note_key;
 }
 
+static int ndb_ingest_rumor(secp256k1_context *secp,
+			    struct ndb_ingester *ingester,
+			    const char *rumor_json, size_t json_len,
+			    unsigned char *sender_pubkey,
+			    const char *relay,
+			    unsigned char *scratch, size_t scratch_size,
+			    unsigned char *wrap_id,
+			    struct keypair *unwrap_key,
+			    struct keypair *keys, int nkeys)
+{
+	struct ndb_note *rumor;
+	unsigned char *id;
+	int rc, parse_cond;
+	void *rumor_msg;
+	uint16_t *flags;
+	unsigned char *sig;
+
+	/* We don't trust the pubkey or sig on rumors, and we don't require
+	 * them to be parsed.
+	 * We will copy the pubkey from the seal onto the rumor instead */
+	parse_cond = NDB_PARSED_ALL & ~(NDB_PARSED_SIG | NDB_PARSED_PUBKEY);
+
+	rc = ndb_note_from_json_custom(rumor_json, json_len, &rumor,
+				       scratch, scratch_size, parse_cond);
+	if (!rc)
+		return 0;
+
+	sig = ndb_note_sig(rumor);
+
+	memcpy(ndb_note_pubkey(rumor), sender_pubkey, 32);
+
+	/* since we have no signature, instead we store the unwrapping
+	 * pubkey and giftwrap id in the lower and upper half of the
+	 * signature field. You can access these via:
+	 *
+	 * ndb_note_rumor_receiver_pubkey
+	 * ndb_note_rumor_giftwrap_id
+	 *
+	 * we know the note is a rumor via the NDB_NOTE_FLAG_RUMOR
+	 * note flag set below
+	 */
+	memcpy(sig, unwrap_key->pubkey, 32);
+	memcpy(sig+32, wrap_id, 32);
+
+	if ((scratch_size - rc) <= 0)
+		return 0;
+
+	/* we recalculate id since we have trust issues */
+	id = ndb_note_id(rumor);
+	if (!ndb_calculate_id(rumor, scratch+rc, scratch_size-rc, id))
+		return 0;
+
+	flags = ndb_note_flags(rumor);
+	*flags = *flags | NDB_NOTE_FLAG_RUMOR;
+
+	rumor_msg = malloc(rc);
+	memcpy(rumor_msg, rumor, rc);
+
+	return ndb_ingester_process_note(secp, rumor_msg, rc, ingester,
+					 scratch+rc, scratch_size-rc,
+					 relay, keys, nkeys);
+}
+
+static int ndb_process_seal(secp256k1_context *secp,
+			    struct ndb_ingester *ingester,
+			    const char *seal_json, size_t json_len,
+			    unsigned char *wrap_id,
+			    struct keypair *unwrap_key,
+			    const char *relay,
+			    unsigned char *scratch, size_t scratch_size,
+			    struct keypair *keys, int nkeys)
+{
+	struct ndb_note *seal;
+	const char *payload;
+	unsigned char *sender_pubkey, *decrypted;
+	int note_size;
+	size_t payload_len;
+	uint16_t decrypted_len;
+	enum ndb_decrypt_result rc;
+
+	note_size = ndb_note_from_json(seal_json, json_len, &seal, scratch,
+				       scratch_size);
+
+	if (!note_size)
+		return 0;
+
+	if (ndb_note_kind(seal) != 13)
+		return 0;
+
+	if ((scratch_size - note_size) <= 0)
+		return 0;
+
+	if (ndb_note_verify(secp,
+			    scratch + note_size, scratch_size - note_size,
+			    seal) == 0) {
+		/* seal is not valid, reject */
+		return 0;
+	}
+
+	sender_pubkey = ndb_note_pubkey(seal);
+	payload = ndb_note_content(seal);
+	payload_len = ndb_note_content_length(seal);
+
+	/* decrypt the seal contents */
+	rc = nip44_decrypt(secp, sender_pubkey, unwrap_key->seckey,
+			   payload, payload_len,
+			   scratch + note_size, scratch_size - note_size,
+			   &decrypted, &decrypted_len);
+
+	if (rc != NIP44_OK)
+		return 0;
+
+	if (scratch_size - note_size - decrypted_len <= 0)
+		return 0;
+
+	/* ingest rumor */
+	return ndb_ingest_rumor(secp, ingester,
+				(const char*)decrypted, decrypted_len,
+				sender_pubkey, relay,
+				scratch + note_size + decrypted_len,
+				scratch_size - note_size - decrypted_len,
+				wrap_id, unwrap_key,
+				keys, nkeys);
+}
+
+int ndb_process_giftwrap(secp256k1_context *secp,
+			 struct ndb_ingester *ingester,
+			 struct ndb_note *note,
+			 struct keypair *keys, int nkeys,
+			 const char *relay,
+			 unsigned char *scratch, size_t scratch_size)
+{
+	const char *payload;
+	unsigned char *sender_pubkey;
+	struct nip44_payload decoded;
+	struct keypair *unwrap_key;
+	unsigned char *decrypted, *wrap_id;
+	enum ndb_decrypt_result rc;
+	uint16_t decrypted_len;
+	size_t payload_len;
+	int i;
+
+	wrap_id = ndb_note_id(note);
+	payload = ndb_note_content(note);
+	sender_pubkey = ndb_note_pubkey(note);
+	payload_len = ndb_note_content_length(note);
+
+	/* decode payload! */
+	if ((rc = nip44_decode_payload(&decoded, scratch, scratch_size,
+				       payload, payload_len))) {
+		return rc;
+	}
+
+
+	for (i = 0; i < nkeys; i++) {
+		unwrap_key = &keys[i];
+		rc = nip44_decrypt_raw(secp, sender_pubkey, unwrap_key->seckey,
+				       &decoded, &decrypted, &decrypted_len);
+		if (rc == NIP44_ERR_INVALID_PADDING) {
+			/* ciphertext was mutated, so we have to restore.
+			 * this is unlikely, but we put this here for
+			 * correctness. It might be more efficient to save
+			 * the original ciphertext in a buffer somewhere,
+			 * but this is not a hot path and I'm lazy.
+			 **/
+			if ((rc = nip44_decode_payload(&decoded, scratch,
+						       scratch_size,
+						       payload, payload_len))) {
+				return rc;
+			}
+			continue;
+		} else if (rc != NIP44_OK) {
+			continue;
+		}
+
+
+		/* decrypt success */
+		rc = ndb_process_seal(secp, ingester,
+				      (const char *)decrypted, decrypted_len,
+				      wrap_id, unwrap_key,
+				      relay, scratch, scratch_size,
+				      keys, nkeys);
+
+		if (!rc) {
+			fprintf(stderr, "ndb_process_giftwrap: failed to process seal\n");
+			return 0;
+		}
+	}
+
+	return 0;
+}
+
 static void ndb_monitor_lock(struct ndb_monitor *mon) {
 	pthread_mutex_lock(&mon->mutex);
 }
@@ -6216,6 +6472,7 @@ static void ndb_notify_subscriptions(struct ndb_monitor *monitor,
 }
 
 uint64_t ndb_write_note_and_profile(
+		secp256k1_context *secp,
 		struct ndb_txn *txn,
 		struct ndb_writer_profile *profile,
 		unsigned char *scratch,
@@ -6224,7 +6481,8 @@ uint64_t ndb_write_note_and_profile(
 {
 	uint64_t note_nkey;
 
-	note_nkey = ndb_write_note(txn, &profile->note, scratch, scratch_size, ndb_flags);
+	note_nkey = ndb_write_note(secp, txn, &profile->note,
+				   scratch, scratch_size, ndb_flags);
 
 	if (profile->record.builder) {
 		// only write if parsing didn't fail
@@ -6313,7 +6571,9 @@ static void *ndb_writer_thread(void *data)
 	struct ndb_txn txn;
 	unsigned char *scratch;
 	struct ndb_relay_kind_key relay_key;
+	secp256k1_context *secp;
 
+	secp = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
 	// 2MB scratch buffer for parsing note content
 	scratch = malloc(writer->scratch_size);
 	MDB_txn *mdb_txn = NULL;
@@ -6365,6 +6625,7 @@ static void *ndb_writer_thread(void *data)
 			case NDB_WRITER_PROFILE:
 				note_nkey =
 					ndb_write_note_and_profile(
+						secp,
 						&txn,
 						&msg->profile,
 						scratch,
@@ -6386,7 +6647,9 @@ static void *ndb_writer_thread(void *data)
 				break;
 
 			case NDB_WRITER_NOTE:
-				note_nkey = ndb_write_note(&txn, &msg->note,
+				note_nkey = ndb_write_note(secp,
+							   &txn,
+							   &msg->note,
 							   scratch,
 							   writer->scratch_size,
 							   writer->ndb_flags);
@@ -6462,9 +6725,44 @@ static void *ndb_writer_thread(void *data)
 	}
 
 bail:
+	secp256k1_context_destroy(secp);
 	free(scratch);
 	ndb_debug("quitting writer thread\n");
 	return NULL;
+}
+
+static int ndb_ingester_add_keypair(secp256k1_context *ctx,
+				    unsigned char *seckey,
+				    struct keypair *keys, int *nkeys)
+{
+	struct keypair *kp;
+	int pk_parity = 0;
+	secp256k1_pubkey pubkey;
+	secp256k1_xonly_pubkey xonly_pubkey;
+
+	if (*nkeys == MAX_INGESTER_KEYS)
+		return 0;
+
+	if (!secp256k1_ec_seckey_verify(ctx, seckey))
+		return 0;
+
+	if (!secp256k1_ec_pubkey_create(ctx, &pubkey, seckey))
+		return 0;
+
+	if (!secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_pubkey, &pk_parity,
+						&pubkey))
+		return 0;
+
+	kp = &keys[(*nkeys)++];
+	memcpy(kp->seckey, seckey, 32);
+
+	/* Serialize the public key. Should always return 1 for a valid public key. */
+	if (!secp256k1_xonly_pubkey_serialize(ctx, kp->pubkey, &xonly_pubkey)) {
+		(*nkeys)--;
+		return 0;
+	}
+
+	return 1;
 }
 
 static void *ndb_ingester_thread(void *data)
@@ -6474,11 +6772,14 @@ static void *ndb_ingester_thread(void *data)
 	struct ndb_ingester *ingester = (struct ndb_ingester *)thread->ctx;
 	struct ndb_lmdb *lmdb = ingester->lmdb;
 	struct ndb_ingester_msg msgs[THREAD_QUEUE_BATCH], *msg;
-	struct ndb_writer_msg outs[THREAD_QUEUE_BATCH], *out;
-	int i, to_write, popped, done, any_event;
+	int i, popped, done, any_event;
 	MDB_txn *read_txn = NULL;
+	struct keypair *keys;
 	unsigned char *scratch;
-	int rc;
+	int rc, nkeys;
+
+	nkeys = 0;
+	keys = malloc(sizeof(*keys) * MAX_INGESTER_KEYS);
 
 	// this is used in note verification and anything else that
 	// needs a temporary buffer
@@ -6489,7 +6790,6 @@ static void *ndb_ingester_thread(void *data)
 
 	done = 0;
 	while (!done) {
-		to_write = 0;
 		any_event = 0;
 
 		popped = prot_queue_pop_all(&thread->inbox, msgs, THREAD_QUEUE_BATCH);
@@ -6517,31 +6817,29 @@ static void *ndb_ingester_thread(void *data)
 				done = 1;
 				break;
 
+			case NDB_INGEST_ADD_KEY:
+				ndb_ingester_add_keypair(ctx, msg->add_key.key,
+							 keys, &nkeys);
+				break;
+
 			case NDB_INGEST_EVENT:
-				out = &outs[to_write];
-				if (ndb_ingester_process_event(ctx, ingester,
-							       &msg->event, out,
-							       scratch,
-							       read_txn)) {
-					to_write++;
-				}
+				ndb_ingester_process_event(ctx, ingester,
+							   &msg->event,
+							   scratch,
+							   keys, nkeys,
+							   read_txn);
+				break;
 			}
 		}
 
 		if (any_event)
 			mdb_txn_abort(read_txn);
-
-		if (to_write > 0) {
-			ndb_debug("pushing %d events to write queue\n", to_write);
-			if (!prot_queue_push_all(ingester->writer_inbox, outs, to_write)) {
-				ndb_debug("failed pushing %d events to write queue\n", to_write);
-			}
-		}
 	}
 
 	ndb_debug("quitting ingester thread\n");
 	secp256k1_context_destroy(ctx);
 	free(scratch);
+	free(keys);
 	return NULL;
 }
 
@@ -8331,7 +8629,9 @@ static int ndb_filter_parse_json(struct ndb_json_parser *parser,
 	return ndb_filter_end(filter);
 }
 
-int ndb_parse_json_note(struct ndb_json_parser *parser, struct ndb_note **note)
+int ndb_parse_json_note_custom(struct ndb_json_parser *parser,
+			       struct ndb_note **note,
+			       int parse_cond)
 {
 	jsmntok_t *tok = NULL;
 	unsigned char hexbuf[64];
@@ -8422,10 +8722,15 @@ int ndb_parse_json_note(struct ndb_json_parser *parser, struct ndb_note **note)
 	}
 
 	//ndb_debug("parsed %d = %d, &->%d", parsed, NDB_PARSED_ALL, parsed & NDB_PARSED_ALL);
-	if (parsed != NDB_PARSED_ALL)
+	if (parsed != parse_cond)
 		return 0;
 
 	return ndb_builder_finalize(&parser->builder, note, NULL);
+}
+
+int ndb_parse_json_note(struct ndb_json_parser *parser, struct ndb_note **note)
+{
+	return ndb_parse_json_note_custom(parser, note, NDB_PARSED_ALL);
 }
 
 int ndb_filter_from_json(const char *json, int len, struct ndb_filter *filter,
@@ -8447,8 +8752,8 @@ int ndb_filter_from_json(const char *json, int len, struct ndb_filter *filter,
 	return ndb_filter_parse_json(&parser, filter);
 }
 
-int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
-		       unsigned char *buf, int bufsize)
+int ndb_note_from_json_custom(const char *json, int len, struct ndb_note **note,
+			      unsigned char *buf, int bufsize, int parse_cond)
 {
 	struct ndb_json_parser parser;
 	int res;
@@ -8460,8 +8765,16 @@ int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
 	if (parser.num_tokens < 1)
 		return 0;
 
-	return ndb_parse_json_note(&parser, note);
+	return ndb_parse_json_note_custom(&parser, note, parse_cond);
 }
+
+int ndb_note_from_json(const char *json, int len, struct ndb_note **note,
+		       unsigned char *buf, int bufsize)
+{
+	return ndb_note_from_json_custom(json, len, note, buf, bufsize,
+					 NDB_PARSED_ALL);
+}
+
 
 void ndb_builder_set_pubkey(struct ndb_builder *builder, unsigned char *pubkey)
 {
@@ -8844,6 +9157,27 @@ unsigned char * ndb_note_id(struct ndb_note *note)
 	return note->id;
 }
 
+int ndb_note_is_rumor(struct ndb_note *note)
+{
+	return ((*ndb_note_flags(note)) & NDB_NOTE_FLAG_RUMOR) == NDB_NOTE_FLAG_RUMOR;
+}
+
+unsigned char *ndb_note_rumor_receiver_pubkey(struct ndb_note *note)
+{
+	if (!ndb_note_is_rumor(note))
+		return NULL;
+
+	return ndb_note_sig(note);
+}
+
+unsigned char *ndb_note_rumor_giftwrap_id(struct ndb_note *note)
+{
+	if (!ndb_note_is_rumor(note))
+		return NULL;
+
+	return ndb_note_sig(note) + 32;
+}
+
 unsigned char * ndb_note_pubkey(struct ndb_note *note)
 {
 	return note->pubkey;
@@ -8872,6 +9206,11 @@ void _ndb_note_set_kind(struct ndb_note *note, uint32_t kind)
 const char *ndb_note_content(struct ndb_note *note)
 {
 	return ndb_note_str(note, &note->content).str;
+}
+
+uint16_t *ndb_note_flags(struct ndb_note *note)
+{
+	return &note->aux.flags;
 }
 
 uint32_t ndb_note_content_length(struct ndb_note *note)

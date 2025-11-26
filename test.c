@@ -285,6 +285,46 @@ static void test_nip44_decrypt()
 	secp256k1_context_destroy(context);
 }
 
+static void test_giftwrap_unwrap()
+{
+	/*
+	struct ndb *ndb;
+	struct ndb_filter filter;
+	struct ndb_config config;
+	struct ndb_txn txn;
+	struct ndb_query_result results[10];
+	int count;
+	uint64_t subid;
+	ndb_default_config(&config);
+
+	unsigned char one[32] = {
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+	};
+
+	unsigned char two[32] = {
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2
+	};
+
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	ndb_add_key(ndb, one);
+	ndb_add_key(ndb, two);
+
+	ndb_filter_init(&filter);
+	ndb_filter_start_field(&filter, NDB_FILTER_KINDS);
+	ndb_filter_add_int_element(&filter, 1059);
+	ndb_filter_end_field(&filter);
+	ndb_filter_end(&filter);
+
+	subid = ndb_subscribe(ndb, &filter, 1);
+
+	const char *giftwrap = "";
+	ndb_process_event(giftwrap)
+
+	assert(count == 10);
+	*/
+}
+
 static void test_metadata()
 {
 	unsigned char buffer[1024];

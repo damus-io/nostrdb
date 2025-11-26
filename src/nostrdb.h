@@ -14,6 +14,10 @@
 #define NDB_PACKED_STR     0x1
 #define NDB_PACKED_ID      0x2
 
+#define NDB_NOTE_FLAG_DELETED     (1 << 0) /* this note is deleted */
+#define NDB_NOTE_FLAG_RUMOR       (1 << 1) /* this is a rumor that came from a giftwrap */
+#define NDB_NOTE_FLAG_UNWRAPPED   (1 << 2) /* we have processed this giftwrap and have ingested the rumor */
+
 #define NDB_FLAG_NOMIGRATE        (1 << 0)
 #define NDB_FLAG_SKIP_NOTE_VERIFY (1 << 1)
 #define NDB_FLAG_NO_FULLTEXT      (1 << 2)
@@ -552,6 +556,10 @@ int ndb_init(struct ndb **ndb, const char *dbdir, const struct ndb_config *);
 int ndb_db_version(struct ndb_txn *txn);
 
 // NOTE PROCESSING
+
+/* add a key for processing giftwraps */
+int ndb_add_key(struct ndb *ndb, unsigned char *key);
+
 int ndb_process_event(struct ndb *, const char *json, int len);
 void ndb_ingest_meta_init(struct ndb_ingest_meta *meta, unsigned client, const char *relay);
 // Process an event, recording the relay where it came from.
@@ -588,6 +596,7 @@ int ndb_parse_json_note(struct ndb_json_parser *, struct ndb_note **);
 int ndb_client_event_from_json(const char *json, int len, struct ndb_fce *fce, unsigned char *buf, int bufsize, struct ndb_id_cb *cb);
 int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce, unsigned char *buf, int bufsize, struct ndb_id_cb *);
 int ndb_note_from_json(const char *json, int len, struct ndb_note **, unsigned char *buf, int buflen);
+int ndb_note_from_json_custom(const char *json, int len, struct ndb_note **, unsigned char *buf, int buflen, int parse_cond);
 int ndb_builder_init(struct ndb_builder *builder, unsigned char *buf, size_t bufsize);
 int ndb_builder_finalize(struct ndb_builder *builder, struct ndb_note **note, struct ndb_keypair *privkey);
 int ndb_builder_set_content(struct ndb_builder *builder, const char *content, int len);
@@ -704,6 +713,10 @@ unsigned char *ndb_note_sig(struct ndb_note *note);
 void _ndb_note_set_kind(struct ndb_note *note, uint32_t kind);
 struct ndb_tags *ndb_note_tags(struct ndb_note *note);
 int ndb_str_len(struct ndb_str *str);
+uint16_t *ndb_note_flags(struct ndb_note *);
+int ndb_note_is_rumor(struct ndb_note *note);
+unsigned char *ndb_note_rumor_receiver_pubkey(struct ndb_note *note);
+unsigned char *ndb_note_rumor_giftwrap_id(struct ndb_note *note);
 
 /// write the note as json to a buffer
 int ndb_note_json(struct ndb_note *, char *buf, int buflen);

@@ -70,14 +70,6 @@ struct message_keys {
 	unsigned char auth[32];
 };
 
-struct nip44_payload {
-	unsigned char version;
-	unsigned char *nonce;
-	unsigned char *ciphertext;
-	size_t ciphertext_len;
-	unsigned char *mac;
-};
-
 static void hmac_aad(struct hmac_sha256 *out,
 		     unsigned char hmac[32], unsigned char *aad,
 		     const unsigned char *msg, size_t msgsize)
@@ -89,7 +81,7 @@ static void hmac_aad(struct hmac_sha256 *out,
 	hmac_sha256_done(&ctx, out);
 }
 
-static enum ndb_decrypt_result
+enum ndb_decrypt_result
 nip44_decode_payload(struct nip44_payload *decoded,
 		     unsigned char *buf, size_t bufsize,
 		     const char *payload, size_t payload_len)
@@ -276,26 +268,18 @@ const char *nip44_decrypt_err_msg(enum ndb_decrypt_result res)
  * validation rules, refer to BIP-340.
  */
 enum ndb_decrypt_result
-nip44_decrypt(void *secp,
+nip44_decrypt_raw(void *secp,
 	      const unsigned char *sender_pubkey,
 	      const unsigned char *receiver_seckey,
-	      const char *payload, int payload_len,
-	      unsigned char *buf, size_t bufsize,
+	      struct nip44_payload *decoded,
 	      unsigned char **decrypted, uint16_t *decrypted_len)
 {
-	struct nip44_payload decoded;
 	struct hmac_sha256 conversation_key;
 	struct hmac_sha256 calculated_mac;
 	enum ndb_decrypt_result rc;
 	unsigned char shared_secret[32];
 	struct message_keys keys;
 	secp256k1_context *context = (secp256k1_context *)secp;
-
-	/* decode payload! */
-	if ((rc = nip44_decode_payload(&decoded, buf, bufsize,
-				       payload, payload_len))) {
-		return rc;
-	}
 
 	/*
 	3. Calculate a conversation key
@@ -327,7 +311,7 @@ nip44_decrypt(void *secp,
 
 	hkdf_expand(&keys, sizeof(keys),
 		    &conversation_key, sizeof(conversation_key),
-		    decoded.nonce, 32);
+		    decoded->nonce, 32);
 
 	/*
 	6. Calculate MAC (message authentication code) with AAD and compare
@@ -335,13 +319,13 @@ nip44_decrypt(void *secp,
 	     step 2
 	   - Use constant-time comparison algorithm
 	*/
-	hmac_aad(&calculated_mac, keys.auth, decoded.nonce,
-		 decoded.ciphertext, decoded.ciphertext_len);
+	hmac_aad(&calculated_mac, keys.auth, decoded->nonce,
+		 decoded->ciphertext, decoded->ciphertext_len);
 
 	/* TODO(jb55): spec says this needs to be constant time memcmp,
 	 *             not sure why?
 	 */
-	if (memcmp(calculated_mac.sha.u.u8, decoded.mac, 32)) {
+	if (memcmp(calculated_mac.sha.u.u8, decoded->mac, 32)) {
 		return NIP44_ERR_INVALID_MAC;
 	}
 
@@ -350,21 +334,42 @@ nip44_decrypt(void *secp,
 	6. Decrypt ciphertext
 	   - Use ChaCha20 with key and nonce from step 3
 	*/
-	crypto_stream_chacha20_ietf_xor_ic(decoded.ciphertext,
-					   decoded.ciphertext,
-					   decoded.ciphertext_len,
+	crypto_stream_chacha20_ietf_xor_ic(decoded->ciphertext,
+					   decoded->ciphertext,
+					   decoded->ciphertext_len,
 					   keys.nonce, 0, keys.key);
 
 	/*
 	7. Remove padding
 	*/
-	if (!unpad(decoded.ciphertext, decoded.ciphertext_len, decrypted_len)) {
+	if (!unpad(decoded->ciphertext, decoded->ciphertext_len, decrypted_len)) {
 		return NIP44_ERR_INVALID_PADDING;
 	}
 
-	*decrypted = decoded.ciphertext + 2;
+	*decrypted = decoded->ciphertext + 2;
 
 	return NIP44_OK;
+}
+
+enum ndb_decrypt_result
+nip44_decrypt(void *secp,
+	      const unsigned char *sender_pubkey,
+	      const unsigned char *receiver_seckey,
+	      const char *payload, int payload_len,
+	      unsigned char *buf, size_t bufsize,
+	      unsigned char **decrypted, uint16_t *decrypted_len)
+{
+	struct nip44_payload decoded;
+	enum ndb_decrypt_result rc;
+
+	/* decode payload! */
+	if ((rc = nip44_decode_payload(&decoded, buf, bufsize,
+				       payload, payload_len))) {
+		return rc;
+	}
+
+	return nip44_decrypt_raw(secp, sender_pubkey, receiver_seckey,
+				 &decoded, decrypted, decrypted_len);
 }
 
 /* Encryption */

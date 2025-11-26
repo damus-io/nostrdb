@@ -16,6 +16,13 @@ enum ndb_decrypt_result
 	NIP44_ERR_INVALID_PADDING = 9,
 };
 
+struct nip44_payload {
+	unsigned char version;
+	unsigned char *nonce;
+	unsigned char *ciphertext;
+	size_t ciphertext_len;
+	unsigned char *mac;
+};
 
 enum ndb_decrypt_result
 nip44_decrypt(void *secp_context,
@@ -25,6 +32,17 @@ nip44_decrypt(void *secp_context,
 	      unsigned char *buf, size_t bufsize,
 	      unsigned char **decrypted, uint16_t *decrypted_len);
 
+enum ndb_decrypt_result
+nip44_decrypt_raw(void *secp,
+	      const unsigned char *sender_pubkey,
+	      const unsigned char *receiver_seckey,
+	      struct nip44_payload *decoded,
+	      unsigned char **decrypted, uint16_t *decrypted_len);
+
+enum ndb_decrypt_result
+nip44_decode_payload(struct nip44_payload *decoded,
+		     unsigned char *buf, size_t bufsize,
+		     const char *payload, size_t payload_len);
 
 const char *nip44_decrypt_err_msg(enum ndb_decrypt_result res);
 
