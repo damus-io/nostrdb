@@ -10,7 +10,6 @@
 #include "cursor.h"
 #include "sodium/crypto_stream_chacha20.h"
 #include <string.h>
-#include <math.h>
 
 #include "print_util.h"
 
@@ -166,22 +165,39 @@ static int cursor_pull_b16(struct cursor *c, uint16_t *s)
 	return 1;
 }
 
+static inline uint16_t next_pow2_16(uint16_t v)
+{
+	if (v <= 1)
+		return 1;
+
+	v--; /* round down from v to (v-1) */
+	v |= v >> 1;
+	v |= v >> 2;
+	v |= v >> 4;
+	v |= v >> 8;
+	v++; /* now v is next power of two */
+
+	return v;
+}
+
 static int calc_padded_len(uint16_t unpadded_len)
 {
-	uint16_t next_power, chunk;
+	uint16_t chunk;
 
-	next_power = 1 << (uint16_t)((floor(log2(unpadded_len - 1))) + 1);
-	if (next_power <= 256) {
+	/* enforce minimum of 32 */
+	if (unpadded_len <= 32)
+		return 32;
+
+	/* For <= 256, always use 32-byte chunks. */
+	if (unpadded_len <= 256) {
 		chunk = 32;
 	} else {
-		chunk = next_power / 8;
+		/* next_power / 8 */
+		chunk = next_pow2_16(unpadded_len) >> 3;
 	}
 
-	if (unpadded_len <= 32) {
-		return 32;
-	} else {
-		return chunk * (floor((unpadded_len - 1) / chunk) + 1);
-	}
+	// Round up to the next multiple of chunk (chunk is power of two)
+	return (unpadded_len + (chunk - 1)) & ~(chunk - 1);
 }
 
 static int unpad(unsigned char *padded_buf, size_t len, uint16_t *unpadded_len)
