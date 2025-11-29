@@ -195,8 +195,10 @@ static int calc_padded_len(uint16_t unpadded_len)
 		chunk = next_pow2_16(unpadded_len) >> 3;
 	}
 
+	chunk--;
+
 	// Round up to the next multiple of chunk (chunk is power of two)
-	return (unpadded_len + (chunk - 1)) & ~(chunk - 1);
+	return (unpadded_len + chunk) & ~chunk;
 }
 
 static int unpad(unsigned char *padded_buf, size_t len, uint16_t *unpadded_len)
