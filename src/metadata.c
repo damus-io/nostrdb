@@ -325,7 +325,7 @@ enum ndb_meta_clone_result ndb_note_meta_clone_with_entry(
 		ndb_note_meta_build(&builder, meta);
 		return NDB_META_CLONE_NEW_ENTRY;
 	} else if ((size = ndb_note_meta_total_size(*meta)) > bufsize) {
-		ndb_debug("buf size too small (%d < %d) for metadata entry\n", bufsize, size);
+		ndb_debug("buf size too small (%ld < %ld) for metadata entry\n", bufsize, size);
 		goto fail;
 	} else if ((*entry = ndb_note_meta_find_entry(*meta, type, payload))) {
 		offset = (unsigned char *)(*entry) - (unsigned char *)(*meta);
@@ -343,7 +343,7 @@ enum ndb_meta_clone_result ndb_note_meta_clone_with_entry(
 		/* if we don't have an existing entry, make sure we have room to add one */
 
 		ndb_debug("note metadata is too big (%d > %d) to clone with entry\n",
-			  (int)(len + sizeof(*entry)), (int)scratch_size);
+			  (int)(size + sizeof(*entry)), (int)bufsize);
 		/* no room. this is bad, if this happens we should fix it */
 		goto fail;
 	} else {

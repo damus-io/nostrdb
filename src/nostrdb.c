@@ -3315,7 +3315,7 @@ static int ndb_ingester_process_note(secp256k1_context *ctx,
 		return 1;
 	} else if (note->kind == 6) {
 		// process the repost if we have a repost event
-		ndb_debug("processing kind 6 repost\n");
+		//ndb_debug("processing kind 6 repost\n");
 		// dup the relay string
 		ndb_ingest_meta_init(&meta, 0, relay);
 		ndb_ingest_event(ingester, ndb_note_content(note),
@@ -3839,7 +3839,7 @@ struct ndb_note_meta *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char
 	k.mv_size = 32;
 
 	if (mdb_get(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], &k, &v)) {
-		ndb_debug("ndb_get_note_meta: mdb_get note failed\n");
+		//ndb_debug("ndb_get_note_meta: mdb_get note failed\n");
 		return NULL;
 	}
 
@@ -7963,7 +7963,7 @@ int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce,
 		return res;
 
 	if (parser.toks[0].type == JSMN_OBJECT) {
-		ndb_debug("got raw json in ws_event_from_json\n");
+		//ndb_debug("got raw json in ws_event_from_json\n");
 		tce->evtype = NDB_TCE_EVENT;
 		return ndb_parse_json_note(&parser, &ev->note);
 	}
