@@ -265,6 +265,8 @@ const char *nip44_err_msg(enum ndb_decrypt_result res)
 	       return "error during base64 decoding";
 	case NIP44_ERR_INVALID_PADDING:
 	       return "invalid padding";
+	case NIP44_ERR_BUFFER_TOO_SMALL:
+	       return "buffer too small";
 	}
 
 	return "unknown";

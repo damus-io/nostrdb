@@ -14,6 +14,7 @@ enum ndb_decrypt_result
 	NIP44_ERR_FILL_RANDOM_FAILED = 7,
 	NIP44_ERR_INVALID_MAC = 8,
 	NIP44_ERR_INVALID_PADDING = 9,
+	NIP44_ERR_BUFFER_TOO_SMALL = 10,
 };
 
 struct nip44_payload {
