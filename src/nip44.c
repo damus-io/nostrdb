@@ -157,6 +157,13 @@ static int cursor_pull_b16(struct cursor *c, uint16_t *s)
 	return 1;
 }
 
+static int cursor_push_b16(struct cursor *c, uint16_t s)
+{
+	if (!cursor_push_u16(c, bswap_16(s)))
+		return 0;
+	return 1;
+}
+
 static inline uint16_t next_pow2_16(uint16_t v)
 {
 	if (v <= 1)
