@@ -44,6 +44,6 @@ nip44_decode_payload(struct nip44_payload *decoded,
 		     unsigned char *buf, size_t bufsize,
 		     const char *payload, size_t payload_len);
 
-const char *nip44_decrypt_err_msg(enum ndb_decrypt_result res);
+const char *nip44_err_msg(enum ndb_decrypt_result res);
 
 #endif /* NDB_METADATA_H */

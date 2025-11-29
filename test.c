@@ -219,7 +219,7 @@ static void test_nip44_test_vector()
 			    &decrypted, &decrypted_len);
 
 	if (res != NIP44_OK) {
-		fprintf(stderr, "nip44 error: %s\n", nip44_decrypt_err_msg(res));
+		fprintf(stderr, "nip44 error: %s\n", nip44_err_msg(res));
 	}
 	printf("# decrypted(%d) '%.*s'\n", decrypted_len, decrypted_len, (char*)decrypted);
 	assert(res == NIP44_OK);
@@ -276,7 +276,7 @@ static void test_nip44_decrypt()
 			    &decrypted, &decrypted_len);
 
 	if (res != NIP44_OK) {
-		fprintf(stderr, "nip44 error: %s\n", nip44_decrypt_err_msg(res));
+		fprintf(stderr, "nip44 error: %s\n", nip44_err_msg(res));
 	}
 	assert(res == NIP44_OK);
 	assert(strcmp((char *)decrypted, expected) == 0);

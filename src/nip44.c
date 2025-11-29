@@ -242,7 +242,7 @@ static int unpad(unsigned char *padded_buf, size_t len, uint16_t *unpadded_len)
 	return 1;
 }
 
-const char *nip44_decrypt_err_msg(enum ndb_decrypt_result res)
+const char *nip44_err_msg(enum ndb_decrypt_result res)
 {
 	switch (res) {
 	case NIP44_OK:
