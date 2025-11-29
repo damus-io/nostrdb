@@ -384,7 +384,24 @@ nip44_decrypt(void *secp,
 }
 
 /* Encryption */
-int nip44_encrypt() {
+enum ndb_decrypt_result
+nip44_encrypt(void *secp, const unsigned char *sender_seckey,
+	      const unsigned char *receiver_pubkey,
+	      const unsigned char *plaintext, uint16_t plaintext_size,
+	      unsigned char *buf, size_t bufsize,
+	      char **out, ssize_t *out_len)
+{
+	int rc;
+	struct cursor cursor;
+	struct hmac_sha256 auth, conversation_key;
+	unsigned char shared_secret[32];
+	unsigned char nonce[32];
+	unsigned char *ciphertext;
+	struct message_keys keys;
+	uint16_t ciphertext_len;
+	
+	make_cursor(buf, buf+bufsize, &cursor);
+
 	/* 
 	1. Calculate a conversation key
 	   - Execute ECDH (scalar multiplication) of public key B by private
@@ -399,7 +416,12 @@ int nip44_encrypt() {
 	   - It is always the same, when key roles are swapped:
 	     `conv(a, B) == conv(b, A)`
 	*/
+	if ((rc = calculate_shared_secret(secp, sender_seckey,
+					  receiver_pubkey, shared_secret))) {
+		return rc;
+	}
 
+	hmac_sha256(&conversation_key, "nip44-v2", 8, shared_secret, 32);
 	/*
 	2. Generate a random 32-byte nonce
 	   - Always use CSPRNG
@@ -407,6 +429,9 @@ int nip44_encrypt() {
 	   - Don't re-use the same nonce between messages: doing so would make
 	     them decryptable, but won't leak the long-term key
 	*/
+	if (!fill_random(nonce, sizeof(nonce))) {
+		return NIP44_ERR_FILL_RANDOM_FAILED;
+	}
 
 	/*
 	3. Calculate message keys
@@ -417,6 +442,9 @@ int nip44_encrypt() {
 	   - Slice 76-byte HKDF output into: `chacha_key` (bytes 0..32),
 	     `chacha_nonce` (bytes 32..44), `hmac_key` (bytes 44..76)
 	*/
+	hkdf_expand(&keys, sizeof(keys),
+		    &conversation_key, sizeof(conversation_key),
+		    nonce, 32);
 
 	/*
 	4. Add padding
@@ -428,11 +456,31 @@ int nip44_encrypt() {
 	   - Plaintext length is encoded in big-endian as first 2 bytes of the
 	     padded blob
 	*/
+	if (!cursor_push_byte(&cursor, 0x02))
+		return NIP44_ERR_BUFFER_TOO_SMALL;
+	if (!cursor_push(&cursor, nonce, 32))
+		return NIP44_ERR_BUFFER_TOO_SMALL;
+
+	ciphertext = cursor.p;
+
+	if (!cursor_push_b16(&cursor, plaintext_size))
+		return NIP44_ERR_BUFFER_TOO_SMALL;
+	if (!cursor_push(&cursor, (unsigned char*)plaintext, plaintext_size))
+		return NIP44_ERR_BUFFER_TOO_SMALL;
+	if (!cursor_memset(&cursor, 0, calc_padded_len(plaintext_size) - plaintext_size))
+		return NIP44_ERR_BUFFER_TOO_SMALL;
+
+	ciphertext_len = cursor.p - ciphertext;
+	printf("plaintext_size %d ciphertext '%.*s'\n", plaintext_size,
+			plaintext_size, plaintext);
 
 	/*
 	5. Encrypt padded content
 	   - Use ChaCha20, with key and nonce from step 3
 	*/
+	crypto_stream_chacha20_ietf_xor_ic(ciphertext, ciphertext,
+					   ciphertext_len, keys.nonce, 0,
+					   keys.key);
 
 	/*
 	6. Calculate MAC (message authentication code)
@@ -442,11 +490,23 @@ int nip44_encrypt() {
 
 	   - Validate that AAD (nonce) is 32 bytes
 	*/
+	hmac_aad(&auth, keys.auth, nonce, ciphertext, ciphertext_len);
+
+	if (!cursor_push(&cursor, auth.sha.u.u8, 32))
+		return NIP44_ERR_BUFFER_TOO_SMALL;
 
 	/*
 	7. Base64-encode (with padding) params using `concat(version, nonce,
 	ciphertext, mac)`
 	*/
-	return 0;
+	*out = (char*)cursor.p;
+	*out_len = base64_encode((char*)cursor.p,
+				 cursor_remaining_capacity(&cursor),
+				 (const char*)cursor.start,
+				 cursor.p - cursor.start);
+
+	if (*out_len == -1)
+		return NIP44_ERR_BUFFER_TOO_SMALL;
+	return NIP44_OK;
 }
 

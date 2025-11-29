@@ -34,6 +34,13 @@ nip44_decrypt(void *secp_context,
 	      unsigned char **decrypted, uint16_t *decrypted_len);
 
 enum ndb_decrypt_result
+nip44_encrypt(void *secp, const unsigned char *sender_seckey,
+	      const unsigned char *receiver_pubkey,
+	      const unsigned char *plaintext, uint16_t plaintext_size,
+	      unsigned char *buf, size_t bufsize,
+	      char **out, ssize_t *out_len);
+
+enum ndb_decrypt_result
 nip44_decrypt_raw(void *secp,
 	      const unsigned char *sender_pubkey,
 	      const unsigned char *receiver_seckey,

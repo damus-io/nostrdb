@@ -285,6 +285,65 @@ static void test_nip44_decrypt()
 	secp256k1_context_destroy(context);
 }
 
+static void test_nip44_round_trip()
+{
+	static const unsigned char send_sec[32] = {
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1 
+	};
+	static const unsigned char recv_sec[32] = {
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2 
+	};
+	static const unsigned char send_pub[32] = {
+		0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
+		0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb,
+		0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8,
+		0x17, 0x98
+	};
+	static const unsigned char recv_pub[32] = {
+		0xc6, 0x04, 0x7f, 0x94, 0x41, 0xed, 0x7d, 0x6d, 0x30, 0x45,
+		0x40, 0x6e, 0x95, 0xc0, 0x7c, 0xd8, 0x5c, 0x77, 0x8e, 0x4b,
+		0x8c, 0xef, 0x3c, 0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c, 0x70,
+		0x9e, 0xe5
+	};
+	static const char plaintext[] = "hello, world";
+
+	unsigned char buf[1024];
+	unsigned char buf2[1024];
+	char *out, *plaintext_out;
+	ssize_t out_len;
+	int ok;
+	uint16_t plaintext_len;
+	secp256k1_context *context;
+
+
+	context = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+
+	ok = nip44_encrypt(context, send_sec, recv_pub,
+			   (const unsigned char *)plaintext, sizeof(plaintext)-1,
+			   buf, sizeof(buf), &out, &out_len);
+
+	if (ok != NIP44_OK)
+		printf("nip44 encrypt err: %s\n", nip44_err_msg(ok));
+	assert(ok == NIP44_OK);
+	printf("encrypted '%.*s' out_len: %ld\n", (int)out_len, out, out_len);
+
+	ok = nip44_decrypt(context, send_pub, recv_sec,
+			   out, out_len,
+			   buf2, sizeof(buf2),
+			   (unsigned char**)&plaintext_out, &plaintext_len);
+
+	if (ok != NIP44_OK)
+		printf("nip44 decrypt err: %s\n", nip44_err_msg(ok));
+	assert(ok == NIP44_OK);
+	printf("plaintext_len %d, sizeof plaintext(%ld)\n", plaintext_len, sizeof(plaintext));
+	assert(plaintext_len == sizeof(plaintext)-1);
+
+
+	assert(!strcmp(plaintext, plaintext_out));
+
+	secp256k1_context_destroy(context);
+}
+
 static void test_giftwrap_unwrap()
 {
 	/*
@@ -2393,6 +2452,7 @@ void test_replay_attack() {
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
+	test_nip44_round_trip();
 	test_nip44_test_vector();
 	test_nip44_decrypt();
 	test_replay_attack();
