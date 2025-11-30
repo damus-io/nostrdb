@@ -352,6 +352,7 @@ static void test_giftwrap_unwrap()
 	ndb_default_config(&config);
 	const char *giftwrap;
 	uint64_t note_ids[2];
+	char buf[4096];
 
 	static unsigned char recv_sec[32] = {
 		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2
@@ -408,6 +409,8 @@ static void test_giftwrap_unwrap()
 	assert(!memcmp(ndb_note_rumor_giftwrap_id(rumor), giftwrap_id, 32));
 	assert(!memcmp(ndb_note_rumor_receiver_pubkey(rumor), recv_pub, 32));
 	assert(ndb_get_notekey_by_id(&txn, giftwrap_id));
+	ndb_note_json(rumor, buf, sizeof(buf));
+	printf("# rumor json: '%s'\n", buf);
 
 	ndb_end_query(&txn);
 
