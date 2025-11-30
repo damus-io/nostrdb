@@ -221,7 +221,7 @@ static void test_nip44_test_vector()
 	if (res != NIP44_OK) {
 		fprintf(stderr, "nip44 error: %s\n", nip44_err_msg(res));
 	}
-	printf("# decrypted(%d) '%.*s'\n", decrypted_len, decrypted_len, (char*)decrypted);
+	//printf("# decrypted(%d) '%.*s'\n", decrypted_len, decrypted_len, (char*)decrypted);
 	assert(res == NIP44_OK);
 	assert(memcmp(decrypted, plaintext, 1) == 0);
 
@@ -315,7 +315,6 @@ static void test_nip44_round_trip()
 	uint16_t plaintext_len;
 	secp256k1_context *context;
 
-
 	context = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
 
 	ok = nip44_encrypt(context, send_sec, recv_pub,
@@ -325,7 +324,6 @@ static void test_nip44_round_trip()
 	if (ok != NIP44_OK)
 		printf("nip44 encrypt err: %s\n", nip44_err_msg(ok));
 	assert(ok == NIP44_OK);
-	printf("encrypted '%.*s' out_len: %ld\n", (int)out_len, out, out_len);
 
 	ok = nip44_decrypt(context, send_pub, recv_sec,
 			   out, out_len,
@@ -334,11 +332,9 @@ static void test_nip44_round_trip()
 
 	if (ok != NIP44_OK)
 		printf("nip44 decrypt err: %s\n", nip44_err_msg(ok));
+
 	assert(ok == NIP44_OK);
-	printf("plaintext_len %d, sizeof plaintext(%ld)\n", plaintext_len, sizeof(plaintext));
 	assert(plaintext_len == sizeof(plaintext)-1);
-
-
 	assert(!strcmp(plaintext, plaintext_out));
 
 	secp256k1_context_destroy(context);
@@ -346,42 +342,79 @@ static void test_nip44_round_trip()
 
 static void test_giftwrap_unwrap()
 {
-	/*
 	struct ndb *ndb;
 	struct ndb_filter filter;
 	struct ndb_config config;
 	struct ndb_txn txn;
-	struct ndb_query_result results[10];
-	int count;
+	struct ndb_note *rumor;
+	int ok;
 	uint64_t subid;
 	ndb_default_config(&config);
+	const char *giftwrap;
+	uint64_t note_ids[2];
 
-	unsigned char one[32] = {
-		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+	static unsigned char recv_sec[32] = {
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2
 	};
 
-	unsigned char two[32] = {
-		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2
+	static const unsigned char recv_pub[32] = {
+		0xc6, 0x04, 0x7f, 0x94, 0x41, 0xed, 0x7d, 0x6d, 0x30, 0x45,
+		0x40, 0x6e, 0x95, 0xc0, 0x7c, 0xd8, 0x5c, 0x77, 0x8e, 0x4b,
+		0x8c, 0xef, 0x3c, 0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c, 0x70,
+		0x9e, 0xe5
+	};
+	
+	static const unsigned char rumor_id[32] = {
+		0x3e, 0x12, 0xe5, 0xc1, 0xc9, 0xa8, 0x9f, 0x3f, 0x08, 0x04,
+		0x62, 0x3f, 0xd7, 0x61, 0x01, 0xcf, 0xff, 0xba, 0xdf, 0x0d,
+		0x02, 0x59, 0x38, 0xdb, 0x64, 0x10, 0x55, 0xe6, 0x00, 0xdc,
+		0x8f, 0x73
+	};
+
+	static const unsigned char giftwrap_id[32] = {
+		0x94, 0x1e, 0xaf, 0x4a, 0x9b, 0xd0, 0x09, 0x0a, 0xb5, 0xd4,
+		0x14, 0xff, 0x5a, 0x68, 0x25, 0x4d, 0xa5, 0x78, 0x6f, 0x0b,
+		0xf8, 0xb8, 0xe1, 0x56, 0xbc, 0x37, 0xa7, 0x7e, 0xa2, 0x68,
+		0x0a, 0x92
 	};
 
 	assert(ndb_init(&ndb, test_dir, &config));
 
-	ndb_add_key(ndb, one);
-	ndb_add_key(ndb, two);
+	//ndb_add_key(ndb, one);
+	ndb_add_key(ndb, recv_sec);
 
 	ndb_filter_init(&filter);
-	ndb_filter_start_field(&filter, NDB_FILTER_KINDS);
-	ndb_filter_add_int_element(&filter, 1059);
+	ndb_filter_start_field(&filter, NDB_FILTER_IDS);
+	ndb_filter_add_id_element(&filter, rumor_id);
 	ndb_filter_end_field(&filter);
 	ndb_filter_end(&filter);
 
 	subid = ndb_subscribe(ndb, &filter, 1);
 
-	const char *giftwrap = "";
-	ndb_process_event(giftwrap)
+	giftwrap = "{\"id\":\"941eaf4a9bd0090ab5d414ff5a68254da5786f0bf8b8e156bc37a77ea2680a92\",\"pubkey\":\"5fac96633ffd0f68a037778dc40d7747ddf0ceaadb7986c23c0597a56b9ab6f6\",\"created_at\":1764513655,\"kind\":1059,\"tags\":[[\"p\",\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\"]],\"content\":\"AmoRXHPZ6cYI2YR1PL1J2BpxY8onrJHUvt3cOhAe1IOIk6wnighedqyUqQsJ/Bnq0qAAkldMipUuHmr1TRNeu/3Rf3AZ1+4N6/eSJb2GcVaaWkqJ6DIIW+YHvQZRuS/1ef3lo41+2zOFqJMvLiz/Pw1kLdDdi5pKWy0QHJIKFPuIE9XNhFMTMo+rYSIlpfiAXtzpM6qETFBJxabmaZOMlgnxQG6Mm2gB3Y6rmj9gLgxsPCaOnvmfi5xhA+jRvz8FYQ+WIU1ij7SFsssz27fISRRIMEOoq7CHPcsdY2Ly/PSp1t+aLpSz1e8Chnhf3lq/Y0mumLDS/BzNaFm38wQqCoWbxrn+7iLTMfINXoDm7gY6Qb4eZc/Am/wjRJsHm4F37bPiCAupzYWOPdJWO3a4TPmGaHk6MmyrHRu4V20iZK+svdJ257RuwMrYk39xCWNG985t1acPc5Of+ZKDnUcL5jVw0ZUOTrV10uq/UVoOHwDkz0mcsJ0Adhc0fKgiE7CWZgKbaO0PIaAL0I+2hs350dcEK3Go8vzMfiN1Uc7NUUMpjQzIRJC1J6CVf6HkvvQ+JD52RhXsVZN8TTkrpxEDqvCm8eSpamqIZuMbrTh5jJ/J+S83dI8rHvyAcmGrRes5wMOiVaFPglreO/H//AgvcR+N/zYOrV4qCWboU+oTBz7A/ZzMGGt6mhL4dmDKDW3p/HT0l5dEfAn71fdx/VH+jXquVr/9rCw2F4kLzXiNB6E3OBxp7bjkgnmAWCXeNL8NRcOT2l6LaF1l+xi3+NJGxP6tdry+OYz/C12jAZ223HWtQv62fLS3wAuwJH3QjrYromeWU+MNyTdMEFRyuxMq9mpYno7tYF6FpVAR7w9oIZME7F36+1I2b7MERXsgioEBGJFWotC9v5nEKWLJJajZFPlsFQf96Y6Cwovd4moVNmDJ8s2riRDx9D9NxDJxNkz0l+JSLTloTI9p7uMPC6LJtP6qgNAdNtasrUnPo8z5h7kYJR0U8ClsZbOZcf13cSdZck9jZp0kqiSBREhVHGLQmqirXm7UEnoTZYn8U74l3wsetgGiQ3AOAQ94REbzt1obHtGj4JG9Fd3KydWNMcOv1hLODw==\",\"sig\":\"ee99080081a408aa2ce0e2372a44aa0eb1e8e60aa7b4330909d7c7a701d84076a7815412c83a7aa1b783ed0942b0f5e2e2f63efeee8aa0c69503971c65370c3d\"}";
 
-	assert(count == 10);
-	*/
+	ndb_process_event(ndb, giftwrap, strlen(giftwrap));
+
+	ok = ndb_wait_for_notes(ndb, subid, note_ids,
+				sizeof(note_ids)/sizeof(note_ids[0]));
+	assert(ok == 1);
+
+	ndb_begin_query(ndb, &txn);
+	rumor = ndb_get_note_by_key(&txn, note_ids[0], NULL);
+
+	assert(ndb_note_is_rumor(rumor) == 1);
+	assert(ndb_note_kind(rumor) == 1);
+	assert(!strcmp(ndb_note_content(rumor), "hi"));
+	assert(!memcmp(ndb_note_rumor_giftwrap_id(rumor), giftwrap_id, 32));
+	assert(!memcmp(ndb_note_rumor_receiver_pubkey(rumor), recv_pub, 32));
+	assert(ndb_get_notekey_by_id(&txn, giftwrap_id));
+
+	ndb_end_query(&txn);
+
+
+	ndb_filter_destroy(&filter);
+	ndb_destroy(ndb);
+	printf("ok test_giftwrap_unwrap\n");
 }
 
 static void test_metadata()
@@ -2421,6 +2454,7 @@ void test_replay_attack() {
 
 	const char *ok_note = "[\"EVENT\",\"blah\",{\"id\": \"1f5f21b22e4c87b1d7cf9271a1c8aeaf5b49061af2c03cab706bbe2ebb9fefd9\",\"pubkey\": \"73764df506728297a9c1f359024d2f9c895001f4afda2d0afa844ce7a94778ca\",\"created_at\": 1750785986,\"kind\": 1,\"tags\": [],\"content\": \"ok\",\"sig\": \"bde9ee6933b01c11a9881a3ea4730c6e7f7d952c165fb7ab3f77488c5f73e6d60ce25a32386f2e1d0244c24fd840f25af5d2d04dc6d229ec0f67c7782e8879d9\"}]";
 
+	delete_test_db();
 	ndb_default_config(&config);
 	assert(ndb_init(&ndb, test_dir, &config));
 
@@ -2452,6 +2486,7 @@ void test_replay_attack() {
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
+	test_giftwrap_unwrap();
 	test_nip44_round_trip();
 	test_nip44_test_vector();
 	test_nip44_decrypt();

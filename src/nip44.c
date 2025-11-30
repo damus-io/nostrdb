@@ -471,8 +471,6 @@ nip44_encrypt(void *secp, const unsigned char *sender_seckey,
 		return NIP44_ERR_BUFFER_TOO_SMALL;
 
 	ciphertext_len = cursor.p - ciphertext;
-	printf("plaintext_size %d ciphertext '%.*s'\n", plaintext_size,
-			plaintext_size, plaintext);
 
 	/*
 	5. Encrypt padded content

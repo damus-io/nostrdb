@@ -2860,17 +2860,16 @@ int ndb_note_verify(void *ctx, unsigned char *scratch, size_t scratch_size,
 	// first, we ensure the id is valid by calculating the id independently
 	// from what is given to us
 	if (!ndb_calculate_id(note, scratch, scratch_size, id)) {
-		ndb_debug("ndb_note_verify: scratch buffer size too small");
+		ndb_debug("ndb_note_verify: scratch buffer size too small\n");
 		return 0;
 	}
 
 	if (memcmp(id, note->id, 32)) {
-		ndb_debug("ndb_note_verify: note id does not match!");
+		ndb_debug("ndb_note_verify: note id does not match!\n");
 		return 0;
 	}
 
         // id is ok, let's check signature
-
 	ok = secp256k1_xonly_pubkey_parse((secp256k1_context*)ctx,
 					  &xonly_pubkey,
 					  ndb_note_pubkey(note)) != 0;
@@ -3372,6 +3371,7 @@ static int ndb_ingester_process_note(secp256k1_context *secp,
 					   ndb_note_content_length(note),
 					   &meta);
 	} else if (note->kind == 1059) {
+		ndb_debug("processing giftwrap\n");
 		ndb_process_giftwrap(secp, ingester, note, keys, nkeys, relay,
 				     scratch, scratch_size);
 	}
@@ -6242,8 +6242,10 @@ static int ndb_ingest_rumor(secp256k1_context *secp,
 
 	rc = ndb_note_from_json_custom(rumor_json, json_len, &rumor,
 				       scratch, scratch_size, parse_cond);
-	if (!rc)
+	if (!rc) {
+		ndb_debug("failed to parse rumor json\n");
 		return 0;
+	}
 
 	sig = ndb_note_sig(rumor);
 
@@ -6296,24 +6298,36 @@ static int ndb_process_seal(secp256k1_context *secp,
 	int note_size;
 	size_t payload_len;
 	uint16_t decrypted_len;
+	unsigned char *old_scratch;
 	enum ndb_decrypt_result rc;
 
 	note_size = ndb_note_from_json(seal_json, json_len, &seal, scratch,
 				       scratch_size);
 
-	if (!note_size)
+	if (!note_size) {
+		ndb_debug("seal json parse failed (%ld scratch_size)\n",
+			  scratch_size);
 		return 0;
+	}
 
-	if (ndb_note_kind(seal) != 13)
+	if (ndb_note_kind(seal) != 13) {
+		ndb_debug("seal kind != 13: %d\n", ndb_note_kind(seal));
 		return 0;
+	}
 
-	if ((scratch_size - note_size) <= 0)
+	if ((scratch_size - note_size) <= 0) {
+		ndb_debug("process seal scratch size too small\n");
 		return 0;
+	}
+
+	scratch += note_size;
+	scratch_size -= note_size;
 
 	if (ndb_note_verify(secp,
-			    scratch + note_size, scratch_size - note_size,
+			    scratch, scratch_size,
 			    seal) == 0) {
 		/* seal is not valid, reject */
+		ndb_debug("seal signature was invalid\n");
 		return 0;
 	}
 
@@ -6324,21 +6338,24 @@ static int ndb_process_seal(secp256k1_context *secp,
 	/* decrypt the seal contents */
 	rc = nip44_decrypt(secp, sender_pubkey, unwrap_key->seckey,
 			   payload, payload_len,
-			   scratch + note_size, scratch_size - note_size,
+			   scratch, scratch_size,
 			   &decrypted, &decrypted_len);
 
-	if (rc != NIP44_OK)
+	if (rc != NIP44_OK) {
+		ndb_debug("seal nip44 decrypt failed: %s\n", nip44_err_msg(rc));
 		return 0;
+	}
 
-	if (scratch_size - note_size - decrypted_len <= 0)
-		return 0;
+	old_scratch = scratch;
+	scratch = decrypted + decrypted_len;
+	scratch_size -= scratch - old_scratch;
 
 	/* ingest rumor */
 	return ndb_ingest_rumor(secp, ingester,
 				(const char*)decrypted, decrypted_len,
 				sender_pubkey, relay,
-				scratch + note_size + decrypted_len,
-				scratch_size - note_size - decrypted_len,
+				scratch,
+				scratch_size,
 				wrap_id, unwrap_key,
 				keys, nkeys);
 }
@@ -6358,6 +6375,7 @@ int ndb_process_giftwrap(secp256k1_context *secp,
 	enum ndb_decrypt_result rc;
 	uint16_t decrypted_len;
 	size_t payload_len;
+	unsigned char *old_scratch;
 	int i;
 
 	wrap_id = ndb_note_id(note);
@@ -6393,6 +6411,11 @@ int ndb_process_giftwrap(secp256k1_context *secp,
 			continue;
 		}
 
+		old_scratch = scratch;
+		scratch = decrypted + decrypted_len;
+		if (scratch - old_scratch <= 0)
+			return 0;
+		scratch_size -= scratch - old_scratch;
 
 		/* decrypt success */
 		rc = ndb_process_seal(secp, ingester,
@@ -7385,7 +7408,7 @@ static inline int ndb_json_parser_init(struct ndb_json_parser *p,
 	// the more important stuff gets a larger chunk and then it spirals
 	// downward into smaller chunks. Thanks for coming to my TED talk.
 
-	if (!ndb_builder_init(&p->builder, buf, half))
+	if (!ndb_builder_init(&p->builder, buf, half)) 
 		return 0;
 
 	jsmn_init(&p->json_parser);
@@ -7398,6 +7421,7 @@ static inline int ndb_json_parser_parse(struct ndb_json_parser *p,
 {
 	jsmntok_t *tok;
 	int cap = ((unsigned char *)p->toks_end - (unsigned char*)p->toks)/sizeof(*p->toks);
+
 	int res =
 		jsmn_parse(&p->json_parser, p->json, p->json_len, p->toks, cap, cb != NULL);
 
@@ -8214,7 +8238,10 @@ int ndb_client_event_from_json(const char *json, int len, struct ndb_fce *fce,
 	struct ndb_json_parser parser;
 	struct ndb_event *ev = &fce->event;
 
-	ndb_json_parser_init(&parser, json, len, buf, bufsize);
+	if (!ndb_json_parser_init(&parser, json, len, buf, bufsize)) {
+		ndb_debug("failed to init parser\n");
+		return 0;
+	}
 
 	if ((res = ndb_json_parser_parse(&parser, cb)) < 0)
 		return res;
@@ -8255,7 +8282,10 @@ int ndb_ws_event_from_json(const char *json, int len, struct ndb_tce *tce,
 	tce->subid_len = 0;
 	tce->subid = "";
 
-	ndb_json_parser_init(&parser, json, len, buf, bufsize);
+	if (!ndb_json_parser_init(&parser, json, len, buf, bufsize)) {
+		ndb_debug("ndb_ws_event_from_json: failed to init json parser\n");
+		return 0;
+	}
 
 	if ((res = ndb_json_parser_parse(&parser, cb)) < 0)
 		return res;
@@ -8680,20 +8710,26 @@ int ndb_parse_json_note_custom(struct ndb_json_parser *parser,
 			if (tok->type != JSMN_PRIMITIVE || tok_len <= 0)
 				return 0;
 			if (!parse_unsigned_int(start, toksize(tok),
-						&parser->builder.note->kind))
+						&parser->builder.note->kind)) {
+					ndb_debug("kind parse_unsigned_int failed\n");
 					return 0;
+			}
 			parsed |= NDB_PARSED_KIND;
 		} else if (start[0] == 'c') {
 			if (jsoneq(json, tok, tok_len, "created_at")) {
 				// created_at
 				tok = &parser->toks[i+1];
 				start = json + tok->start;
-				if (tok->type != JSMN_PRIMITIVE || tok_len <= 0)
+				if (tok->type != JSMN_PRIMITIVE || tok_len <= 0) {
+					ndb_debug("creatd_at parse failed\n");
 					return 0;
+				}
 				// TODO: update to int64 in 2106 ... xD
 				unsigned int bigi;
-				if (!parse_unsigned_int(start, toksize(tok), &bigi))
+				if (!parse_unsigned_int(start, toksize(tok), &bigi)) {
+					ndb_debug("parsed_unsigned_int failed\n");
 					return 0;
+				}
 				parser->builder.note->created_at = bigi;
 				parsed |= NDB_PARSED_CREATED_AT;
 			} else if (jsoneq(json, tok, tok_len, "content")) {
@@ -8721,9 +8757,11 @@ int ndb_parse_json_note_custom(struct ndb_json_parser *parser,
 		}
 	}
 
-	//ndb_debug("parsed %d = %d, &->%d", parsed, NDB_PARSED_ALL, parsed & NDB_PARSED_ALL);
-	if (parsed != parse_cond)
+	if ((parsed & parse_cond) != parse_cond)  {
+		ndb_debug("json parse_cond failed, parsed(%d) != parse_cond(%d)\n",
+			  parsed, parse_cond);
 		return 0;
+	}
 
 	return ndb_builder_finalize(&parser->builder, note, NULL);
 }
@@ -8758,7 +8796,11 @@ int ndb_note_from_json_custom(const char *json, int len, struct ndb_note **note,
 	struct ndb_json_parser parser;
 	int res;
 
-	ndb_json_parser_init(&parser, json, len, buf, bufsize);
+	if (!ndb_json_parser_init(&parser, json, len, buf, bufsize)) {
+		ndb_debug("failed to init json parser in custom\n");
+		return 0;
+	}
+
 	if ((res = ndb_json_parser_parse(&parser, NULL)) < 0)
 		return res;
 
