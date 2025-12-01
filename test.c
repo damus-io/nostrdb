@@ -346,11 +346,11 @@ static void test_giftwrap_unwrap()
 	struct ndb_filter filter;
 	struct ndb_config config;
 	struct ndb_txn txn;
-	struct ndb_note *rumor;
+	struct ndb_note *rumor, *giftwrap;
 	int ok;
 	uint64_t subid;
 	ndb_default_config(&config);
-	const char *giftwrap;
+	const char *giftwrap_json;
 	uint64_t note_ids[2];
 	char buf[4096];
 
@@ -379,6 +379,7 @@ static void test_giftwrap_unwrap()
 		0x0a, 0x92
 	};
 
+	delete_test_db();
 	assert(ndb_init(&ndb, test_dir, &config));
 
 	//ndb_add_key(ndb, one);
@@ -392,9 +393,9 @@ static void test_giftwrap_unwrap()
 
 	subid = ndb_subscribe(ndb, &filter, 1);
 
-	giftwrap = "{\"id\":\"941eaf4a9bd0090ab5d414ff5a68254da5786f0bf8b8e156bc37a77ea2680a92\",\"pubkey\":\"5fac96633ffd0f68a037778dc40d7747ddf0ceaadb7986c23c0597a56b9ab6f6\",\"created_at\":1764513655,\"kind\":1059,\"tags\":[[\"p\",\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\"]],\"content\":\"AmoRXHPZ6cYI2YR1PL1J2BpxY8onrJHUvt3cOhAe1IOIk6wnighedqyUqQsJ/Bnq0qAAkldMipUuHmr1TRNeu/3Rf3AZ1+4N6/eSJb2GcVaaWkqJ6DIIW+YHvQZRuS/1ef3lo41+2zOFqJMvLiz/Pw1kLdDdi5pKWy0QHJIKFPuIE9XNhFMTMo+rYSIlpfiAXtzpM6qETFBJxabmaZOMlgnxQG6Mm2gB3Y6rmj9gLgxsPCaOnvmfi5xhA+jRvz8FYQ+WIU1ij7SFsssz27fISRRIMEOoq7CHPcsdY2Ly/PSp1t+aLpSz1e8Chnhf3lq/Y0mumLDS/BzNaFm38wQqCoWbxrn+7iLTMfINXoDm7gY6Qb4eZc/Am/wjRJsHm4F37bPiCAupzYWOPdJWO3a4TPmGaHk6MmyrHRu4V20iZK+svdJ257RuwMrYk39xCWNG985t1acPc5Of+ZKDnUcL5jVw0ZUOTrV10uq/UVoOHwDkz0mcsJ0Adhc0fKgiE7CWZgKbaO0PIaAL0I+2hs350dcEK3Go8vzMfiN1Uc7NUUMpjQzIRJC1J6CVf6HkvvQ+JD52RhXsVZN8TTkrpxEDqvCm8eSpamqIZuMbrTh5jJ/J+S83dI8rHvyAcmGrRes5wMOiVaFPglreO/H//AgvcR+N/zYOrV4qCWboU+oTBz7A/ZzMGGt6mhL4dmDKDW3p/HT0l5dEfAn71fdx/VH+jXquVr/9rCw2F4kLzXiNB6E3OBxp7bjkgnmAWCXeNL8NRcOT2l6LaF1l+xi3+NJGxP6tdry+OYz/C12jAZ223HWtQv62fLS3wAuwJH3QjrYromeWU+MNyTdMEFRyuxMq9mpYno7tYF6FpVAR7w9oIZME7F36+1I2b7MERXsgioEBGJFWotC9v5nEKWLJJajZFPlsFQf96Y6Cwovd4moVNmDJ8s2riRDx9D9NxDJxNkz0l+JSLTloTI9p7uMPC6LJtP6qgNAdNtasrUnPo8z5h7kYJR0U8ClsZbOZcf13cSdZck9jZp0kqiSBREhVHGLQmqirXm7UEnoTZYn8U74l3wsetgGiQ3AOAQ94REbzt1obHtGj4JG9Fd3KydWNMcOv1hLODw==\",\"sig\":\"ee99080081a408aa2ce0e2372a44aa0eb1e8e60aa7b4330909d7c7a701d84076a7815412c83a7aa1b783ed0942b0f5e2e2f63efeee8aa0c69503971c65370c3d\"}";
+	giftwrap_json = "{\"id\":\"941eaf4a9bd0090ab5d414ff5a68254da5786f0bf8b8e156bc37a77ea2680a92\",\"pubkey\":\"5fac96633ffd0f68a037778dc40d7747ddf0ceaadb7986c23c0597a56b9ab6f6\",\"created_at\":1764513655,\"kind\":1059,\"tags\":[[\"p\",\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\"]],\"content\":\"AmoRXHPZ6cYI2YR1PL1J2BpxY8onrJHUvt3cOhAe1IOIk6wnighedqyUqQsJ/Bnq0qAAkldMipUuHmr1TRNeu/3Rf3AZ1+4N6/eSJb2GcVaaWkqJ6DIIW+YHvQZRuS/1ef3lo41+2zOFqJMvLiz/Pw1kLdDdi5pKWy0QHJIKFPuIE9XNhFMTMo+rYSIlpfiAXtzpM6qETFBJxabmaZOMlgnxQG6Mm2gB3Y6rmj9gLgxsPCaOnvmfi5xhA+jRvz8FYQ+WIU1ij7SFsssz27fISRRIMEOoq7CHPcsdY2Ly/PSp1t+aLpSz1e8Chnhf3lq/Y0mumLDS/BzNaFm38wQqCoWbxrn+7iLTMfINXoDm7gY6Qb4eZc/Am/wjRJsHm4F37bPiCAupzYWOPdJWO3a4TPmGaHk6MmyrHRu4V20iZK+svdJ257RuwMrYk39xCWNG985t1acPc5Of+ZKDnUcL5jVw0ZUOTrV10uq/UVoOHwDkz0mcsJ0Adhc0fKgiE7CWZgKbaO0PIaAL0I+2hs350dcEK3Go8vzMfiN1Uc7NUUMpjQzIRJC1J6CVf6HkvvQ+JD52RhXsVZN8TTkrpxEDqvCm8eSpamqIZuMbrTh5jJ/J+S83dI8rHvyAcmGrRes5wMOiVaFPglreO/H//AgvcR+N/zYOrV4qCWboU+oTBz7A/ZzMGGt6mhL4dmDKDW3p/HT0l5dEfAn71fdx/VH+jXquVr/9rCw2F4kLzXiNB6E3OBxp7bjkgnmAWCXeNL8NRcOT2l6LaF1l+xi3+NJGxP6tdry+OYz/C12jAZ223HWtQv62fLS3wAuwJH3QjrYromeWU+MNyTdMEFRyuxMq9mpYno7tYF6FpVAR7w9oIZME7F36+1I2b7MERXsgioEBGJFWotC9v5nEKWLJJajZFPlsFQf96Y6Cwovd4moVNmDJ8s2riRDx9D9NxDJxNkz0l+JSLTloTI9p7uMPC6LJtP6qgNAdNtasrUnPo8z5h7kYJR0U8ClsZbOZcf13cSdZck9jZp0kqiSBREhVHGLQmqirXm7UEnoTZYn8U74l3wsetgGiQ3AOAQ94REbzt1obHtGj4JG9Fd3KydWNMcOv1hLODw==\",\"sig\":\"ee99080081a408aa2ce0e2372a44aa0eb1e8e60aa7b4330909d7c7a701d84076a7815412c83a7aa1b783ed0942b0f5e2e2f63efeee8aa0c69503971c65370c3d\"}";
 
-	ndb_process_event(ndb, giftwrap, strlen(giftwrap));
+	ndb_process_event(ndb, giftwrap_json, strlen(giftwrap_json));
 
 	ok = ndb_wait_for_notes(ndb, subid, note_ids,
 				sizeof(note_ids)/sizeof(note_ids[0]));
@@ -408,12 +409,13 @@ static void test_giftwrap_unwrap()
 	assert(!strcmp(ndb_note_content(rumor), "hi"));
 	assert(!memcmp(ndb_note_rumor_giftwrap_id(rumor), giftwrap_id, 32));
 	assert(!memcmp(ndb_note_rumor_receiver_pubkey(rumor), recv_pub, 32));
-	assert(ndb_get_notekey_by_id(&txn, giftwrap_id));
+	giftwrap = ndb_get_note_by_id(&txn, giftwrap_id, NULL, NULL);
+	assert(giftwrap);
+	assert(*ndb_note_flags(giftwrap) & NDB_NOTE_FLAG_UNWRAPPED);
 	ndb_note_json(rumor, buf, sizeof(buf));
 	printf("# rumor json: '%s'\n", buf);
 
 	ndb_end_query(&txn);
-
 
 	ndb_filter_destroy(&filter);
 	ndb_destroy(ndb);

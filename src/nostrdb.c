@@ -6362,7 +6362,7 @@ static int ndb_process_seal(secp256k1_context *secp,
 
 int ndb_process_giftwrap(secp256k1_context *secp,
 			 struct ndb_ingester *ingester,
-			 struct ndb_note *note,
+			 struct ndb_note *giftwrap,
 			 struct keypair *keys, int nkeys,
 			 const char *relay,
 			 unsigned char *scratch, size_t scratch_size)
@@ -6373,15 +6373,15 @@ int ndb_process_giftwrap(secp256k1_context *secp,
 	struct keypair *unwrap_key;
 	unsigned char *decrypted, *wrap_id;
 	enum ndb_decrypt_result rc;
-	uint16_t decrypted_len;
+	uint16_t decrypted_len, *flags;
 	size_t payload_len;
 	unsigned char *old_scratch;
 	int i;
 
-	wrap_id = ndb_note_id(note);
-	payload = ndb_note_content(note);
-	sender_pubkey = ndb_note_pubkey(note);
-	payload_len = ndb_note_content_length(note);
+	wrap_id = ndb_note_id(giftwrap);
+	payload = ndb_note_content(giftwrap);
+	sender_pubkey = ndb_note_pubkey(giftwrap);
+	payload_len = ndb_note_content_length(giftwrap);
 
 	/* decode payload! */
 	if ((rc = nip44_decode_payload(&decoded, scratch, scratch_size,
@@ -6427,6 +6427,11 @@ int ndb_process_giftwrap(secp256k1_context *secp,
 		if (!rc) {
 			fprintf(stderr, "ndb_process_giftwrap: failed to process seal\n");
 			return 0;
+		} else  {
+			/* mark giftwrap as unwrapped */
+			flags = ndb_note_flags(giftwrap);
+			*flags = *flags | NDB_NOTE_FLAG_UNWRAPPED;
+			return 1;
 		}
 	}
 
