@@ -239,7 +239,7 @@ static void test_nip44_decrypt()
 	};
 
 	/* 81a5339bf9faf8915c48f3ddcad4d3a55406c77b2781c8c9945dfdade6ae1189 */
- 
+
 	/*
 	static const unsigned char recv_pub[32] = {
 		0xf1, 0xec, 0xfe, 0xb2, 0xed, 0xa7, 0xe7, 0x7c, 0xd7, 0x2e,
@@ -258,7 +258,7 @@ static void test_nip44_decrypt()
 
 	static const char encrypted[] = "Ake9vGvum3cJJrF62qHwVDb3HC3UEP2t0G1GLByJlXi7OP4awMDomJej0aVkiZUHYPJvqgsbL30BZwBCfkd8F1596jJcOFC5KUXsCb45mHS+EqA5rs13/37HlImp76PO/1ns";
 	//static const char encrypted[] = "AknLKK+v4mZyMpShz5+/iyADJk4SUEQwGV7BUWQRmCHDD6KBO7VStk16StpF4TFTGrEV1BmkZVSlNYVu4cl9C0egBXL0X9AzJBM0I3wotSUQEZwGXwnts0HdhFAQepq4kmrc";
-	
+
 	static const char *expected = "hello, test.c";
 
 	unsigned char buffer[1024];
@@ -288,10 +288,10 @@ static void test_nip44_decrypt()
 static void test_nip44_round_trip()
 {
 	static const unsigned char send_sec[32] = {
-		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1 
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
 	};
 	static const unsigned char recv_sec[32] = {
-		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2 
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2
 	};
 	static const unsigned char send_pub[32] = {
 		0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
@@ -340,6 +340,119 @@ static void test_nip44_round_trip()
 	secp256k1_context_destroy(context);
 }
 
+static void kind_filter(struct ndb_filter *f, uint64_t kind)
+{
+	ndb_filter_init(f);
+	ndb_filter_start_field(f, NDB_FILTER_KINDS);
+	ndb_filter_add_int_element(f, kind);
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+}
+
+static void test_giftwrap_reprocess()
+{
+	struct ndb *ndb;
+	struct ndb_filter filter;
+	struct ndb_config config;
+	struct ndb_txn txn;
+	struct ndb_note *rumor, *giftwrap;
+	int ok;
+	uint64_t subid;
+	ndb_default_config(&config);
+	const char *giftwrap_json;
+	uint64_t note_ids[2];
+	char buf[4096];
+
+	static unsigned char recv_sec[32] = {
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2
+	};
+
+	static const unsigned char recv_pub[32] = {
+		0xc6, 0x04, 0x7f, 0x94, 0x41, 0xed, 0x7d, 0x6d, 0x30, 0x45,
+		0x40, 0x6e, 0x95, 0xc0, 0x7c, 0xd8, 0x5c, 0x77, 0x8e, 0x4b,
+		0x8c, 0xef, 0x3c, 0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c, 0x70,
+		0x9e, 0xe5
+	};
+
+	static const unsigned char giftwrap_id[32] = {
+		0x94, 0x1e, 0xaf, 0x4a, 0x9b, 0xd0, 0x09, 0x0a, 0xb5, 0xd4,
+		0x14, 0xff, 0x5a, 0x68, 0x25, 0x4d, 0xa5, 0x78, 0x6f, 0x0b,
+		0xf8, 0xb8, 0xe1, 0x56, 0xbc, 0x37, 0xa7, 0x7e, 0xa2, 0x68,
+		0x0a, 0x92
+	};
+
+	delete_test_db();
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	//ndb_add_key(ndb, one);
+	//ndb_add_key(ndb, recv_sec);
+
+	kind_filter(&filter, 1059);
+
+	subid = ndb_subscribe(ndb, &filter, 1);
+
+	giftwrap_json = "{\"id\":\"941eaf4a9bd0090ab5d414ff5a68254da5786f0bf8b8e156bc37a77ea2680a92\",\"pubkey\":\"5fac96633ffd0f68a037778dc40d7747ddf0ceaadb7986c23c0597a56b9ab6f6\",\"created_at\":1764513655,\"kind\":1059,\"tags\":[[\"p\",\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\"]],\"content\":\"AmoRXHPZ6cYI2YR1PL1J2BpxY8onrJHUvt3cOhAe1IOIk6wnighedqyUqQsJ/Bnq0qAAkldMipUuHmr1TRNeu/3Rf3AZ1+4N6/eSJb2GcVaaWkqJ6DIIW+YHvQZRuS/1ef3lo41+2zOFqJMvLiz/Pw1kLdDdi5pKWy0QHJIKFPuIE9XNhFMTMo+rYSIlpfiAXtzpM6qETFBJxabmaZOMlgnxQG6Mm2gB3Y6rmj9gLgxsPCaOnvmfi5xhA+jRvz8FYQ+WIU1ij7SFsssz27fISRRIMEOoq7CHPcsdY2Ly/PSp1t+aLpSz1e8Chnhf3lq/Y0mumLDS/BzNaFm38wQqCoWbxrn+7iLTMfINXoDm7gY6Qb4eZc/Am/wjRJsHm4F37bPiCAupzYWOPdJWO3a4TPmGaHk6MmyrHRu4V20iZK+svdJ257RuwMrYk39xCWNG985t1acPc5Of+ZKDnUcL5jVw0ZUOTrV10uq/UVoOHwDkz0mcsJ0Adhc0fKgiE7CWZgKbaO0PIaAL0I+2hs350dcEK3Go8vzMfiN1Uc7NUUMpjQzIRJC1J6CVf6HkvvQ+JD52RhXsVZN8TTkrpxEDqvCm8eSpamqIZuMbrTh5jJ/J+S83dI8rHvyAcmGrRes5wMOiVaFPglreO/H//AgvcR+N/zYOrV4qCWboU+oTBz7A/ZzMGGt6mhL4dmDKDW3p/HT0l5dEfAn71fdx/VH+jXquVr/9rCw2F4kLzXiNB6E3OBxp7bjkgnmAWCXeNL8NRcOT2l6LaF1l+xi3+NJGxP6tdry+OYz/C12jAZ223HWtQv62fLS3wAuwJH3QjrYromeWU+MNyTdMEFRyuxMq9mpYno7tYF6FpVAR7w9oIZME7F36+1I2b7MERXsgioEBGJFWotC9v5nEKWLJJajZFPlsFQf96Y6Cwovd4moVNmDJ8s2riRDx9D9NxDJxNkz0l+JSLTloTI9p7uMPC6LJtP6qgNAdNtasrUnPo8z5h7kYJR0U8ClsZbOZcf13cSdZck9jZp0kqiSBREhVHGLQmqirXm7UEnoTZYn8U74l3wsetgGiQ3AOAQ94REbzt1obHtGj4JG9Fd3KydWNMcOv1hLODw==\",\"sig\":\"ee99080081a408aa2ce0e2372a44aa0eb1e8e60aa7b4330909d7c7a701d84076a7815412c83a7aa1b783ed0942b0f5e2e2f63efeee8aa0c69503971c65370c3d\"}";
+
+	ndb_process_event(ndb, giftwrap_json, strlen(giftwrap_json));
+
+	ok = ndb_wait_for_notes(ndb, subid, note_ids,
+				sizeof(note_ids)/sizeof(note_ids[0]));
+	assert(ok == 1);
+	assert(ndb_unsubscribe(ndb, subid));
+
+	ndb_begin_query(ndb, &txn);
+	giftwrap = ndb_get_note_by_key(&txn, note_ids[0], NULL);
+	assert(giftwrap);
+
+	ndb_end_query(&txn);
+
+	ndb_filter_destroy(&filter);
+	kind_filter(&filter, 1);
+
+	subid = ndb_subscribe(ndb, &filter, 1);
+
+	ndb_add_key(ndb, recv_sec);
+	ndb_begin_query(ndb, &txn);
+	ndb_process_giftwraps(ndb, &txn);
+	ndb_end_query(&txn);
+
+	ok = ndb_wait_for_notes(ndb, subid, note_ids,
+				sizeof(note_ids)/sizeof(note_ids[0]));
+	assert(ndb_unsubscribe(ndb, subid));
+
+	ndb_begin_query(ndb, &txn);
+	rumor = ndb_get_note_by_key(&txn, note_ids[0], NULL);
+	assert(rumor);
+
+	assert(ndb_note_is_rumor(rumor) == 1);
+	assert(ndb_note_kind(rumor) == 1);
+	assert(!strcmp(ndb_note_content(rumor), "hi"));
+	assert(!memcmp(ndb_note_rumor_giftwrap_id(rumor), giftwrap_id, 32));
+	assert(!memcmp(ndb_note_rumor_receiver_pubkey(rumor), recv_pub, 32));
+	ndb_end_query(&txn);
+
+	/* wait for updated giftwrap */
+	ndb_filter_destroy(&filter);
+	kind_filter(&filter, 1059);
+
+	subid = ndb_subscribe(ndb, &filter, 1);
+	ok = ndb_wait_for_notes(ndb, subid, note_ids,
+				sizeof(note_ids)/sizeof(note_ids[0]));
+
+	ndb_begin_query(ndb, &txn);
+	giftwrap = ndb_get_note_by_key(&txn, note_ids[0], NULL);
+	assert(giftwrap);
+	assert(*ndb_note_flags(giftwrap) & NDB_NOTE_FLAG_UNWRAPPED);
+	ndb_note_json(rumor, buf, sizeof(buf));
+	//printf("# rumor json: '%s'\n", buf);
+
+	ndb_end_query(&txn);
+
+	ndb_filter_destroy(&filter);
+	ndb_destroy(ndb);
+	printf("ok test_giftwrap_reprocess\n");
+}
+
 static void test_giftwrap_unwrap()
 {
 	struct ndb *ndb;
@@ -364,7 +477,7 @@ static void test_giftwrap_unwrap()
 		0x8c, 0xef, 0x3c, 0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c, 0x70,
 		0x9e, 0xe5
 	};
-	
+
 	static const unsigned char rumor_id[32] = {
 		0x3e, 0x12, 0xe5, 0xc1, 0xc9, 0xa8, 0x9f, 0x3f, 0x08, 0x04,
 		0x62, 0x3f, 0xd7, 0x61, 0x01, 0xcf, 0xff, 0xba, 0xdf, 0x0d,
@@ -409,11 +522,13 @@ static void test_giftwrap_unwrap()
 	assert(!strcmp(ndb_note_content(rumor), "hi"));
 	assert(!memcmp(ndb_note_rumor_giftwrap_id(rumor), giftwrap_id, 32));
 	assert(!memcmp(ndb_note_rumor_receiver_pubkey(rumor), recv_pub, 32));
+	ndb_end_query(&txn);
+	ndb_begin_query(ndb, &txn);
 	giftwrap = ndb_get_note_by_id(&txn, giftwrap_id, NULL, NULL);
 	assert(giftwrap);
 	assert(*ndb_note_flags(giftwrap) & NDB_NOTE_FLAG_UNWRAPPED);
 	ndb_note_json(rumor, buf, sizeof(buf));
-	printf("# rumor json: '%s'\n", buf);
+	//printf("# rumor json: '%s'\n", buf);
 
 	ndb_end_query(&txn);
 
@@ -614,7 +729,7 @@ static void test_invoice_encoding(const char *bolt11_str)
 		assert(!memcmp(bolt11->description_hash->u.u8, invoice.description_hash, 32));
 	else
 		assert(0);
-	
+
 	tal_free(bolt11);
 }
 
@@ -973,7 +1088,7 @@ static void test_basic_event() {
 
 	// test iterator
 	struct ndb_iterator iter, *it = &iter;
-	
+
 	ndb_tags_iterate_start(note, it);
 	ok = ndb_tags_iterate_next(it);
 	assert(ok);
@@ -1053,7 +1168,7 @@ static void test_parse_contact_list()
 	assert(ndb_calculate_id(note, json, alloc_size, ndb_note_id(note)));
 	assert(!memcmp(ndb_note_id(note), id, 32));
 
-	const char* expected_content = 
+	const char* expected_content =
 	"{\"wss://nos.lol\":{\"write\":true,\"read\":true},"
 	"\"wss://relay.damus.io\":{\"write\":true,\"read\":true},"
 	"\"ws://monad.jb55.com:8080\":{\"write\":true,\"read\":true},"
@@ -1179,7 +1294,7 @@ static void test_fetch_last_noteid()
 	struct ndb_note *note = ndb_get_note_by_id(&txn, id, &len, NULL);
 	assert(note != NULL);
 	assert(ndb_note_created_at(note) == 1650054135);
-	
+
 	unsigned char pk[32] = { 0x32, 0xe1, 0x82, 0x76, 0x35, 0x45, 0x0e, 0xbb, 0x3c, 0x5a, 0x7d, 0x12, 0xc1, 0xf8, 0xe7, 0xb2, 0xb5, 0x14, 0x43, 0x9a, 0xc1, 0x0a, 0x67, 0xee, 0xf3, 0xd9, 0xfd, 0x9c, 0x5c, 0x68, 0xe2, 0x45 };
 
 	unsigned char profile_note_id[32] = {
@@ -1339,7 +1454,7 @@ static void test_parse_json() {
 	struct ndb_note *note;
 #define HEX_ID "5004a081e397c6da9dc2f2d6b3134006a9d0e8c1b46689d9fe150bb2f21a204d"
 #define HEX_PK "b169f596968917a1abeb4234d3cf3aa9baee2112e58998d17c6db416ad33fe40"
-	static const char *json = 
+	static const char *json =
 		"{\"id\": \"" HEX_ID "\",\"pubkey\": \"" HEX_PK "\",\"created_at\": 1689836342,\"kind\": 1,\"tags\": [[\"p\",\"" HEX_ID "\"], [\"word\", \"words\", \"w\"]],\"content\": \"共通語\",\"sig\": \"e4d528651311d567f461d7be916c37cbf2b4d530e672f29f15f353291ed6df60c665928e67d2f18861c5ca88\"}";
 	int ok;
 
@@ -1744,7 +1859,7 @@ static void test_queue_boundary_conditions() {
     int old_tail = q.tail;
     int old_count = q.count;
     assert(prot_queue_push(&q, &data) == 0);
-    
+
     // Assert the queue's state has not changed
     assert(old_head == q.head);
     assert(old_tail == q.tail);
@@ -1760,7 +1875,7 @@ static void test_queue_boundary_conditions() {
     old_tail = q.tail;
     old_count = q.count;
     assert(prot_queue_try_pop_all(&q, &data, 1) == 0);
-    
+
     // Assert the queue's state has not changed
     assert(old_head == q.head);
     assert(old_tail == q.tail);
@@ -2491,6 +2606,7 @@ void test_replay_attack() {
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
+	test_giftwrap_reprocess();
 	test_giftwrap_unwrap();
 	test_nip44_round_trip();
 	test_nip44_test_vector();

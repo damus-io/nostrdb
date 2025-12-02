@@ -565,6 +565,8 @@ void ndb_ingest_meta_init(struct ndb_ingest_meta *meta, unsigned client, const c
 // Process an event, recording the relay where it came from.
 int ndb_process_event_with(struct ndb *, const char *json, int len, struct ndb_ingest_meta *meta);
 int ndb_process_events(struct ndb *, const char *ldjson, size_t len);
+/* reprocess unwrapped giftwraps */
+int ndb_process_giftwraps(struct ndb *, struct ndb_txn *);
 int ndb_process_events_with(struct ndb *ndb, const char *ldjson, size_t json_len, struct ndb_ingest_meta *meta);
 #ifndef _WIN32
 // TODO: fix on windows
