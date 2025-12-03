@@ -29,7 +29,7 @@ static int usage()
 	printf("	print-relay-kind-index-keys\n");
 	printf("	print-author-kind-index-keys\n");
 	printf("	print-note-metadata\n");
-	printf("	import <line-delimited json file>\n\n");
+	printf("	import [--add-key <hex-seckey> (for giftwraps)] <line-delimited json file>\n\n");
 
 	printf("settings\n\n");
 
@@ -417,11 +417,30 @@ int main(int argc, char *argv[])
 		ndb_filter_destroy(f);
 
 		free(results);
-	} else if (argc == 3 && !strcmp(argv[1], "import")) {
-		if (!strcmp(argv[2], "-")) {
+	} else if (argc >= 3 && !strcmp(argv[1], "import")) {
+		argv+=2;
+		argc-=2;
+
+		if (!strcmp(argv[0], "--add-key")) {
+			argv++;
+			argc--;
+
+			len = strlen(argv[0]);
+			if (len != 64 || !hex_decode(argv[0], 64, tmp_id, sizeof(tmp_id))) {
+				fprintf(stderr, "invalid --add-key hex pubkey\n");
+				res = 42;
+				goto cleanup;
+			}
+
+			argv++;
+			argc--;
+			ndb_add_key(ndb, tmp_id);
+		}
+
+		if (!strcmp(argv[0], "-")) {
 			ndb_process_events_stream(ndb, stdin);
 		} else {
-			map_file(argv[2], &data, &data_len);
+			map_file(argv[0], &data, &data_len);
 			ndb_process_events(ndb, (const char *)data, data_len);
 			//ndb_process_client_events(ndb, (const char *)data, data_len);
 		}
