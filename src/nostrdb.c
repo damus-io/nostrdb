@@ -5507,6 +5507,50 @@ static void ndb_text_search_results_init(
 	results->num_results = 0;
 }
 
+static int ndb_text_search_result_cmp_desc(const void *pa, const void *pb)
+{
+	const struct ndb_text_search_result *a, *b;
+
+	a = pa;
+	b = pb;
+
+	// Order newest-first; tie-break to keep results deterministic for UI layers.
+	if (a->key.timestamp < b->key.timestamp)
+		return 1;
+	if (a->key.timestamp > b->key.timestamp)
+		return -1;
+
+	if (a->key.note_id < b->key.note_id)
+		return 1;
+	if (a->key.note_id > b->key.note_id)
+		return -1;
+
+	if (a->key.word_index < b->key.word_index)
+		return 1;
+	if (a->key.word_index > b->key.word_index)
+		return -1;
+
+	return 0;
+}
+
+static int ndb_text_search_result_cmp_asc(const void *pa, const void *pb)
+{
+	return -ndb_text_search_result_cmp_desc(pa, pb);
+}
+
+static void ndb_sort_text_search_results(struct ndb_text_search_results *results,
+					 enum ndb_search_order order)
+{
+	if (!results || results->num_results < 2)
+		return;
+
+	qsort(results->results, results->num_results,
+	      sizeof(results->results[0]),
+	      order == NDB_ORDER_ASCENDING ?
+	      ndb_text_search_result_cmp_asc :
+	      ndb_text_search_result_cmp_desc);
+}
+
 void ndb_default_text_search_config(struct ndb_text_search_config *cfg)
 {
 	cfg->order = NDB_ORDER_DESCENDING;
@@ -5565,6 +5609,7 @@ int ndb_text_search_with(struct ndb_txn *txn, const char *query,
 	struct ndb_word *search_word;
 	struct ndb_note *note;
 	struct cursor cur;
+	enum ndb_search_order order;
 	uint64_t since, until, timestamp_op, *pint;
 	size_t note_size;
 	ndb_text_search_key_order_fn key_order_fn;
@@ -5583,6 +5628,7 @@ int ndb_text_search_with(struct ndb_txn *txn, const char *query,
 	until = UINT64_MAX;
 	since = 0;
 	limit = MAX_TEXT_SEARCH_RESULTS;
+	order = NDB_ORDER_DESCENDING;
 
 	// until, since from filter
 	if (filter != NULL) {
@@ -5600,7 +5646,8 @@ int ndb_text_search_with(struct ndb_txn *txn, const char *query,
 	key_order_fn = ndb_make_text_search_key_high;
 	timestamp_op = until;
 	if (config) {
-		if (config->order == NDB_ORDER_ASCENDING) {
+		order = config->order;
+		if (order == NDB_ORDER_ASCENDING) {
 			order_op = MDB_NEXT;
 			// set the min timestamp value to since when ascending
 			timestamp_op = since;
@@ -5775,6 +5822,8 @@ cont:
 
 done:
 	mdb_cursor_close(cursor);
+	// Sort to guarantee deterministic ordering for consumers.
+	ndb_sort_text_search_results(results, order);
 
 	return 1;
 }
