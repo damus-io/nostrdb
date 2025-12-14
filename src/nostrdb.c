@@ -6195,6 +6195,13 @@ static int handle_reprocessed_giftwrap(
 	*flags = *flags | NDB_NOTE_FLAG_UNWRAPPED;
 
 	msg.type = NDB_WRITER_NOTE;
+
+	/* relay must be dup'd because it is assumed to be cloned */
+	if (relay != NULL) {
+		relay = strdup(relay);
+		if (relay == NULL)
+			return 0;
+	}
 	ndb_writer_note_init(&msg.note, giftwrap, note_size, relay, note_key);
 
 	return ndb_writer_queue_msg(writer_inbox, &msg);
@@ -6345,6 +6352,12 @@ static int ndb_ingest_rumor(secp256k1_context *secp,
 	rumor_msg = malloc(rc);
 	memcpy(rumor_msg, rumor, rc);
 
+	/* relay must be dup'd because it is assumed to be cloned */
+	if (relay != NULL) {
+		relay = strdup(relay);
+		if (relay == NULL)
+			return 0;
+	}
 	return ndb_ingester_process_note(secp, rumor_msg, rc, ingester,
 					 scratch+rc, scratch_size-rc,
 					 relay, keys, nkeys);
