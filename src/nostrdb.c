@@ -7029,7 +7029,6 @@ static void *ndb_ingester_thread(void *data)
 				break;
 			case NDB_INGEST_ADD_KEY:
 			case NDB_INGEST_QUIT:
-				any_event = 0;
 				break;
 			}
 		}
