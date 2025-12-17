@@ -24,6 +24,10 @@
 #include <inttypes.h>
 #include <stddef.h>
 
+/* Forward declarations for NostrDB integration */
+struct ndb_txn;
+struct ndb_filter;
+
 /*
  * Protocol version byte.
  * V1 = 0x61, future versions increment (0x62, 0x63, etc.)
@@ -559,6 +563,42 @@ size_t ndb_negentropy_storage_lower_bound(const struct ndb_negentropy_storage *s
 int ndb_negentropy_storage_fingerprint(const struct ndb_negentropy_storage *storage,
                                         size_t begin, size_t end,
                                         unsigned char *fingerprint_out);
+
+
+/* ============================================================
+ * FILTER-BASED INITIALIZATION (NostrDB Integration)
+ * ============================================================
+ *
+ * These functions integrate negentropy with NostrDB's query system,
+ * allowing storage to be populated directly from a NIP-01 filter
+ * rather than manually adding items.
+ */
+
+/*
+ * Populate storage from a NostrDB filter query.
+ *
+ * This queries the database using the provided filter and adds all
+ * matching events to the storage. The storage should be initialized
+ * but not sealed before calling this function.
+ *
+ * After this function returns successfully, the storage is automatically
+ * sealed and ready for use.
+ *
+ * Parameters:
+ *   storage:  Initialized (but not sealed) storage
+ *   txn:      Active read transaction
+ *   filter:   NIP-01 filter to query events
+ *   limit:    Maximum number of events to add (0 = use filter's limit or 10000)
+ *
+ * Returns: Number of items added, or -1 on error.
+ *
+ * Note: The transaction must remain valid for the lifetime of the storage
+ * since we only store references to the event data.
+ */
+int ndb_negentropy_storage_from_filter(struct ndb_negentropy_storage *storage,
+                                        struct ndb_txn *txn,
+                                        struct ndb_filter *filter,
+                                        int limit);
 
 
 /* ============================================================

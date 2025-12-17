@@ -1122,6 +1122,106 @@ int ndb_negentropy_storage_fingerprint(const struct ndb_negentropy_storage *stor
 
 
 /* ============================================================
+ * FILTER-BASED INITIALIZATION (NostrDB Integration)
+ * ============================================================
+ *
+ * This section requires the full nostrdb library. It's compiled
+ * only when NDB_NEGENTROPY_NOSTRDB is defined (which happens
+ * automatically when building as part of nostrdb).
+ *
+ * For standalone testing of core negentropy functions, compile
+ * without this define.
+ */
+
+#ifndef NDB_NEGENTROPY_STANDALONE
+
+#include "nostrdb.h"
+
+/* Default limit for filter queries if not specified */
+#define DEFAULT_QUERY_LIMIT 10000
+
+
+/**
+ * Populate storage from a NostrDB filter query.
+ *
+ * Queries the database using the provided filter and adds all matching
+ * events to the storage. The storage is automatically sealed after
+ * population.
+ *
+ * @param storage  Initialized (but not sealed) storage
+ * @param txn      Active read transaction
+ * @param filter   NIP-01 filter to query events
+ * @param limit    Max events to add (0 = DEFAULT_QUERY_LIMIT)
+ * @return Number of items added, or -1 on error
+ */
+int ndb_negentropy_storage_from_filter(struct ndb_negentropy_storage *storage,
+                                        struct ndb_txn *txn,
+                                        struct ndb_filter *filter,
+                                        int limit)
+{
+	struct ndb_query_result *results;
+	int result_count;
+	int query_limit;
+	int i;
+	int added;
+
+	/* Guard: validate inputs */
+	if (storage == NULL || txn == NULL || filter == NULL)
+		return -1;
+
+	/* Guard: storage must not already be sealed */
+	if (storage->sealed)
+		return -1;
+
+	/* Determine query limit */
+	query_limit = (limit > 0) ? limit : DEFAULT_QUERY_LIMIT;
+
+	/* Allocate results buffer */
+	results = malloc((size_t)query_limit * sizeof(struct ndb_query_result));
+	if (results == NULL)
+		return -1;
+
+	result_count = 0;
+	added = 0;
+
+	/* Execute query */
+	if (!ndb_query(txn, filter, 1, results, query_limit, &result_count)) {
+		free(results);
+		return -1;
+	}
+
+	/* Add each result to storage */
+	for (i = 0; i < result_count; i++) {
+		struct ndb_note *note = results[i].note;
+		uint64_t timestamp;
+		unsigned char *id;
+
+		/* Get timestamp and ID from note */
+		timestamp = (uint64_t)ndb_note_created_at(note);
+		id = ndb_note_id(note);
+
+		/* Add to storage (copies the ID) */
+		if (!ndb_negentropy_storage_add(storage, timestamp, id)) {
+			free(results);
+			return -1;
+		}
+
+		added++;
+	}
+
+	free(results);
+
+	/* Seal storage after populating from filter */
+	if (!ndb_negentropy_storage_seal(storage))
+		return -1;
+
+	return added;
+}
+
+#endif /* NDB_NEGENTROPY_STANDALONE */
+
+
+/* ============================================================
  * RECONCILIATION STATE MACHINE
  * ============================================================
  *
