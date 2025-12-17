@@ -3476,6 +3476,19 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 	int ok;
 	size_t bufsize, note_size;
 
+	/*
+	 * Guard: read_txn must be valid.
+	 *
+	 * This function requires a read transaction for duplicate detection
+	 * and relay processing. If read_txn is NULL, the batching logic has
+	 * a bug (e.g., any_event not set correctly). Fail fast rather than
+	 * crash later in LMDB calls.
+	 */
+	if (read_txn == NULL) {
+		ndb_debug("BUG: ndb_ingester_process_event called with NULL read_txn\n");
+		return 0;
+	}
+
 	ok = 0;
 
 	// we will use this to check if we already have it in the DB during
@@ -6951,6 +6964,12 @@ static int ndb_ingester_reprocess_giftwrap(
 	struct ndb_note *giftwrap;
 	size_t note_size;
 	int rc;
+
+	/* Guard: txn must have a valid LMDB transaction */
+	if (txn == NULL || txn->mdb_txn == NULL) {
+		ndb_debug("BUG: ndb_ingester_reprocess_giftwrap called with invalid txn\n");
+		return 0;
+	}
 
 	giftwrap = ndb_get_note_by_key(txn, proc_gw->giftwrap_key, &note_size);
 	if (!giftwrap) {
