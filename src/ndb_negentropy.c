@@ -846,6 +846,9 @@ static int item_compare(const void *a, const void *b)
 static int item_bound_compare(const struct ndb_negentropy_item *item,
                                const struct ndb_negentropy_bound *bound)
 {
+	int cmp;
+	int i;
+
 	/* Handle infinity bound */
 	if (bound->timestamp == UINT64_MAX)
 		return -1;  /* Item is always < infinity */
@@ -857,7 +860,24 @@ static int item_bound_compare(const struct ndb_negentropy_item *item,
 		return 1;
 
 	/* Timestamps equal - compare ID prefix */
-	return memcmp(item->id, bound->id_prefix, bound->prefix_len);
+	if (bound->prefix_len > 0) {
+		cmp = memcmp(item->id, bound->id_prefix, bound->prefix_len);
+		if (cmp != 0)
+			return cmp;
+	}
+
+	/*
+	 * Prefix matches. Per negentropy spec, omitted bytes in bound
+	 * are implicitly zero. Check if item has any non-zero bytes
+	 * after the prefix - if so, item > bound.
+	 */
+	for (i = bound->prefix_len; i < 32; i++) {
+		if (item->id[i] != 0)
+			return 1;  /* item > bound */
+	}
+
+	/* Complete match */
+	return 0;
 }
 
 
@@ -1457,6 +1477,7 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 	size_t lower_idx = 0;  /* Current position in our storage */
 	struct ndb_negentropy_range in_range;
 	int consumed;
+	int received_non_skip = 0;  /* Track if we received any non-SKIP input */
 
 	/* Guard: validate inputs */
 	if (neg == NULL || msg == NULL || out == NULL || outlen == NULL)
@@ -1497,9 +1518,27 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 		/* Process based on mode */
 		switch (in_range.mode) {
 
-		case NDB_NEG_SKIP:
-			/* Nothing to do, move to next range */
+		case NDB_NEG_SKIP: {
+			/*
+			 * Peer is skipping this range (they agree it matches).
+			 * We echo SKIP to maintain coverage (unless all input is SKIP,
+			 * in which case we'll send empty message at the end).
+			 */
+			struct ndb_negentropy_range out_range;
+			int written;
+
+			out_range.upper_bound = in_range.upper_bound;
+			out_range.mode = NDB_NEG_SKIP;
+
+			written = ndb_negentropy_range_encode(
+				out + out_offset, *outlen - out_offset,
+				&out_range, &prev_ts_out);
+			if (written == 0)
+				return 0;
+
+			out_offset += (size_t)written;
 			break;
+		}
 
 		case NDB_NEG_FINGERPRINT: {
 			/*
@@ -1507,6 +1546,7 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 			 * If different, split the range.
 			 */
 			unsigned char our_fp[16];
+			received_non_skip = 1;
 
 			ndb_negentropy_storage_fingerprint(neg->storage,
 			                                    lower_idx, upper_idx, our_fp);
@@ -1536,17 +1576,38 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 					/* Small range: send IdList */
 					struct ndb_negentropy_range out_range;
 					int written;
+					unsigned char *id_buf = NULL;
 
 					out_range.upper_bound = in_range.upper_bound;
 					out_range.mode = NDB_NEG_IDLIST;
 					out_range.payload.id_list.id_count = our_count;
-					out_range.payload.id_list.ids =
-						(our_count > 0) ?
-						neg->storage->items[lower_idx].id : NULL;
+
+					/*
+					 * Must copy IDs to contiguous buffer because
+					 * storage items have timestamps interleaved.
+					 */
+					if (our_count > 0) {
+						size_t i;
+						id_buf = malloc(our_count * 32);
+						if (id_buf == NULL)
+							return 0;
+
+						for (i = 0; i < our_count; i++) {
+							memcpy(id_buf + i * 32,
+							       neg->storage->items[lower_idx + i].id,
+							       32);
+						}
+						out_range.payload.id_list.ids = id_buf;
+					} else {
+						out_range.payload.id_list.ids = NULL;
+					}
 
 					written = ndb_negentropy_range_encode(
 						out + out_offset, *outlen - out_offset,
 						&out_range, &prev_ts_out);
+
+					free(id_buf);
+
 					if (written == 0)
 						return 0;
 
@@ -1607,94 +1668,65 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 		case NDB_NEG_IDLIST: {
 			/*
 			 * Remote sent us their full ID list for this range.
-			 * Respond with IdListResponse containing:
-			 * - IDs we have that they don't (have_ids in response)
-			 * - Bitfield indicating which of their IDs we need
+			 * Per NIP-77, we respond with SKIP (range is resolved).
 			 *
-			 * Also accumulate have/need IDs for the caller.
+			 * We track:
+			 * - have_ids: IDs we have that they don't (we should send)
+			 * - need_ids: IDs they have that we don't (we should request)
 			 */
 			struct ndb_negentropy_range out_range;
 			int written;
 			size_t their_count = in_range.payload.id_list.id_count;
 			const unsigned char *their_ids = in_range.payload.id_list.ids;
+			size_t i, j;
 
-			/* Find IDs we have that they don't */
-			/* For simplicity, we'll build a temporary list */
-			unsigned char *have_buf = NULL;
-			size_t have_count = 0;
+			received_non_skip = 1;
 
-			if (our_count > 0) {
-				have_buf = malloc(our_count * 32);
-				if (have_buf == NULL)
-					return 0;
+			/* Find IDs we have that they don't -> have_ids */
+			for (i = lower_idx; i < upper_idx; i++) {
+				const struct ndb_negentropy_item *item = &neg->storage->items[i];
+				int found = 0;
 
-				for (size_t i = lower_idx; i < upper_idx; i++) {
-					const struct ndb_negentropy_item *item = &neg->storage->items[i];
-					int found = 0;
-
-					/* Check if they have this ID */
-					for (size_t j = 0; j < their_count; j++) {
-						if (memcmp(item->id, their_ids + j * 32, 32) == 0) {
-							found = 1;
-							break;
-						}
+				/* Check if they have this ID */
+				for (j = 0; j < their_count; j++) {
+					if (memcmp(item->id, their_ids + j * 32, 32) == 0) {
+						found = 1;
+						break;
 					}
+				}
 
-					if (!found) {
-						/* We have it, they don't */
-						memcpy(have_buf + have_count * 32, item->id, 32);
-						have_count++;
-						ids_add(&neg->have_ids, item->id);
-					}
+				if (!found) {
+					/* We have it, they don't */
+					ids_add(&neg->have_ids, item->id);
 				}
 			}
 
-			/* Build bitfield for IDs they have that we need */
-			size_t bf_len = (their_count + 7) / 8;
-			unsigned char *bitfield = NULL;
+			/* Find IDs they have that we don't -> need_ids */
+			for (j = 0; j < their_count; j++) {
+				const unsigned char *their_id = their_ids + j * 32;
+				int we_have = 0;
 
-			if (their_count > 0) {
-				bitfield = calloc(bf_len, 1);
-				if (bitfield == NULL) {
-					free(have_buf);
-					return 0;
+				/* Check if we have this ID */
+				for (i = lower_idx; i < upper_idx; i++) {
+					if (memcmp(neg->storage->items[i].id, their_id, 32) == 0) {
+						we_have = 1;
+						break;
+					}
 				}
 
-				for (size_t j = 0; j < their_count; j++) {
-					const unsigned char *their_id = their_ids + j * 32;
-					int we_have = 0;
-
-					/* Check if we have this ID */
-					for (size_t i = lower_idx; i < upper_idx; i++) {
-						if (memcmp(neg->storage->items[i].id, their_id, 32) == 0) {
-							we_have = 1;
-							break;
-						}
-					}
-
-					if (!we_have) {
-						/* We need this ID */
-						bitfield[j / 8] |= (1 << (j % 8));
-						ids_add(&neg->need_ids, their_id);
-					}
+				if (!we_have) {
+					/* We need this ID */
+					ids_add(&neg->need_ids, their_id);
 				}
 			}
 
-			/* Build response */
+			/* Respond with SKIP per NIP-77 (range resolved) */
 			out_range.upper_bound = in_range.upper_bound;
-			out_range.mode = NDB_NEG_IDLIST_RESPONSE;
-			out_range.payload.id_list_response.have_count = have_count;
-			out_range.payload.id_list_response.have_ids = have_buf;
-			out_range.payload.id_list_response.bitfield_len = bf_len;
-			out_range.payload.id_list_response.bitfield = bitfield;
+			out_range.mode = NDB_NEG_SKIP;
 
 			written = ndb_negentropy_range_encode(
 				out + out_offset, *outlen - out_offset,
 				&out_range, &prev_ts_out);
-
-			free(have_buf);
-			free(bitfield);
-
 			if (written == 0)
 				return 0;
 
@@ -1704,6 +1736,10 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 
 		case NDB_NEG_IDLIST_RESPONSE: {
 			/*
+			 * NOTE: Mode 3 (IDLIST_RESPONSE) is NOT in NIP-77.
+			 * It's from hoytech's negentropy reference implementation.
+			 * We accept it for compatibility but don't send it.
+			 *
 			 * Remote responded to our IdList with:
 			 * - IDs they have that we don't (have_ids)
 			 * - Bitfield of our IDs they need
@@ -1711,6 +1747,7 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 			 * Extract the have/need IDs.
 			 */
 			size_t have_count = in_range.payload.id_list_response.have_count;
+			received_non_skip = 1;
 			const unsigned char *have_ids = in_range.payload.id_list_response.have_ids;
 			size_t bf_len = in_range.payload.id_list_response.bitfield_len;
 			const unsigned char *bitfield = in_range.payload.id_list_response.bitfield;
@@ -1755,6 +1792,14 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 		/* Move to next range */
 		lower_idx = upper_idx;
 	}
+
+	/*
+	 * If all incoming ranges were SKIP, we can signal completion
+	 * by returning just the version byte (empty message).
+	 * This prevents infinite SKIP echo loops.
+	 */
+	if (!received_non_skip)
+		out_offset = 1;
 
 	*outlen = out_offset;
 
