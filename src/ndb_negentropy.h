@@ -378,6 +378,13 @@ int ndb_negentropy_range_decode(const unsigned char *buf, size_t buflen,
 #define NDB_NEGENTROPY_MAX_RANGES 256
 
 /*
+ * Maximum IDs per IDLIST range for DOS protection.
+ * Prevents overflow when computing id_count * 32.
+ * 100,000 IDs = 3.2MB per range, which is generous.
+ */
+#define NDB_NEGENTROPY_MAX_IDS_PER_RANGE 100000
+
+/*
  * Encode a complete negentropy message.
  *
  * The message starts with the protocol version byte (NDB_NEGENTROPY_PROTOCOL_V1)

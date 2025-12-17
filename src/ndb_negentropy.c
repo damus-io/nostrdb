@@ -392,7 +392,13 @@ int ndb_negentropy_bound_decode(const unsigned char *buf, size_t buflen,
 	if (encoded_ts == 0) {
 		bound->timestamp = UINT64_MAX;
 	} else {
-		bound->timestamp = *prev_timestamp + (encoded_ts - 1);
+		uint64_t delta = encoded_ts - 1;
+
+		/* Guard: check for timestamp overflow */
+		if (delta > UINT64_MAX - *prev_timestamp)
+			return 0;
+
+		bound->timestamp = *prev_timestamp + delta;
 		*prev_timestamp = bound->timestamp;
 	}
 
@@ -622,6 +628,10 @@ int ndb_negentropy_range_decode(const unsigned char *buf, size_t buflen,
 			return 0;
 		offset += (size_t)consumed;
 
+		/* Guard: prevent DOS and overflow in multiplication */
+		if (id_count > NDB_NEGENTROPY_MAX_IDS_PER_RANGE)
+			return 0;
+
 		ids_size = (size_t)id_count * 32;
 
 		/* Guard: ensure buffer has all IDs */
@@ -650,6 +660,10 @@ int ndb_negentropy_range_decode(const unsigned char *buf, size_t buflen,
 			return 0;
 		offset += (size_t)consumed;
 
+		/* Guard: prevent DOS and overflow in multiplication */
+		if (have_count > NDB_NEGENTROPY_MAX_IDS_PER_RANGE)
+			return 0;
+
 		have_size = (size_t)have_count * 32;
 
 		/* Guard: ensure buffer has all have_ids */
@@ -666,6 +680,14 @@ int ndb_negentropy_range_decode(const unsigned char *buf, size_t buflen,
 		if (consumed == 0)
 			return 0;
 		offset += (size_t)consumed;
+
+		/*
+		 * Guard: bitfield length sanity check.
+		 * Bitfield is ceil(client_id_count / 8), so max is ~12KB
+		 * for 100K IDs. Use generous 1MB limit.
+		 */
+		if (bf_len > (1024 * 1024))
+			return 0;
 
 		/* Guard: ensure buffer has bitfield */
 		if (offset + bf_len > buflen)
