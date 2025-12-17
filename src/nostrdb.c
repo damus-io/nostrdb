@@ -7020,18 +7020,20 @@ static void *ndb_ingester_thread(void *data)
 		}
 #endif
 
+		/*
+		 * Pre-scan: determine if any message requires a read transaction.
+		 *
+		 * BUG FIX: Previously used assignment (any_event = 0/1) which meant
+		 * later messages could overwrite earlier decisions. A batch like
+		 * [EVENT, ADD_KEY] would end with any_event=0, skipping txn_begin,
+		 * but the event would still be processed with read_txn=NULL → crash.
+		 *
+		 * Now uses |= so any_event is monotonic: once set, it stays set.
+		 */
 		for (i = 0; i < popped; i++) {
 			msg = &msgs[i];
-			switch (msg->type) {
-			case NDB_INGEST_EVENT:
-			case NDB_INGEST_PROCESS_GIFTWRAP:
-				any_event = 1;
-				break;
-			case NDB_INGEST_ADD_KEY:
-			case NDB_INGEST_QUIT:
-				any_event = 0;
-				break;
-			}
+			any_event |= (msg->type == NDB_INGEST_EVENT ||
+			              msg->type == NDB_INGEST_PROCESS_GIFTWRAP);
 		}
 
 		if (any_event && (rc = mdb_txn_begin(lmdb->env, NULL,
