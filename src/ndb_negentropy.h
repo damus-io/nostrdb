@@ -561,4 +561,150 @@ int ndb_negentropy_storage_fingerprint(const struct ndb_negentropy_storage *stor
                                         unsigned char *fingerprint_out);
 
 
+/* ============================================================
+ * RECONCILIATION STATE MACHINE
+ * ============================================================
+ *
+ * The reconciliation engine processes negentropy messages and
+ * determines which items each side has that the other lacks.
+ *
+ * Protocol flow:
+ * 1. Client calls initiate() to create initial message
+ * 2. Server processes with reconcile(), sends reply
+ * 3. Client calls reconcile() on reply, extracts have/need IDs
+ * 4. Repeat until reconcile() returns empty message (sync complete)
+ *
+ * The engine is agnostic to client/server roles - both sides use
+ * the same API. The difference is who calls initiate() first.
+ */
+
+/*
+ * Threshold for switching from IdList to Fingerprint mode.
+ * Ranges smaller than this send full IdLists (base case).
+ * Larger ranges send Fingerprints for sub-ranges.
+ */
+#define NDB_NEGENTROPY_IDLIST_THRESHOLD 16
+
+/*
+ * Number of sub-ranges to split into when fingerprints differ.
+ * Must be > 1 to ensure progress.
+ */
+#define NDB_NEGENTROPY_SPLIT_COUNT 16
+
+/*
+ * ID output array for have/need tracking.
+ *
+ * During reconciliation, IDs are accumulated into these arrays.
+ * The arrays are dynamically grown as needed.
+ */
+struct ndb_negentropy_ids {
+	unsigned char *ids;   /* Array of 32-byte IDs */
+	size_t count;         /* Number of IDs */
+	size_t capacity;      /* Allocated capacity (in IDs, not bytes) */
+};
+
+/*
+ * Reconciliation context.
+ *
+ * Holds the storage reference and tracks state across multiple
+ * reconcile() calls. Also accumulates have/need IDs.
+ */
+struct ndb_negentropy {
+	const struct ndb_negentropy_storage *storage;  /* Item storage (not owned) */
+	int is_initiator;                               /* 1 if we initiated */
+
+	/* IDs we have that remote needs (to send) */
+	struct ndb_negentropy_ids have_ids;
+
+	/* IDs remote has that we need (to request) */
+	struct ndb_negentropy_ids need_ids;
+};
+
+/*
+ * Initialize a negentropy reconciliation context.
+ *
+ * The storage must be sealed and remain valid for the lifetime
+ * of the context. The context does not own the storage.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int ndb_negentropy_init(struct ndb_negentropy *neg,
+                         const struct ndb_negentropy_storage *storage);
+
+/*
+ * Destroy a negentropy context and free resources.
+ */
+void ndb_negentropy_destroy(struct ndb_negentropy *neg);
+
+/*
+ * Create the initial message to start reconciliation.
+ *
+ * This creates a single FINGERPRINT range covering the entire
+ * item space (from timestamp 0 to infinity).
+ *
+ * Parameters:
+ *   neg:     Initialized context
+ *   buf:     Output buffer for the encoded message
+ *   buflen:  Size of output buffer
+ *   outlen:  Receives the actual message length
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int ndb_negentropy_initiate(struct ndb_negentropy *neg,
+                             unsigned char *buf, size_t buflen,
+                             size_t *outlen);
+
+/*
+ * Process an incoming message and generate a response.
+ *
+ * This is the core reconciliation function. It:
+ * 1. Parses the incoming message
+ * 2. Compares fingerprints and splits differing ranges
+ * 3. Processes IdLists and IdListResponses
+ * 4. Accumulates have/need IDs
+ * 5. Generates a response message
+ *
+ * Parameters:
+ *   neg:          Initialized context
+ *   msg:          Incoming message (binary, not hex)
+ *   msglen:       Length of incoming message
+ *   out:          Output buffer for response message
+ *   outlen:       In: buffer size, Out: response length
+ *
+ * Returns:
+ *   1  - Success, response generated (check outlen > 1 for more rounds)
+ *   0  - Error (parse error, invalid message, etc.)
+ *
+ * When outlen == 1 on return (just version byte), reconciliation
+ * is complete - no more messages needed.
+ */
+int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
+                              const unsigned char *msg, size_t msglen,
+                              unsigned char *out, size_t *outlen);
+
+/*
+ * Get the IDs we have that the remote needs.
+ *
+ * These are IDs we should send to the remote.
+ * The returned array remains valid until the context is destroyed
+ * or the next reconcile() call.
+ *
+ * Returns the number of IDs. ids_out receives pointer to the array.
+ */
+size_t ndb_negentropy_get_have_ids(const struct ndb_negentropy *neg,
+                                    const unsigned char **ids_out);
+
+/*
+ * Get the IDs the remote has that we need.
+ *
+ * These are IDs we should request from the remote.
+ * The returned array remains valid until the context is destroyed
+ * or the next reconcile() call.
+ *
+ * Returns the number of IDs. ids_out receives pointer to the array.
+ */
+size_t ndb_negentropy_get_need_ids(const struct ndb_negentropy *neg,
+                                    const unsigned char **ids_out);
+
+
 #endif /* NDB_NEGENTROPY_H */

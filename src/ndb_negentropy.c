@@ -1119,3 +1119,536 @@ int ndb_negentropy_storage_fingerprint(const struct ndb_negentropy_storage *stor
 
 	return 1;
 }
+
+
+/* ============================================================
+ * RECONCILIATION STATE MACHINE
+ * ============================================================
+ *
+ * The reconciliation engine implements the negentropy protocol
+ * for determining set differences between two parties.
+ */
+
+/* Initial capacity for ID arrays */
+#define IDS_INITIAL_CAPACITY 64
+
+
+/*
+ * Initialize an ID array.
+ */
+static void ids_init(struct ndb_negentropy_ids *ids)
+{
+	ids->ids = NULL;
+	ids->count = 0;
+	ids->capacity = 0;
+}
+
+
+/*
+ * Free an ID array.
+ */
+static void ids_destroy(struct ndb_negentropy_ids *ids)
+{
+	free(ids->ids);
+	ids->ids = NULL;
+	ids->count = 0;
+	ids->capacity = 0;
+}
+
+
+/*
+ * Add an ID to an ID array.
+ */
+static int ids_add(struct ndb_negentropy_ids *ids, const unsigned char *id)
+{
+	size_t new_capacity;
+	unsigned char *new_ids;
+
+	/* Grow if needed */
+	if (ids->count >= ids->capacity) {
+		new_capacity = ids->capacity * 2;
+		if (new_capacity < IDS_INITIAL_CAPACITY)
+			new_capacity = IDS_INITIAL_CAPACITY;
+
+		new_ids = realloc(ids->ids, new_capacity * 32);
+		if (new_ids == NULL)
+			return 0;
+
+		ids->ids = new_ids;
+		ids->capacity = new_capacity;
+	}
+
+	/* Copy ID */
+	memcpy(ids->ids + ids->count * 32, id, 32);
+	ids->count++;
+
+	return 1;
+}
+
+
+/*
+ * Check if storage contains an ID using binary search.
+ * Returns 1 if found, 0 if not.
+ */
+static int storage_has_id(const struct ndb_negentropy_storage *storage,
+                           uint64_t timestamp, const unsigned char *id)
+{
+	struct ndb_negentropy_bound bound;
+	size_t idx;
+	const struct ndb_negentropy_item *item;
+
+	/* Create bound for the ID */
+	bound.timestamp = timestamp;
+	memcpy(bound.id_prefix, id, 32);
+	bound.prefix_len = 32;
+
+	/* Find lower bound */
+	idx = ndb_negentropy_storage_lower_bound(storage, &bound);
+
+	/* Check if we found an exact match */
+	if (idx >= storage->count)
+		return 0;
+
+	item = &storage->items[idx];
+	if (item->timestamp != timestamp)
+		return 0;
+
+	return memcmp(item->id, id, 32) == 0;
+}
+
+
+int ndb_negentropy_init(struct ndb_negentropy *neg,
+                         const struct ndb_negentropy_storage *storage)
+{
+	/* Guard: validate inputs */
+	if (neg == NULL || storage == NULL)
+		return 0;
+
+	/* Guard: storage must be sealed */
+	if (!storage->sealed)
+		return 0;
+
+	neg->storage = storage;
+	neg->is_initiator = 0;
+	ids_init(&neg->have_ids);
+	ids_init(&neg->need_ids);
+
+	return 1;
+}
+
+
+void ndb_negentropy_destroy(struct ndb_negentropy *neg)
+{
+	if (neg == NULL)
+		return;
+
+	ids_destroy(&neg->have_ids);
+	ids_destroy(&neg->need_ids);
+	neg->storage = NULL;
+	neg->is_initiator = 0;
+}
+
+
+int ndb_negentropy_initiate(struct ndb_negentropy *neg,
+                             unsigned char *buf, size_t buflen,
+                             size_t *outlen)
+{
+	struct ndb_negentropy_range range;
+	int len;
+
+	/* Guard: validate inputs */
+	if (neg == NULL || buf == NULL || outlen == NULL)
+		return 0;
+
+	/* Guard: need room for version + range */
+	if (buflen < 2)
+		return 0;
+
+	/* Mark as initiator */
+	neg->is_initiator = 1;
+
+	/*
+	 * Create initial message with single FINGERPRINT range
+	 * covering the entire item space (0 to infinity).
+	 */
+	range.upper_bound.timestamp = UINT64_MAX;
+	range.upper_bound.prefix_len = 0;
+	range.mode = NDB_NEG_FINGERPRINT;
+
+	/* Compute fingerprint of all items */
+	if (!ndb_negentropy_storage_fingerprint(neg->storage, 0,
+	                                         neg->storage->count,
+	                                         range.payload.fingerprint))
+		return 0;
+
+	/* Encode message */
+	len = ndb_negentropy_message_encode(buf, buflen, &range, 1);
+	if (len == 0)
+		return 0;
+
+	*outlen = (size_t)len;
+	return 1;
+}
+
+
+/*
+ * Create a bound from a storage item at the given index.
+ * If index == count, creates an infinity bound.
+ */
+static void bound_from_index(const struct ndb_negentropy_storage *storage,
+                              size_t index,
+                              struct ndb_negentropy_bound *bound)
+{
+	if (index >= storage->count) {
+		/* Infinity bound */
+		bound->timestamp = UINT64_MAX;
+		bound->prefix_len = 0;
+	} else {
+		/* Bound from item */
+		const struct ndb_negentropy_item *item = &storage->items[index];
+		bound->timestamp = item->timestamp;
+		memcpy(bound->id_prefix, item->id, 32);
+		bound->prefix_len = 32;
+	}
+}
+
+
+/*
+ * Process incoming ranges and build response.
+ * This is the core reconciliation logic.
+ */
+int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
+                              const unsigned char *msg, size_t msglen,
+                              unsigned char *out, size_t *outlen)
+{
+	const unsigned char *p;
+	size_t remaining;
+	uint64_t prev_ts_in = 0;
+	uint64_t prev_ts_out = 0;
+	size_t out_offset;
+	size_t lower_idx = 0;  /* Current position in our storage */
+	struct ndb_negentropy_range in_range;
+	int consumed;
+
+	/* Guard: validate inputs */
+	if (neg == NULL || msg == NULL || out == NULL || outlen == NULL)
+		return 0;
+
+	/* Guard: need at least version byte */
+	if (msglen < 1 || *outlen < 1)
+		return 0;
+
+	/* Guard: check version */
+	if (msg[0] != NDB_NEGENTROPY_PROTOCOL_V1)
+		return 0;
+
+	/* Write version byte to output */
+	out[0] = NDB_NEGENTROPY_PROTOCOL_V1;
+	out_offset = 1;
+
+	/* Process each incoming range */
+	p = msg + 1;
+	remaining = msglen - 1;
+
+	while (remaining > 0) {
+		/* Decode next range */
+		consumed = ndb_negentropy_range_decode(p, remaining, &in_range, &prev_ts_in);
+		if (consumed == 0)
+			return 0;
+
+		p += consumed;
+		remaining -= (size_t)consumed;
+
+		/* Find the upper index for this range */
+		size_t upper_idx = ndb_negentropy_storage_lower_bound(
+			neg->storage, &in_range.upper_bound);
+
+		/* Number of items in our [lower, upper) range */
+		size_t our_count = (upper_idx > lower_idx) ? (upper_idx - lower_idx) : 0;
+
+		/* Process based on mode */
+		switch (in_range.mode) {
+
+		case NDB_NEG_SKIP:
+			/* Nothing to do, move to next range */
+			break;
+
+		case NDB_NEG_FINGERPRINT: {
+			/*
+			 * Compare fingerprints. If they match, respond with SKIP.
+			 * If different, split the range.
+			 */
+			unsigned char our_fp[16];
+
+			ndb_negentropy_storage_fingerprint(neg->storage,
+			                                    lower_idx, upper_idx, our_fp);
+
+			if (memcmp(our_fp, in_range.payload.fingerprint, 16) == 0) {
+				/* Fingerprints match - respond with SKIP */
+				struct ndb_negentropy_range out_range;
+				int written;
+
+				out_range.upper_bound = in_range.upper_bound;
+				out_range.mode = NDB_NEG_SKIP;
+
+				written = ndb_negentropy_range_encode(
+					out + out_offset, *outlen - out_offset,
+					&out_range, &prev_ts_out);
+				if (written == 0)
+					return 0;
+
+				out_offset += (size_t)written;
+			} else {
+				/*
+				 * Fingerprints differ - need to split.
+				 * For small ranges, send IdList.
+				 * For large ranges, send multiple Fingerprint sub-ranges.
+				 */
+				if (our_count <= NDB_NEGENTROPY_IDLIST_THRESHOLD) {
+					/* Small range: send IdList */
+					struct ndb_negentropy_range out_range;
+					int written;
+
+					out_range.upper_bound = in_range.upper_bound;
+					out_range.mode = NDB_NEG_IDLIST;
+					out_range.payload.id_list.id_count = our_count;
+					out_range.payload.id_list.ids =
+						(our_count > 0) ?
+						neg->storage->items[lower_idx].id : NULL;
+
+					written = ndb_negentropy_range_encode(
+						out + out_offset, *outlen - out_offset,
+						&out_range, &prev_ts_out);
+					if (written == 0)
+						return 0;
+
+					out_offset += (size_t)written;
+				} else {
+					/*
+					 * Large range: split into sub-ranges with fingerprints.
+					 * Use NDB_NEGENTROPY_SPLIT_COUNT splits.
+					 */
+					size_t items_per_split = our_count / NDB_NEGENTROPY_SPLIT_COUNT;
+					if (items_per_split == 0)
+						items_per_split = 1;
+
+					size_t split_lower = lower_idx;
+
+					for (int s = 0; s < NDB_NEGENTROPY_SPLIT_COUNT && split_lower < upper_idx; s++) {
+						size_t split_upper;
+						struct ndb_negentropy_range out_range;
+						int written;
+
+						if (s == NDB_NEGENTROPY_SPLIT_COUNT - 1) {
+							/* Last split takes the rest */
+							split_upper = upper_idx;
+						} else {
+							split_upper = split_lower + items_per_split;
+							if (split_upper > upper_idx)
+								split_upper = upper_idx;
+						}
+
+						/* Create fingerprint for this split */
+						bound_from_index(neg->storage, split_upper,
+						                 &out_range.upper_bound);
+
+						/* Use the incoming upper bound for the last split */
+						if (split_upper == upper_idx)
+							out_range.upper_bound = in_range.upper_bound;
+
+						out_range.mode = NDB_NEG_FINGERPRINT;
+						ndb_negentropy_storage_fingerprint(
+							neg->storage, split_lower, split_upper,
+							out_range.payload.fingerprint);
+
+						written = ndb_negentropy_range_encode(
+							out + out_offset, *outlen - out_offset,
+							&out_range, &prev_ts_out);
+						if (written == 0)
+							return 0;
+
+						out_offset += (size_t)written;
+						split_lower = split_upper;
+					}
+				}
+			}
+			break;
+		}
+
+		case NDB_NEG_IDLIST: {
+			/*
+			 * Remote sent us their full ID list for this range.
+			 * Respond with IdListResponse containing:
+			 * - IDs we have that they don't (have_ids in response)
+			 * - Bitfield indicating which of their IDs we need
+			 *
+			 * Also accumulate have/need IDs for the caller.
+			 */
+			struct ndb_negentropy_range out_range;
+			int written;
+			size_t their_count = in_range.payload.id_list.id_count;
+			const unsigned char *their_ids = in_range.payload.id_list.ids;
+
+			/* Find IDs we have that they don't */
+			/* For simplicity, we'll build a temporary list */
+			unsigned char *have_buf = NULL;
+			size_t have_count = 0;
+
+			if (our_count > 0) {
+				have_buf = malloc(our_count * 32);
+				if (have_buf == NULL)
+					return 0;
+
+				for (size_t i = lower_idx; i < upper_idx; i++) {
+					const struct ndb_negentropy_item *item = &neg->storage->items[i];
+					int found = 0;
+
+					/* Check if they have this ID */
+					for (size_t j = 0; j < their_count; j++) {
+						if (memcmp(item->id, their_ids + j * 32, 32) == 0) {
+							found = 1;
+							break;
+						}
+					}
+
+					if (!found) {
+						/* We have it, they don't */
+						memcpy(have_buf + have_count * 32, item->id, 32);
+						have_count++;
+						ids_add(&neg->have_ids, item->id);
+					}
+				}
+			}
+
+			/* Build bitfield for IDs they have that we need */
+			size_t bf_len = (their_count + 7) / 8;
+			unsigned char *bitfield = NULL;
+
+			if (their_count > 0) {
+				bitfield = calloc(bf_len, 1);
+				if (bitfield == NULL) {
+					free(have_buf);
+					return 0;
+				}
+
+				for (size_t j = 0; j < their_count; j++) {
+					const unsigned char *their_id = their_ids + j * 32;
+					int we_have = 0;
+
+					/* Check if we have this ID */
+					for (size_t i = lower_idx; i < upper_idx; i++) {
+						if (memcmp(neg->storage->items[i].id, their_id, 32) == 0) {
+							we_have = 1;
+							break;
+						}
+					}
+
+					if (!we_have) {
+						/* We need this ID */
+						bitfield[j / 8] |= (1 << (j % 8));
+						ids_add(&neg->need_ids, their_id);
+					}
+				}
+			}
+
+			/* Build response */
+			out_range.upper_bound = in_range.upper_bound;
+			out_range.mode = NDB_NEG_IDLIST_RESPONSE;
+			out_range.payload.id_list_response.have_count = have_count;
+			out_range.payload.id_list_response.have_ids = have_buf;
+			out_range.payload.id_list_response.bitfield_len = bf_len;
+			out_range.payload.id_list_response.bitfield = bitfield;
+
+			written = ndb_negentropy_range_encode(
+				out + out_offset, *outlen - out_offset,
+				&out_range, &prev_ts_out);
+
+			free(have_buf);
+			free(bitfield);
+
+			if (written == 0)
+				return 0;
+
+			out_offset += (size_t)written;
+			break;
+		}
+
+		case NDB_NEG_IDLIST_RESPONSE: {
+			/*
+			 * Remote responded to our IdList with:
+			 * - IDs they have that we don't (have_ids)
+			 * - Bitfield of our IDs they need
+			 *
+			 * Extract the have/need IDs.
+			 */
+			size_t have_count = in_range.payload.id_list_response.have_count;
+			const unsigned char *have_ids = in_range.payload.id_list_response.have_ids;
+			size_t bf_len = in_range.payload.id_list_response.bitfield_len;
+			const unsigned char *bitfield = in_range.payload.id_list_response.bitfield;
+
+			/* IDs they have that we need */
+			for (size_t i = 0; i < have_count; i++) {
+				ids_add(&neg->need_ids, have_ids + i * 32);
+			}
+
+			/* IDs we have that they need (from bitfield) */
+			/* We need to match against our original IdList... */
+			/* For now, we iterate our items and check the bitfield */
+			size_t bit_idx = 0;
+			for (size_t i = lower_idx; i < upper_idx && bit_idx / 8 < bf_len; i++) {
+				if (bitfield[bit_idx / 8] & (1 << (bit_idx % 8))) {
+					ids_add(&neg->have_ids, neg->storage->items[i].id);
+				}
+				bit_idx++;
+			}
+
+			/* No response needed for IdListResponse - send SKIP */
+			struct ndb_negentropy_range out_range;
+			int written;
+
+			out_range.upper_bound = in_range.upper_bound;
+			out_range.mode = NDB_NEG_SKIP;
+
+			written = ndb_negentropy_range_encode(
+				out + out_offset, *outlen - out_offset,
+				&out_range, &prev_ts_out);
+			if (written == 0)
+				return 0;
+
+			out_offset += (size_t)written;
+			break;
+		}
+
+		default:
+			return 0;
+		}
+
+		/* Move to next range */
+		lower_idx = upper_idx;
+	}
+
+	*outlen = out_offset;
+	return 1;
+}
+
+
+size_t ndb_negentropy_get_have_ids(const struct ndb_negentropy *neg,
+                                    const unsigned char **ids_out)
+{
+	if (neg == NULL || ids_out == NULL)
+		return 0;
+
+	*ids_out = neg->have_ids.ids;
+	return neg->have_ids.count;
+}
+
+
+size_t ndb_negentropy_get_need_ids(const struct ndb_negentropy *neg,
+                                    const unsigned char **ids_out)
+{
+	if (neg == NULL || ids_out == NULL)
+		return 0;
+
+	*ids_out = neg->need_ids.ids;
+	return neg->need_ids.count;
+}
