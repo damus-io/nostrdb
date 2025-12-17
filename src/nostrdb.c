@@ -7094,8 +7094,10 @@ static void *ndb_ingester_thread(void *data)
 			}
 		}
 
-		if (any_event)
+		if (any_event) {
 			mdb_txn_abort(read_txn);
+			read_txn = NULL;
+		}
 	}
 
 	ndb_debug("quitting ingester thread\n");
