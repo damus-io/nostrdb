@@ -2603,6 +2603,80 @@ void test_replay_attack() {
 	delete_test_db();
 }
 
+/*
+ * Regression test for ingester batching bug.
+ *
+ * Previously, the any_event flag used assignment (= 0/1) instead of OR,
+ * so a batch like [EVENT, ADD_KEY] would end with any_event=0, causing
+ * no read transaction to be opened, but the event would still be processed
+ * with read_txn=NULL -> crash.
+ *
+ * This test forces both messages into the same batch by using a single
+ * ingester thread and submitting them back-to-back.
+ */
+static void test_mixed_batch_event_then_add_key()
+{
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_filter filter;
+	struct ndb_config config;
+	struct ndb_note *note;
+	uint64_t subid, note_key;
+
+	/* Dummy key - content doesn't matter, just need ADD_KEY message */
+	unsigned char dummy_key[32] = {
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+		0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20
+	};
+
+	/* Valid kind 1 event (reused from test_tag_query) */
+	const char *ev = "[\"EVENT\",\"s\",{\"id\": \"7fd6e4286e595b60448bf69d8ec4a472c5ad14521555813cdfce1740f012aefd\",\"pubkey\": \"b85beab689aed6a10110cc3cdd6e00ac37a2f747c4e60b18a31f4352a5bfb6ed\",\"created_at\": 1704762185,\"kind\": 1,\"tags\": [[\"t\",\"hashtag\"]],\"content\": \"hi\",\"sig\": \"5b05669af5a322730731b13d38667464ea3b45bef1861e26c99ef1815d7e8d557a76e06afa5fffa1dcd207402b92ae7dda6ef411ea515df2bca58d74e6f2772e\"}]";
+
+	delete_test_db();
+
+	/* Single ingester thread for deterministic batching */
+	ndb_default_config(&config);
+	ndb_config_set_ingest_threads(&config, 1);
+
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	/* Subscribe to kind 1 */
+	ndb_filter_init(&filter);
+	ndb_filter_start_field(&filter, NDB_FILTER_KINDS);
+	ndb_filter_add_int_element(&filter, 1);
+	ndb_filter_end_field(&filter);
+	ndb_filter_end(&filter);
+
+	subid = ndb_subscribe(ndb, &filter, 1);
+	assert(subid);
+
+	/*
+	 * Submit EVENT then ADD_KEY back-to-back.
+	 * With single thread and small batch, high chance they land together.
+	 * Pre-fix: any_event would be 0 after ADD_KEY, crash on NULL read_txn.
+	 * Post-fix: any_event stays 1, event processes correctly.
+	 */
+	assert(ndb_process_event(ndb, ev, strlen(ev)));
+	ndb_add_key(ndb, dummy_key);
+
+	/* Wait for the note - this would crash pre-fix */
+	assert(ndb_wait_for_notes(ndb, subid, &note_key, 1) == 1);
+
+	/* Verify note is in DB */
+	ndb_begin_query(ndb, &txn);
+	note = ndb_get_note_by_key(&txn, note_key, NULL);
+	assert(note);
+	assert(ndb_note_kind(note) == 1);
+	ndb_end_query(&txn);
+
+	ndb_unsubscribe(ndb, subid);
+	ndb_filter_destroy(&filter);
+	ndb_destroy(ndb);
+	delete_test_db();
+}
+
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
@@ -2673,6 +2747,9 @@ int main(int argc, const char *argv[]) {
 
 	// profiles
 	test_replacement();
+
+	// ingester batching regression test
+	test_mixed_batch_event_then_add_key();
 
 	printf("All tests passed!\n");       // Print this if all tests pass.
 }
