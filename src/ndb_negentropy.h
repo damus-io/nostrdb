@@ -346,4 +346,103 @@ int ndb_negentropy_range_decode(const unsigned char *buf, size_t buflen,
                                  uint64_t *prev_timestamp);
 
 
+/* ============================================================
+ * MESSAGE ENCODING/DECODING
+ * ============================================================
+ *
+ * A negentropy message is the complete unit transmitted over the wire.
+ * It contains a version byte followed by zero or more ranges.
+ *
+ * Wire format:
+ *   <version (1 byte)> <range>*
+ *
+ * The version byte is 0x61 for protocol V1.
+ *
+ * Messages are hex-encoded for transmission in NIP-77 JSON arrays:
+ *   ["NEG-OPEN", "subId", {filter}, "<hex-encoded message>"]
+ *   ["NEG-MSG", "subId", "<hex-encoded message>"]
+ *
+ * Note on range limits: The protocol doesn't impose a maximum number
+ * of ranges, but implementations typically limit them for DOS protection.
+ * A reasonable limit is 128-256 ranges per message.
+ */
+
+/*
+ * Maximum ranges per message for DOS protection.
+ * This can be adjusted based on deployment requirements.
+ */
+#define NDB_NEGENTROPY_MAX_RANGES 256
+
+/*
+ * Encode a complete negentropy message.
+ *
+ * The message starts with the protocol version byte (NDB_NEGENTROPY_PROTOCOL_V1)
+ * followed by the encoded ranges.
+ *
+ * Parameters:
+ *   buf:        Output buffer for the encoded message
+ *   buflen:     Size of the output buffer
+ *   ranges:     Array of ranges to encode
+ *   num_ranges: Number of ranges in the array
+ *
+ * Returns: Total bytes written, or 0 on error.
+ *
+ * Note: The timestamp delta encoding is reset for each message. The
+ * first range uses absolute timestamp encoding (delta from 0).
+ */
+int ndb_negentropy_message_encode(unsigned char *buf, size_t buflen,
+                                   const struct ndb_negentropy_range *ranges,
+                                   size_t num_ranges);
+
+/*
+ * Get the protocol version from a message.
+ *
+ * This reads just the first byte without parsing the full message.
+ * Returns the version byte, or 0 if the buffer is empty.
+ *
+ * Use this to check version compatibility before full decode.
+ */
+int ndb_negentropy_message_version(const unsigned char *buf, size_t buflen);
+
+/*
+ * Decode the next range from a message buffer.
+ *
+ * This is an incremental decoder for processing ranges one at a time.
+ * It avoids allocating memory for an array of ranges.
+ *
+ * Parameters:
+ *   buf:            Input buffer (should point past version byte for first call)
+ *   buflen:         Remaining bytes in buffer
+ *   range:          Output range structure
+ *   prev_timestamp: In/out state for delta decoding (init to 0)
+ *
+ * Returns: Bytes consumed for this range, or 0 if no more ranges/error.
+ *
+ * Usage pattern:
+ *   const unsigned char *p = buf + 1;  // skip version
+ *   size_t remaining = len - 1;
+ *   uint64_t prev_ts = 0;
+ *   struct ndb_negentropy_range range;
+ *
+ *   while (remaining > 0) {
+ *       int consumed = ndb_negentropy_range_decode(p, remaining, &range, &prev_ts);
+ *       if (consumed == 0) break;
+ *       // process range...
+ *       p += consumed;
+ *       remaining -= consumed;
+ *   }
+ */
+
+/*
+ * Count the number of ranges in a message.
+ *
+ * This parses through the message to count ranges without
+ * extracting the full data. Useful for pre-allocating arrays
+ * or validating message structure.
+ *
+ * Returns: Number of ranges, or -1 on parse error.
+ */
+int ndb_negentropy_message_count_ranges(const unsigned char *buf, size_t buflen);
+
+
 #endif /* NDB_NEGENTROPY_H */

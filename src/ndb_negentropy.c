@@ -684,3 +684,117 @@ int ndb_negentropy_range_decode(const unsigned char *buf, size_t buflen,
 
 	return (int)offset;
 }
+
+
+/* ============================================================
+ * MESSAGE ENCODING/DECODING
+ * ============================================================
+ *
+ * Messages are the complete wire-format units. Each message
+ * starts with a version byte followed by concatenated ranges.
+ */
+
+
+/*
+ * Encode a complete negentropy message.
+ *
+ * Format: <version (1 byte)> <range>*
+ */
+int ndb_negentropy_message_encode(unsigned char *buf, size_t buflen,
+                                   const struct ndb_negentropy_range *ranges,
+                                   size_t num_ranges)
+{
+	size_t offset = 0;
+	size_t i;
+	uint64_t prev_timestamp = 0;
+	int written;
+
+	/* Guard: need at least 1 byte for version */
+	if (buf == NULL || buflen < 1)
+		return 0;
+
+	/* Guard: enforce range limit for DOS protection */
+	if (num_ranges > NDB_NEGENTROPY_MAX_RANGES)
+		return 0;
+
+	/* Write protocol version byte */
+	buf[offset++] = NDB_NEGENTROPY_PROTOCOL_V1;
+
+	/* Encode each range */
+	for (i = 0; i < num_ranges; i++) {
+		written = ndb_negentropy_range_encode(buf + offset, buflen - offset,
+		                                       &ranges[i], &prev_timestamp);
+		if (written == 0)
+			return 0;
+
+		offset += (size_t)written;
+	}
+
+	return (int)offset;
+}
+
+
+/*
+ * Get the protocol version from a message.
+ *
+ * Simply returns the first byte, which is the version.
+ */
+int ndb_negentropy_message_version(const unsigned char *buf, size_t buflen)
+{
+	if (buf == NULL || buflen < 1)
+		return 0;
+
+	return (int)buf[0];
+}
+
+
+/*
+ * Count ranges in a message.
+ *
+ * We parse through the message skipping the version byte,
+ * then iterate through ranges counting each one.
+ */
+int ndb_negentropy_message_count_ranges(const unsigned char *buf, size_t buflen)
+{
+	const unsigned char *p;
+	size_t remaining;
+	uint64_t prev_timestamp = 0;
+	struct ndb_negentropy_range range;
+	int count = 0;
+	int consumed;
+
+	/* Guard: need at least version byte */
+	if (buf == NULL || buflen < 1)
+		return -1;
+
+	/* Check version is V1 */
+	if (buf[0] != NDB_NEGENTROPY_PROTOCOL_V1)
+		return -1;
+
+	/* Skip version byte */
+	p = buf + 1;
+	remaining = buflen - 1;
+
+	/*
+	 * Parse ranges until buffer exhausted.
+	 * We use the actual decode function to ensure we count
+	 * correctly even with complex payloads.
+	 */
+	while (remaining > 0) {
+		consumed = ndb_negentropy_range_decode(p, remaining, &range, &prev_timestamp);
+
+		/* Decode error */
+		if (consumed == 0)
+			return -1;
+
+		/* Guard: ensure we don't exceed limit */
+		count++;
+		if (count > NDB_NEGENTROPY_MAX_RANGES)
+			return -1;
+
+		p += consumed;
+		remaining -= (size_t)consumed;
+	}
+
+	return count;
+}

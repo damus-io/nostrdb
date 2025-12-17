@@ -550,6 +550,187 @@ static void test_range_empty_idlist(void)
 }
 
 /* ============================================================
+ * MESSAGE ENCODING TESTS
+ * ============================================================ */
+
+static void test_message_version(void)
+{
+	printf("  message_version... ");
+
+	unsigned char buf[16];
+	int version;
+
+	/* Test V1 version */
+	buf[0] = NDB_NEGENTROPY_PROTOCOL_V1;
+	version = ndb_negentropy_message_version(buf, 1);
+	assert(version == NDB_NEGENTROPY_PROTOCOL_V1);
+	assert(version == 0x61);
+
+	/* Test empty buffer */
+	version = ndb_negentropy_message_version(NULL, 0);
+	assert(version == 0);
+
+	printf("OK\n");
+}
+
+static void test_message_empty(void)
+{
+	printf("  message_empty... ");
+
+	unsigned char buf[16];
+	int enc_len, count;
+
+	/* Encode empty message (just version byte) */
+	enc_len = ndb_negentropy_message_encode(buf, sizeof(buf), NULL, 0);
+	assert(enc_len == 1);
+	assert(buf[0] == NDB_NEGENTROPY_PROTOCOL_V1);
+
+	/* Count should be 0 */
+	count = ndb_negentropy_message_count_ranges(buf, enc_len);
+	assert(count == 0);
+
+	printf("OK\n");
+}
+
+static void test_message_single_range(void)
+{
+	printf("  message_single_range... ");
+
+	struct ndb_negentropy_range range;
+	unsigned char buf[128];
+	int enc_len, count;
+
+	/* Single SKIP range */
+	range.upper_bound.timestamp = UINT64_MAX;  /* infinity */
+	range.upper_bound.prefix_len = 0;
+	range.mode = NDB_NEG_SKIP;
+
+	enc_len = ndb_negentropy_message_encode(buf, sizeof(buf), &range, 1);
+	assert(enc_len > 1);
+	assert(buf[0] == NDB_NEGENTROPY_PROTOCOL_V1);
+
+	count = ndb_negentropy_message_count_ranges(buf, enc_len);
+	assert(count == 1);
+
+	printf("OK\n");
+}
+
+static void test_message_multiple_ranges(void)
+{
+	printf("  message_multiple_ranges... ");
+
+	struct ndb_negentropy_range ranges[3];
+	unsigned char buf[256];
+	int enc_len, count;
+
+	/* First range: SKIP at timestamp 1000 */
+	ranges[0].upper_bound.timestamp = 1000;
+	ranges[0].upper_bound.prefix_len = 0;
+	ranges[0].mode = NDB_NEG_SKIP;
+
+	/* Second range: FINGERPRINT at timestamp 2000 */
+	ranges[1].upper_bound.timestamp = 2000;
+	ranges[1].upper_bound.prefix_len = 0;
+	ranges[1].mode = NDB_NEG_FINGERPRINT;
+	for (int i = 0; i < 16; i++)
+		ranges[1].payload.fingerprint[i] = (unsigned char)i;
+
+	/* Third range: SKIP at infinity */
+	ranges[2].upper_bound.timestamp = UINT64_MAX;
+	ranges[2].upper_bound.prefix_len = 0;
+	ranges[2].mode = NDB_NEG_SKIP;
+
+	enc_len = ndb_negentropy_message_encode(buf, sizeof(buf), ranges, 3);
+	assert(enc_len > 0);
+
+	count = ndb_negentropy_message_count_ranges(buf, enc_len);
+	assert(count == 3);
+
+	printf("OK\n");
+}
+
+static void test_message_roundtrip(void)
+{
+	printf("  message_roundtrip... ");
+
+	struct ndb_negentropy_range ranges_in[2];
+	struct ndb_negentropy_range range_out;
+	unsigned char buf[256];
+	int enc_len;
+	const unsigned char *p;
+	size_t remaining;
+	uint64_t prev_ts;
+	int consumed;
+
+	/* Set up input ranges */
+	ranges_in[0].upper_bound.timestamp = 1500;
+	ranges_in[0].upper_bound.prefix_len = 0;
+	ranges_in[0].mode = NDB_NEG_FINGERPRINT;
+	for (int i = 0; i < 16; i++)
+		ranges_in[0].payload.fingerprint[i] = (unsigned char)(0xAA + i);
+
+	ranges_in[1].upper_bound.timestamp = UINT64_MAX;
+	ranges_in[1].upper_bound.prefix_len = 0;
+	ranges_in[1].mode = NDB_NEG_SKIP;
+
+	/* Encode */
+	enc_len = ndb_negentropy_message_encode(buf, sizeof(buf), ranges_in, 2);
+	assert(enc_len > 0);
+
+	/* Verify version */
+	assert(ndb_negentropy_message_version(buf, enc_len) == NDB_NEGENTROPY_PROTOCOL_V1);
+
+	/* Decode and verify ranges */
+	p = buf + 1;  /* skip version */
+	remaining = (size_t)enc_len - 1;
+	prev_ts = 0;
+
+	/* First range */
+	consumed = ndb_negentropy_range_decode(p, remaining, &range_out, &prev_ts);
+	assert(consumed > 0);
+	assert(range_out.mode == NDB_NEG_FINGERPRINT);
+	assert(range_out.upper_bound.timestamp == 1500);
+	assert(memcmp(range_out.payload.fingerprint, ranges_in[0].payload.fingerprint, 16) == 0);
+
+	p += consumed;
+	remaining -= (size_t)consumed;
+
+	/* Second range */
+	consumed = ndb_negentropy_range_decode(p, remaining, &range_out, &prev_ts);
+	assert(consumed > 0);
+	assert(range_out.mode == NDB_NEG_SKIP);
+	assert(range_out.upper_bound.timestamp == UINT64_MAX);
+
+	p += consumed;
+	remaining -= (size_t)consumed;
+
+	/* Should be at end */
+	assert(remaining == 0);
+
+	printf("OK\n");
+}
+
+static void test_message_invalid_version(void)
+{
+	printf("  message_invalid_version... ");
+
+	unsigned char buf[16];
+	int count;
+
+	/* Wrong version */
+	buf[0] = 0x00;
+	count = ndb_negentropy_message_count_ranges(buf, 1);
+	assert(count == -1);
+
+	/* Future version */
+	buf[0] = 0x62;
+	count = ndb_negentropy_message_count_ranges(buf, 1);
+	assert(count == -1);
+
+	printf("OK\n");
+}
+
+/* ============================================================
  * MAIN
  * ============================================================ */
 
@@ -589,6 +770,14 @@ int main(void)
 	test_range_idlist();
 	test_range_idlist_response();
 	test_range_empty_idlist();
+
+	printf("\nMessage encoding tests:\n");
+	test_message_version();
+	test_message_empty();
+	test_message_single_range();
+	test_message_multiple_ranges();
+	test_message_roundtrip();
+	test_message_invalid_version();
 
 	printf("\n=== All tests passed! ===\n");
 	return 0;
