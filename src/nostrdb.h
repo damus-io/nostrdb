@@ -27,6 +27,7 @@
 //#define DEBUG 1
 
 #ifdef NDB_LOG
+#include <stdio.h>
 #define ndb_debug(...) printf(__VA_ARGS__)
 #else
 #define ndb_debug(...) (void)0
@@ -133,11 +134,87 @@ struct ndb_id_cb {
 	void *data;
 };
 
-// required to keep a read 
+// required to keep a read
 struct ndb_txn {
 	struct ndb_lmdb *lmdb;
 	void *mdb_txn;
 };
+
+/*
+ * Transaction initialization check.
+ *
+ * Checks that a transaction pointer and its internal LMDB pointers are
+ * non-NULL before use. This is a defensive precondition check to avoid
+ * obvious NULL dereferences in LMDB calls.
+ *
+ * IMPORTANT: This does NOT guarantee the MDB_txn is still "live". It
+ * cannot reliably detect use-after-end or use-after-free scenarios.
+ * A freed transaction pointer may still be non-NULL and pass this check.
+ *
+ * Behavior:
+ *   - NDB_LOG builds: logs diagnostic info for debugging
+ *   - All builds: returns 0 for uninitialized, 1 for initialized
+ *
+ * Usage (guard clause pattern):
+ *   if (!ndb_txn_is_valid(txn))
+ *       return 0;
+ */
+static inline int ndb_txn_is_valid(const struct ndb_txn *txn)
+{
+	if (txn == NULL) {
+		ndb_debug("BUG: NULL transaction pointer\n");
+		return 0;
+	}
+
+	if (txn->mdb_txn == NULL) {
+		ndb_debug("BUG: transaction has NULL mdb_txn\n");
+		return 0;
+	}
+
+	if (txn->lmdb == NULL) {
+		ndb_debug("BUG: transaction has NULL lmdb\n");
+		return 0;
+	}
+
+	return 1;
+}
+
+/*
+ * Transaction precondition macro.
+ *
+ * Use this at the start of functions that require a valid transaction.
+ * Behavior depends on build mode:
+ *
+ *   - NDB_STRICT_TXN defined (CI/debug): asserts and aborts immediately,
+ *     making invalid transactions impossible to miss during testing.
+ *
+ *   - Normal builds: returns 0 gracefully, keeping production stable
+ *     while logging diagnostics if NDB_LOG is enabled.
+ *
+ * Usage:
+ *   int some_function(struct ndb_txn *txn, ...) {
+ *       NDB_TXN_CHECK(txn, 0);  // returns 0 on invalid txn
+ *       ...
+ *   }
+ *
+ *   void *other_function(struct ndb_txn *txn, ...) {
+ *       NDB_TXN_CHECK(txn, NULL);  // returns NULL on invalid txn
+ *       ...
+ *   }
+ */
+#if defined(NDB_STRICT_TXN)
+#include <assert.h>
+#define NDB_TXN_CHECK(txn_, retval_) \
+	do { \
+		assert(ndb_txn_is_valid((txn_)) && "invalid transaction"); \
+	} while (0)
+#else
+#define NDB_TXN_CHECK(txn_, retval_) \
+	do { \
+		if (!ndb_txn_is_valid((txn_))) \
+			return (retval_); \
+	} while (0)
+#endif
 
 struct ndb_event {
 	struct ndb_note *note;
