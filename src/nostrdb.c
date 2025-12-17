@@ -3476,6 +3476,19 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 	int ok;
 	size_t bufsize, note_size;
 
+	/*
+	 * Guard: read_txn must be valid.
+	 *
+	 * This function requires a read transaction for duplicate detection
+	 * and relay processing. If read_txn is NULL, the batching logic has
+	 * a bug (e.g., any_event not set correctly). Fail fast rather than
+	 * crash later in LMDB calls.
+	 */
+	if (read_txn == NULL) {
+		ndb_debug("BUG: ndb_ingester_process_event called with NULL read_txn\n");
+		return 0;
+	}
+
 	ok = 0;
 
 	// we will use this to check if we already have it in the DB during
@@ -6952,6 +6965,12 @@ static int ndb_ingester_reprocess_giftwrap(
 	size_t note_size;
 	int rc;
 
+	/* Guard: txn must have a valid LMDB transaction */
+	if (txn == NULL || txn->mdb_txn == NULL) {
+		ndb_debug("BUG: ndb_ingester_reprocess_giftwrap called with invalid txn\n");
+		return 0;
+	}
+
 	giftwrap = ndb_get_note_by_key(txn, proc_gw->giftwrap_key, &note_size);
 	if (!giftwrap) {
 		ndb_debug("failed to find giftwrap "
@@ -7020,18 +7039,20 @@ static void *ndb_ingester_thread(void *data)
 		}
 #endif
 
+		/*
+		 * Pre-scan: determine if any message requires a read transaction.
+		 *
+		 * BUG FIX: Previously used assignment (any_event = 0/1) which meant
+		 * later messages could overwrite earlier decisions. A batch like
+		 * [EVENT, ADD_KEY] would end with any_event=0, skipping txn_begin,
+		 * but the event would still be processed with read_txn=NULL → crash.
+		 *
+		 * Now uses |= so any_event is monotonic: once set, it stays set.
+		 */
 		for (i = 0; i < popped; i++) {
 			msg = &msgs[i];
-			switch (msg->type) {
-			case NDB_INGEST_EVENT:
-			case NDB_INGEST_PROCESS_GIFTWRAP:
-				any_event = 1;
-				break;
-			case NDB_INGEST_ADD_KEY:
-			case NDB_INGEST_QUIT:
-				any_event = 0;
-				break;
-			}
+			any_event |= (msg->type == NDB_INGEST_EVENT ||
+			              msg->type == NDB_INGEST_PROCESS_GIFTWRAP);
 		}
 
 		if (any_event && (rc = mdb_txn_begin(lmdb->env, NULL,
@@ -7073,8 +7094,10 @@ static void *ndb_ingester_thread(void *data)
 			}
 		}
 
-		if (any_event)
+		if (any_event) {
 			mdb_txn_abort(read_txn);
+			read_txn = NULL;
+		}
 	}
 
 	ndb_debug("quitting ingester thread\n");
