@@ -1,0 +1,262 @@
+/*
+ * ndb_negentropy.h - Native Negentropy for NostrDB
+ *
+ * This implements the negentropy set reconciliation protocol (NIP-77)
+ * for efficient event syncing between clients and relays.
+ *
+ * Negentropy allows two parties to efficiently determine which items
+ * each has that the other lacks, using O(log n) round trips and
+ * minimal bandwidth via fingerprint comparison.
+ *
+ * The protocol works by:
+ * 1. Both sides sort their items by (timestamp, id)
+ * 2. Exchange fingerprints of ranges to find differences
+ * 3. Recursively split differing ranges until items are identified
+ * 4. Exchange the actual differing item IDs
+ *
+ * Reference: https://github.com/hoytech/negentropy
+ * NIP-77: https://github.com/nostr-protocol/nips/blob/master/77.md
+ */
+
+#ifndef NDB_NEGENTROPY_H
+#define NDB_NEGENTROPY_H
+
+#include <inttypes.h>
+#include <stddef.h>
+
+/*
+ * Protocol version byte.
+ * V1 = 0x61, future versions increment (0x62, 0x63, etc.)
+ * If a peer receives an incompatible version, it replies with
+ * a single byte containing its highest supported version.
+ */
+#define NDB_NEGENTROPY_PROTOCOL_V1 0x61
+
+/*
+ * Range modes determine how each range in a message should be processed.
+ *
+ * SKIP:            No further processing needed for this range.
+ *                  Payload is empty.
+ *
+ * FINGERPRINT:     Payload contains a 16-byte fingerprint of all IDs
+ *                  in this range. If fingerprints match, ranges are
+ *                  identical. If not, further splitting is needed.
+ *
+ * IDLIST:          Payload contains a complete list of all IDs in
+ *                  this range. Used for small ranges as a base case.
+ *
+ * IDLIST_RESPONSE: Server's response to an IDLIST. Contains IDs the
+ *                  server has (client needs) plus a bitfield indicating
+ *                  which client IDs the server needs.
+ */
+enum ndb_negentropy_mode {
+	NDB_NEG_SKIP            = 0,
+	NDB_NEG_FINGERPRINT     = 1,
+	NDB_NEG_IDLIST          = 2,
+	NDB_NEG_IDLIST_RESPONSE = 3
+};
+
+/*
+ * Bound: Represents a range boundary in the timestamp/ID space.
+ *
+ * Ranges in negentropy are specified by inclusive lower bounds and
+ * exclusive upper bounds. Each bound consists of a timestamp and
+ * an ID prefix of variable length.
+ *
+ * The prefix_len allows using the shortest possible prefix that
+ * distinguishes this bound from adjacent records. If timestamps
+ * differ, prefix_len can be 0. Otherwise, it's the length of the
+ * common prefix plus 1.
+ *
+ * Trailing bytes after prefix_len are implicitly zero.
+ */
+struct ndb_negentropy_bound {
+	uint64_t timestamp;
+	unsigned char id_prefix[32];
+	uint8_t prefix_len;  /* 0-32 bytes */
+};
+
+/*
+ * Item: A (timestamp, id) pair for negentropy reconciliation.
+ *
+ * Items must be sorted by timestamp first, then lexicographically
+ * by ID for items with identical timestamps.
+ */
+struct ndb_negentropy_item {
+	uint64_t timestamp;
+	unsigned char id[32];
+};
+
+/*
+ * Accumulator: 256-bit accumulator for fingerprint computation.
+ *
+ * The fingerprint algorithm sums all 32-byte IDs (treated as
+ * little-endian 256-bit unsigned integers) modulo 2^256, then
+ * hashes the result with the count.
+ *
+ * Formula: fingerprint = SHA256(sum || varint(count))[:16]
+ */
+struct ndb_negentropy_accumulator {
+	unsigned char sum[32];  /* little-endian 256-bit value */
+};
+
+
+/* ============================================================
+ * VARINT ENCODING/DECODING
+ * ============================================================
+ *
+ * Negentropy uses a specific varint format:
+ * - Base-128 encoding
+ * - Most significant byte FIRST (big-endian style)
+ * - High bit (0x80) set on all bytes EXCEPT the last
+ *
+ * This differs from the common LEB128 format which is LSB-first.
+ *
+ * Examples:
+ *   0      -> 0x00
+ *   127    -> 0x7F
+ *   128    -> 0x81 0x00
+ *   255    -> 0x81 0x7F
+ *   16383  -> 0xFF 0x7F
+ *   16384  -> 0x81 0x80 0x00
+ */
+
+/*
+ * Encode a 64-bit unsigned integer as a negentropy varint.
+ *
+ * Returns: Number of bytes written, or 0 if buffer too small.
+ *
+ * The maximum encoded size is 10 bytes (for UINT64_MAX).
+ */
+int ndb_negentropy_varint_encode(unsigned char *buf, size_t buflen, uint64_t n);
+
+/*
+ * Decode a negentropy varint into a 64-bit unsigned integer.
+ *
+ * Returns: Number of bytes consumed, or 0 on error.
+ *
+ * Errors include: buffer too small, malformed varint (> 10 bytes),
+ * or value overflow.
+ */
+int ndb_negentropy_varint_decode(const unsigned char *buf, size_t buflen,
+                                  uint64_t *out);
+
+/*
+ * Calculate the encoded size of a varint without actually encoding.
+ *
+ * Useful for pre-calculating buffer sizes.
+ */
+int ndb_negentropy_varint_size(uint64_t n);
+
+
+/* ============================================================
+ * FINGERPRINT COMPUTATION
+ * ============================================================
+ *
+ * Fingerprints are computed by:
+ * 1. Summing all 32-byte IDs as little-endian 256-bit integers
+ * 2. Taking the sum modulo 2^256 (natural overflow)
+ * 3. Appending the count as a varint
+ * 4. Hashing with SHA-256
+ * 5. Taking the first 16 bytes
+ */
+
+/*
+ * Initialize an accumulator to zero.
+ */
+void ndb_negentropy_accumulator_init(struct ndb_negentropy_accumulator *acc);
+
+/*
+ * Add a 32-byte ID to the accumulator.
+ *
+ * Performs 256-bit addition with natural overflow (mod 2^256).
+ * The ID is interpreted as a little-endian unsigned integer.
+ */
+void ndb_negentropy_accumulator_add(struct ndb_negentropy_accumulator *acc,
+                                     const unsigned char *id);
+
+/*
+ * Compute the final 16-byte fingerprint.
+ *
+ * Formula: SHA256(acc->sum || varint(count))[:16]
+ *
+ * The output buffer must be at least 16 bytes.
+ */
+void ndb_negentropy_fingerprint(const struct ndb_negentropy_accumulator *acc,
+                                 size_t count,
+                                 unsigned char *out);
+
+
+/* ============================================================
+ * BOUND ENCODING/DECODING
+ * ============================================================
+ *
+ * Bounds are encoded as:
+ *   <encodedTimestamp (Varint)> <prefixLen (Varint)> <idPrefix (bytes)>
+ *
+ * Timestamp encoding is special:
+ * - The "infinity" timestamp (UINT64_MAX) is encoded as 0
+ * - All other values are encoded as (1 + delta) where delta is
+ *   the difference from the previous timestamp
+ * - Deltas are always non-negative (ranges are ascending)
+ *
+ * The prev_timestamp parameter tracks state across multiple
+ * bound encodings within a single message.
+ */
+
+/*
+ * Encode a bound into a buffer.
+ *
+ * prev_timestamp: In/out parameter for delta encoding.
+ *                 Initialize to 0 at the start of a message.
+ *
+ * Returns: Number of bytes written, or 0 on error.
+ */
+int ndb_negentropy_bound_encode(unsigned char *buf, size_t buflen,
+                                 const struct ndb_negentropy_bound *bound,
+                                 uint64_t *prev_timestamp);
+
+/*
+ * Decode a bound from a buffer.
+ *
+ * prev_timestamp: In/out parameter for delta decoding.
+ *                 Initialize to 0 at the start of a message.
+ *
+ * Returns: Number of bytes consumed, or 0 on error.
+ */
+int ndb_negentropy_bound_decode(const unsigned char *buf, size_t buflen,
+                                 struct ndb_negentropy_bound *bound,
+                                 uint64_t *prev_timestamp);
+
+
+/* ============================================================
+ * HEX ENCODING UTILITIES
+ * ============================================================
+ *
+ * NIP-77 transmits negentropy messages as hex-encoded strings
+ * within JSON arrays:
+ *
+ *   ["NEG-OPEN", "sub1", {"kinds":[1]}, "6181..."]
+ *   ["NEG-MSG", "sub1", "6181..."]
+ */
+
+/*
+ * Convert binary data to a hex string.
+ *
+ * The output is NUL-terminated. The hex buffer must be at least
+ * (len * 2 + 1) bytes.
+ *
+ * Returns: Number of hex characters written (excluding NUL).
+ */
+size_t ndb_negentropy_to_hex(const unsigned char *bin, size_t len, char *hex);
+
+/*
+ * Convert a hex string to binary data.
+ *
+ * Returns: Number of bytes written, or 0 on error (invalid hex,
+ *          buffer too small, odd-length input).
+ */
+size_t ndb_negentropy_from_hex(const char *hex, size_t hexlen,
+                                unsigned char *bin, size_t binlen);
+
+#endif /* NDB_NEGENTROPY_H */
