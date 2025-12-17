@@ -445,4 +445,120 @@ int ndb_negentropy_message_version(const unsigned char *buf, size_t buflen);
 int ndb_negentropy_message_count_ranges(const unsigned char *buf, size_t buflen);
 
 
+/* ============================================================
+ * NEGENTROPY STORAGE
+ * ============================================================
+ *
+ * Storage holds a sorted list of items for negentropy reconciliation.
+ * Items are (timestamp, id) pairs sorted first by timestamp, then by id.
+ *
+ * The storage can be populated from a NostrDB query or built manually.
+ * Once sealed, the storage is ready for reconciliation.
+ *
+ * Memory management: The storage owns its item array and will free it
+ * when destroyed. Items are copied in, so the caller can free their
+ * original data after adding.
+ */
+
+/*
+ * Storage structure for negentropy items.
+ *
+ * Items must be sorted by (timestamp, id) before sealing.
+ * The seal operation handles sorting automatically.
+ */
+struct ndb_negentropy_storage {
+	struct ndb_negentropy_item *items;  /* Sorted item array */
+	size_t count;                        /* Number of items */
+	size_t capacity;                     /* Allocated capacity */
+	int sealed;                          /* 1 if sealed (ready for use) */
+};
+
+/*
+ * Initialize a new storage instance.
+ *
+ * Must be destroyed with ndb_negentropy_storage_destroy() when done.
+ * Returns 1 on success, 0 on failure (allocation error).
+ */
+int ndb_negentropy_storage_init(struct ndb_negentropy_storage *storage);
+
+/*
+ * Destroy a storage instance and free its memory.
+ */
+void ndb_negentropy_storage_destroy(struct ndb_negentropy_storage *storage);
+
+/*
+ * Add an item to the storage.
+ *
+ * Items can be added in any order - they will be sorted when sealed.
+ * Must not call after sealing.
+ *
+ * Returns 1 on success, 0 on failure (allocation error or already sealed).
+ */
+int ndb_negentropy_storage_add(struct ndb_negentropy_storage *storage,
+                                uint64_t timestamp,
+                                const unsigned char *id);
+
+/*
+ * Add multiple items at once.
+ *
+ * More efficient than adding one at a time due to reduced reallocation.
+ * The items array should contain count items.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int ndb_negentropy_storage_add_many(struct ndb_negentropy_storage *storage,
+                                     const struct ndb_negentropy_item *items,
+                                     size_t count);
+
+/*
+ * Seal the storage for use.
+ *
+ * This sorts the items by (timestamp, id) and marks the storage as ready.
+ * After sealing:
+ * - No more items can be added
+ * - The storage can be used for fingerprint computation
+ *
+ * Returns 1 on success, 0 if already sealed.
+ */
+int ndb_negentropy_storage_seal(struct ndb_negentropy_storage *storage);
+
+/*
+ * Get the number of items in the storage.
+ */
+size_t ndb_negentropy_storage_size(const struct ndb_negentropy_storage *storage);
+
+/*
+ * Get an item by index.
+ *
+ * Index must be < size(). Returns NULL if out of bounds or not sealed.
+ */
+const struct ndb_negentropy_item *
+ndb_negentropy_storage_get(const struct ndb_negentropy_storage *storage, size_t index);
+
+/*
+ * Find the index of the first item >= the given bound.
+ *
+ * Uses binary search for O(log n) performance.
+ * Returns the insertion point if no exact match (i.e., the index where
+ * an item with this bound would be inserted).
+ *
+ * Storage must be sealed.
+ */
+size_t ndb_negentropy_storage_lower_bound(const struct ndb_negentropy_storage *storage,
+                                           const struct ndb_negentropy_bound *bound);
+
+/*
+ * Compute the fingerprint for a range of items.
+ *
+ * Computes the fingerprint for items in [begin, end).
+ * The begin and end are indices into the storage.
+ *
+ * Storage must be sealed.
+ * Returns 1 on success, 0 on error (invalid indices or not sealed).
+ */
+int ndb_negentropy_storage_fingerprint(const struct ndb_negentropy_storage *storage,
+                                        size_t begin, size_t end,
+                                        unsigned char *fingerprint_out);
+
+
 #endif /* NDB_NEGENTROPY_H */

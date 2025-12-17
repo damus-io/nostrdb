@@ -7,6 +7,7 @@
 
 #include "ndb_negentropy.h"
 #include <string.h>
+#include <stdlib.h>
 
 /* ============================================================
  * VARINT ENCODING/DECODING
@@ -797,4 +798,324 @@ int ndb_negentropy_message_count_ranges(const unsigned char *buf, size_t buflen)
 	}
 
 	return count;
+}
+
+
+/* ============================================================
+ * NEGENTROPY STORAGE
+ * ============================================================
+ *
+ * Storage manages a sorted array of (timestamp, id) items for
+ * use in negentropy reconciliation.
+ */
+
+/* Initial capacity for item array */
+#define STORAGE_INITIAL_CAPACITY 64
+
+
+/*
+ * Compare two items for sorting.
+ *
+ * Primary sort: timestamp (ascending)
+ * Secondary sort: id (lexicographic ascending)
+ */
+static int item_compare(const void *a, const void *b)
+{
+	const struct ndb_negentropy_item *ia = a;
+	const struct ndb_negentropy_item *ib = b;
+
+	/* Compare timestamp first */
+	if (ia->timestamp < ib->timestamp)
+		return -1;
+	if (ia->timestamp > ib->timestamp)
+		return 1;
+
+	/* Timestamps equal - compare IDs lexicographically */
+	return memcmp(ia->id, ib->id, 32);
+}
+
+
+/*
+ * Compare an item to a bound for binary search.
+ *
+ * Returns:
+ *   < 0 if item < bound
+ *   = 0 if item == bound
+ *   > 0 if item > bound
+ */
+static int item_bound_compare(const struct ndb_negentropy_item *item,
+                               const struct ndb_negentropy_bound *bound)
+{
+	/* Handle infinity bound */
+	if (bound->timestamp == UINT64_MAX)
+		return -1;  /* Item is always < infinity */
+
+	/* Compare timestamp */
+	if (item->timestamp < bound->timestamp)
+		return -1;
+	if (item->timestamp > bound->timestamp)
+		return 1;
+
+	/* Timestamps equal - compare ID prefix */
+	return memcmp(item->id, bound->id_prefix, bound->prefix_len);
+}
+
+
+/*
+ * Ensure storage has room for at least one more item.
+ * Grows the array if necessary.
+ */
+static int storage_ensure_capacity(struct ndb_negentropy_storage *storage)
+{
+	size_t new_capacity;
+	struct ndb_negentropy_item *new_items;
+
+	if (storage->count < storage->capacity)
+		return 1;
+
+	/* Grow by doubling */
+	new_capacity = storage->capacity * 2;
+	if (new_capacity < STORAGE_INITIAL_CAPACITY)
+		new_capacity = STORAGE_INITIAL_CAPACITY;
+
+	new_items = realloc(storage->items,
+	                    new_capacity * sizeof(struct ndb_negentropy_item));
+	if (new_items == NULL)
+		return 0;
+
+	storage->items = new_items;
+	storage->capacity = new_capacity;
+	return 1;
+}
+
+
+int ndb_negentropy_storage_init(struct ndb_negentropy_storage *storage)
+{
+	if (storage == NULL)
+		return 0;
+
+	storage->items = NULL;
+	storage->count = 0;
+	storage->capacity = 0;
+	storage->sealed = 0;
+
+	return 1;
+}
+
+
+void ndb_negentropy_storage_destroy(struct ndb_negentropy_storage *storage)
+{
+	if (storage == NULL)
+		return;
+
+	free(storage->items);
+	storage->items = NULL;
+	storage->count = 0;
+	storage->capacity = 0;
+	storage->sealed = 0;
+}
+
+
+int ndb_negentropy_storage_add(struct ndb_negentropy_storage *storage,
+                                uint64_t timestamp,
+                                const unsigned char *id)
+{
+	struct ndb_negentropy_item *item;
+
+	/* Guard: validate inputs */
+	if (storage == NULL || id == NULL)
+		return 0;
+
+	/* Guard: cannot add after sealing */
+	if (storage->sealed)
+		return 0;
+
+	/* Ensure capacity */
+	if (!storage_ensure_capacity(storage))
+		return 0;
+
+	/* Add the item */
+	item = &storage->items[storage->count];
+	item->timestamp = timestamp;
+	memcpy(item->id, id, 32);
+	storage->count++;
+
+	return 1;
+}
+
+
+int ndb_negentropy_storage_add_many(struct ndb_negentropy_storage *storage,
+                                     const struct ndb_negentropy_item *items,
+                                     size_t count)
+{
+	size_t needed;
+	size_t new_capacity;
+	struct ndb_negentropy_item *new_items;
+	size_t i;
+
+	/* Guard: validate inputs */
+	if (storage == NULL)
+		return 0;
+
+	if (count == 0)
+		return 1;
+
+	if (items == NULL)
+		return 0;
+
+	/* Guard: cannot add after sealing */
+	if (storage->sealed)
+		return 0;
+
+	/* Ensure capacity for all items */
+	needed = storage->count + count;
+	if (needed > storage->capacity) {
+		new_capacity = storage->capacity;
+		if (new_capacity < STORAGE_INITIAL_CAPACITY)
+			new_capacity = STORAGE_INITIAL_CAPACITY;
+
+		while (new_capacity < needed)
+			new_capacity *= 2;
+
+		new_items = realloc(storage->items,
+		                    new_capacity * sizeof(struct ndb_negentropy_item));
+		if (new_items == NULL)
+			return 0;
+
+		storage->items = new_items;
+		storage->capacity = new_capacity;
+	}
+
+	/* Copy items */
+	for (i = 0; i < count; i++) {
+		storage->items[storage->count + i] = items[i];
+	}
+	storage->count += count;
+
+	return 1;
+}
+
+
+int ndb_negentropy_storage_seal(struct ndb_negentropy_storage *storage)
+{
+	/* Guard: validate input */
+	if (storage == NULL)
+		return 0;
+
+	/* Guard: cannot seal twice */
+	if (storage->sealed)
+		return 0;
+
+	/* Sort items by (timestamp, id) */
+	if (storage->count > 0) {
+		qsort(storage->items, storage->count,
+		      sizeof(struct ndb_negentropy_item), item_compare);
+	}
+
+	storage->sealed = 1;
+	return 1;
+}
+
+
+size_t ndb_negentropy_storage_size(const struct ndb_negentropy_storage *storage)
+{
+	if (storage == NULL)
+		return 0;
+
+	return storage->count;
+}
+
+
+const struct ndb_negentropy_item *
+ndb_negentropy_storage_get(const struct ndb_negentropy_storage *storage, size_t index)
+{
+	/* Guard: validate input */
+	if (storage == NULL)
+		return NULL;
+
+	/* Guard: must be sealed */
+	if (!storage->sealed)
+		return NULL;
+
+	/* Guard: bounds check */
+	if (index >= storage->count)
+		return NULL;
+
+	return &storage->items[index];
+}
+
+
+size_t ndb_negentropy_storage_lower_bound(const struct ndb_negentropy_storage *storage,
+                                           const struct ndb_negentropy_bound *bound)
+{
+	size_t lo, hi, mid;
+	int cmp;
+
+	/* Guard: validate inputs */
+	if (storage == NULL || bound == NULL)
+		return 0;
+
+	/* Guard: must be sealed */
+	if (!storage->sealed)
+		return 0;
+
+	/* Empty storage */
+	if (storage->count == 0)
+		return 0;
+
+	/* Binary search for lower bound */
+	lo = 0;
+	hi = storage->count;
+
+	while (lo < hi) {
+		mid = lo + (hi - lo) / 2;
+
+		cmp = item_bound_compare(&storage->items[mid], bound);
+
+		if (cmp < 0) {
+			/* Item is less than bound, search right half */
+			lo = mid + 1;
+		} else {
+			/* Item is >= bound, search left half */
+			hi = mid;
+		}
+	}
+
+	return lo;
+}
+
+
+int ndb_negentropy_storage_fingerprint(const struct ndb_negentropy_storage *storage,
+                                        size_t begin, size_t end,
+                                        unsigned char *fingerprint_out)
+{
+	struct ndb_negentropy_accumulator acc;
+	size_t i;
+	size_t count;
+
+	/* Guard: validate inputs */
+	if (storage == NULL || fingerprint_out == NULL)
+		return 0;
+
+	/* Guard: must be sealed */
+	if (!storage->sealed)
+		return 0;
+
+	/* Guard: valid range */
+	if (begin > end || end > storage->count)
+		return 0;
+
+	/* Initialize accumulator */
+	ndb_negentropy_accumulator_init(&acc);
+
+	/* Add all IDs in range to accumulator */
+	for (i = begin; i < end; i++) {
+		ndb_negentropy_accumulator_add(&acc, storage->items[i].id);
+	}
+
+	/* Compute fingerprint */
+	count = end - begin;
+	ndb_negentropy_fingerprint(&acc, count, fingerprint_out);
+
+	return 1;
 }

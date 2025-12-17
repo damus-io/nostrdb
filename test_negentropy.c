@@ -731,6 +731,244 @@ static void test_message_invalid_version(void)
 }
 
 /* ============================================================
+ * STORAGE TESTS
+ * ============================================================ */
+
+static void test_storage_init_destroy(void)
+{
+	printf("  storage_init_destroy... ");
+
+	struct ndb_negentropy_storage storage;
+
+	assert(ndb_negentropy_storage_init(&storage) == 1);
+	assert(storage.items == NULL);
+	assert(storage.count == 0);
+	assert(storage.sealed == 0);
+
+	ndb_negentropy_storage_destroy(&storage);
+
+	printf("OK\n");
+}
+
+static void test_storage_add_seal(void)
+{
+	printf("  storage_add_seal... ");
+
+	struct ndb_negentropy_storage storage;
+	unsigned char id[32] = {0};
+
+	ndb_negentropy_storage_init(&storage);
+
+	/* Add some items (out of order) */
+	id[0] = 0x03;
+	assert(ndb_negentropy_storage_add(&storage, 3000, id) == 1);
+
+	id[0] = 0x01;
+	assert(ndb_negentropy_storage_add(&storage, 1000, id) == 1);
+
+	id[0] = 0x02;
+	assert(ndb_negentropy_storage_add(&storage, 2000, id) == 1);
+
+	assert(ndb_negentropy_storage_size(&storage) == 3);
+
+	/* Seal - should sort items */
+	assert(ndb_negentropy_storage_seal(&storage) == 1);
+
+	/* Verify sorted order */
+	const struct ndb_negentropy_item *item;
+
+	item = ndb_negentropy_storage_get(&storage, 0);
+	assert(item != NULL);
+	assert(item->timestamp == 1000);
+	assert(item->id[0] == 0x01);
+
+	item = ndb_negentropy_storage_get(&storage, 1);
+	assert(item->timestamp == 2000);
+	assert(item->id[0] == 0x02);
+
+	item = ndb_negentropy_storage_get(&storage, 2);
+	assert(item->timestamp == 3000);
+	assert(item->id[0] == 0x03);
+
+	/* Cannot add after seal */
+	id[0] = 0x04;
+	assert(ndb_negentropy_storage_add(&storage, 4000, id) == 0);
+
+	/* Cannot seal twice */
+	assert(ndb_negentropy_storage_seal(&storage) == 0);
+
+	ndb_negentropy_storage_destroy(&storage);
+
+	printf("OK\n");
+}
+
+static void test_storage_same_timestamp_sort(void)
+{
+	printf("  storage_same_timestamp_sort... ");
+
+	struct ndb_negentropy_storage storage;
+	unsigned char id[32] = {0};
+
+	ndb_negentropy_storage_init(&storage);
+
+	/* Add items with same timestamp, different IDs */
+	id[0] = 0xCC;
+	ndb_negentropy_storage_add(&storage, 1000, id);
+
+	id[0] = 0xAA;
+	ndb_negentropy_storage_add(&storage, 1000, id);
+
+	id[0] = 0xBB;
+	ndb_negentropy_storage_add(&storage, 1000, id);
+
+	ndb_negentropy_storage_seal(&storage);
+
+	/* Should be sorted by ID */
+	const struct ndb_negentropy_item *item;
+
+	item = ndb_negentropy_storage_get(&storage, 0);
+	assert(item->id[0] == 0xAA);
+
+	item = ndb_negentropy_storage_get(&storage, 1);
+	assert(item->id[0] == 0xBB);
+
+	item = ndb_negentropy_storage_get(&storage, 2);
+	assert(item->id[0] == 0xCC);
+
+	ndb_negentropy_storage_destroy(&storage);
+
+	printf("OK\n");
+}
+
+static void test_storage_lower_bound(void)
+{
+	printf("  storage_lower_bound... ");
+
+	struct ndb_negentropy_storage storage;
+	struct ndb_negentropy_bound bound;
+	unsigned char id[32] = {0};
+	size_t idx;
+
+	ndb_negentropy_storage_init(&storage);
+
+	/* Add items at timestamps 1000, 2000, 3000 */
+	id[0] = 0x01;
+	ndb_negentropy_storage_add(&storage, 1000, id);
+	id[0] = 0x02;
+	ndb_negentropy_storage_add(&storage, 2000, id);
+	id[0] = 0x03;
+	ndb_negentropy_storage_add(&storage, 3000, id);
+
+	ndb_negentropy_storage_seal(&storage);
+
+	/* Lower bound at 0 -> index 0 */
+	memset(&bound, 0, sizeof(bound));
+	bound.timestamp = 0;
+	idx = ndb_negentropy_storage_lower_bound(&storage, &bound);
+	assert(idx == 0);
+
+	/* Lower bound at 1500 -> index 1 (first item >= 1500) */
+	bound.timestamp = 1500;
+	idx = ndb_negentropy_storage_lower_bound(&storage, &bound);
+	assert(idx == 1);
+
+	/* Lower bound at 2000 -> index 1 (exact match) */
+	bound.timestamp = 2000;
+	idx = ndb_negentropy_storage_lower_bound(&storage, &bound);
+	assert(idx == 1);
+
+	/* Lower bound at infinity -> returns count (past end) */
+	bound.timestamp = UINT64_MAX;
+	idx = ndb_negentropy_storage_lower_bound(&storage, &bound);
+	assert(idx == 3);
+
+	ndb_negentropy_storage_destroy(&storage);
+
+	printf("OK\n");
+}
+
+static void test_storage_fingerprint(void)
+{
+	printf("  storage_fingerprint... ");
+
+	struct ndb_negentropy_storage storage;
+	unsigned char id[32] = {0};
+	unsigned char fp1[16], fp2[16];
+
+	ndb_negentropy_storage_init(&storage);
+
+	/* Add items */
+	id[0] = 0x01;
+	ndb_negentropy_storage_add(&storage, 1000, id);
+	id[0] = 0x02;
+	ndb_negentropy_storage_add(&storage, 2000, id);
+	id[0] = 0x03;
+	ndb_negentropy_storage_add(&storage, 3000, id);
+
+	ndb_negentropy_storage_seal(&storage);
+
+	/* Fingerprint of full range */
+	assert(ndb_negentropy_storage_fingerprint(&storage, 0, 3, fp1) == 1);
+
+	/* Fingerprint again - should be same */
+	assert(ndb_negentropy_storage_fingerprint(&storage, 0, 3, fp2) == 1);
+	assert(memcmp(fp1, fp2, 16) == 0);
+
+	/* Fingerprint of subrange - should be different */
+	assert(ndb_negentropy_storage_fingerprint(&storage, 0, 2, fp2) == 1);
+	assert(memcmp(fp1, fp2, 16) != 0);
+
+	/* Empty range fingerprint */
+	assert(ndb_negentropy_storage_fingerprint(&storage, 0, 0, fp2) == 1);
+
+	/* Invalid range should fail */
+	assert(ndb_negentropy_storage_fingerprint(&storage, 2, 1, fp2) == 0);
+	assert(ndb_negentropy_storage_fingerprint(&storage, 0, 10, fp2) == 0);
+
+	ndb_negentropy_storage_destroy(&storage);
+
+	printf("OK\n");
+}
+
+static void test_storage_add_many(void)
+{
+	printf("  storage_add_many... ");
+
+	struct ndb_negentropy_storage storage;
+	struct ndb_negentropy_item items[3];
+
+	ndb_negentropy_storage_init(&storage);
+
+	/* Create items */
+	items[0].timestamp = 3000;
+	memset(items[0].id, 0x03, 32);
+
+	items[1].timestamp = 1000;
+	memset(items[1].id, 0x01, 32);
+
+	items[2].timestamp = 2000;
+	memset(items[2].id, 0x02, 32);
+
+	/* Add all at once */
+	assert(ndb_negentropy_storage_add_many(&storage, items, 3) == 1);
+	assert(ndb_negentropy_storage_size(&storage) == 3);
+
+	ndb_negentropy_storage_seal(&storage);
+
+	/* Should be sorted */
+	const struct ndb_negentropy_item *item;
+	item = ndb_negentropy_storage_get(&storage, 0);
+	assert(item->timestamp == 1000);
+
+	item = ndb_negentropy_storage_get(&storage, 2);
+	assert(item->timestamp == 3000);
+
+	ndb_negentropy_storage_destroy(&storage);
+
+	printf("OK\n");
+}
+
+/* ============================================================
  * MAIN
  * ============================================================ */
 
@@ -778,6 +1016,14 @@ int main(void)
 	test_message_multiple_ranges();
 	test_message_roundtrip();
 	test_message_invalid_version();
+
+	printf("\nStorage tests:\n");
+	test_storage_init_destroy();
+	test_storage_add_seal();
+	test_storage_same_timestamp_sort();
+	test_storage_lower_bound();
+	test_storage_fingerprint();
+	test_storage_add_many();
 
 	printf("\n=== All tests passed! ===\n");
 	return 0;
