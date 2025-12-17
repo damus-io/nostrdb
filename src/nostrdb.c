@@ -3002,7 +3002,15 @@ int ndb_cursor_start(MDB_cursor *cur, MDB_val *k, MDB_val *v)
 }
 
 
-// get some value based on a clustered id key
+/*
+ * Get a value based on a clustered (id, timestamp) key.
+ *
+ * Looks up the most recent entry for the given 32-byte id in the
+ * specified database index. Uses cursor positioning to find the
+ * entry with the highest timestamp for this id.
+ *
+ * Returns: 1 on success (val populated), 0 on failure or not found
+ */
 int ndb_get_tsid(struct ndb_txn *txn, enum ndb_dbs db, const unsigned char *id,
 		 MDB_val *val)
 {
@@ -3010,6 +3018,13 @@ int ndb_get_tsid(struct ndb_txn *txn, enum ndb_dbs db, const unsigned char *id,
 	MDB_cursor *cur;
 	int success = 0, rc;
 	struct ndb_tsid tsid;
+
+	/* Guard: transaction must be initialized */
+	NDB_TXN_CHECK(txn, 0);
+
+	/* Guard: validate input parameters */
+	if (id == NULL || val == NULL)
+		return 0;
 
 	// position at the most recent
 	ndb_tsid_high(&tsid, id);
@@ -3035,10 +3050,21 @@ cleanup:
 	return success;
 }
 
+/*
+ * Look up a value by its 64-bit primary key.
+ *
+ * Retrieves data from the specified store using a direct key lookup.
+ * This is the fast path for fetching notes/profiles by their internal key.
+ *
+ * Returns: pointer to data (valid until txn ends), or NULL on failure
+ */
 static void *ndb_lookup_by_key(struct ndb_txn *txn, uint64_t key,
 			       enum ndb_dbs store, size_t *len)
 {
 	MDB_val k, v;
+
+	/* Guard: transaction must be initialized */
+	NDB_TXN_CHECK(txn, NULL);
 
 	k.mv_data = &key;
 	k.mv_size = sizeof(key);
