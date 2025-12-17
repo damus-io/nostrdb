@@ -1218,7 +1218,8 @@ static int storage_has_id(const struct ndb_negentropy_storage *storage,
 
 
 int ndb_negentropy_init(struct ndb_negentropy *neg,
-                         const struct ndb_negentropy_storage *storage)
+                         const struct ndb_negentropy_storage *storage,
+                         const struct ndb_negentropy_config *config)
 {
 	/* Guard: validate inputs */
 	if (neg == NULL || storage == NULL)
@@ -1230,6 +1231,23 @@ int ndb_negentropy_init(struct ndb_negentropy *neg,
 
 	neg->storage = storage;
 	neg->is_initiator = 0;
+	neg->is_complete = 0;
+
+	/* Apply config or use defaults */
+	if (config != NULL) {
+		neg->frame_size_limit = config->frame_size_limit;
+		neg->idlist_threshold = config->idlist_threshold > 0
+		                        ? config->idlist_threshold
+		                        : NDB_NEGENTROPY_IDLIST_THRESHOLD;
+		neg->split_count = config->split_count > 1
+		                   ? config->split_count
+		                   : NDB_NEGENTROPY_SPLIT_COUNT;
+	} else {
+		neg->frame_size_limit = 0;  /* unlimited */
+		neg->idlist_threshold = NDB_NEGENTROPY_IDLIST_THRESHOLD;
+		neg->split_count = NDB_NEGENTROPY_SPLIT_COUNT;
+	}
+
 	ids_init(&neg->have_ids);
 	ids_init(&neg->need_ids);
 
@@ -1246,6 +1264,16 @@ void ndb_negentropy_destroy(struct ndb_negentropy *neg)
 	ids_destroy(&neg->need_ids);
 	neg->storage = NULL;
 	neg->is_initiator = 0;
+	neg->is_complete = 0;
+}
+
+
+int ndb_negentropy_is_complete(const struct ndb_negentropy *neg)
+{
+	if (neg == NULL)
+		return 0;
+
+	return neg->is_complete;
 }
 
 
@@ -1404,7 +1432,7 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 				 * For small ranges, send IdList.
 				 * For large ranges, send multiple Fingerprint sub-ranges.
 				 */
-				if (our_count <= NDB_NEGENTROPY_IDLIST_THRESHOLD) {
+				if (our_count <= (size_t)neg->idlist_threshold) {
 					/* Small range: send IdList */
 					struct ndb_negentropy_range out_range;
 					int written;
@@ -1426,20 +1454,21 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 				} else {
 					/*
 					 * Large range: split into sub-ranges with fingerprints.
-					 * Use NDB_NEGENTROPY_SPLIT_COUNT splits.
+					 * Use configured split_count splits.
 					 */
-					size_t items_per_split = our_count / NDB_NEGENTROPY_SPLIT_COUNT;
+					size_t items_per_split = our_count / (size_t)neg->split_count;
 					if (items_per_split == 0)
 						items_per_split = 1;
 
 					size_t split_lower = lower_idx;
+					int split_count = neg->split_count;
 
-					for (int s = 0; s < NDB_NEGENTROPY_SPLIT_COUNT && split_lower < upper_idx; s++) {
+					for (int s = 0; s < split_count && split_lower < upper_idx; s++) {
 						size_t split_upper;
 						struct ndb_negentropy_range out_range;
 						int written;
 
-						if (s == NDB_NEGENTROPY_SPLIT_COUNT - 1) {
+						if (s == split_count - 1) {
 							/* Last split takes the rest */
 							split_upper = upper_idx;
 						} else {
@@ -1628,6 +1657,15 @@ int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
 	}
 
 	*outlen = out_offset;
+
+	/*
+	 * Mark reconciliation as complete if output is just the version byte.
+	 * This happens when all ranges in the response are SKIP mode,
+	 * meaning there are no differences to resolve.
+	 */
+	if (out_offset == 1)
+		neg->is_complete = 1;
+
 	return 1;
 }
 

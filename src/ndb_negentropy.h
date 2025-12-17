@@ -604,6 +604,34 @@ struct ndb_negentropy_ids {
 };
 
 /*
+ * Configuration for negentropy reconciliation.
+ *
+ * Pass NULL to use defaults. All fields are optional - zero values
+ * use sensible defaults.
+ */
+struct ndb_negentropy_config {
+	/*
+	 * Maximum frame/message size in bytes. 0 = unlimited.
+	 * Useful for constraining message sizes on memory-limited devices.
+	 */
+	int frame_size_limit;
+
+	/*
+	 * Threshold for switching between fingerprint and idlist modes.
+	 * Ranges with fewer items than this send full ID lists.
+	 * Default: NDB_NEGENTROPY_IDLIST_THRESHOLD (16)
+	 */
+	int idlist_threshold;
+
+	/*
+	 * Number of sub-ranges to split into when fingerprints differ.
+	 * Must be > 1 to ensure progress.
+	 * Default: NDB_NEGENTROPY_SPLIT_COUNT (16)
+	 */
+	int split_count;
+};
+
+/*
  * Reconciliation context.
  *
  * Holds the storage reference and tracks state across multiple
@@ -612,6 +640,12 @@ struct ndb_negentropy_ids {
 struct ndb_negentropy {
 	const struct ndb_negentropy_storage *storage;  /* Item storage (not owned) */
 	int is_initiator;                               /* 1 if we initiated */
+	int is_complete;                                /* 1 when reconciliation done */
+
+	/* Configuration (copied from init) */
+	int frame_size_limit;
+	int idlist_threshold;
+	int split_count;
 
 	/* IDs we have that remote needs (to send) */
 	struct ndb_negentropy_ids have_ids;
@@ -626,10 +660,14 @@ struct ndb_negentropy {
  * The storage must be sealed and remain valid for the lifetime
  * of the context. The context does not own the storage.
  *
+ * The config parameter is optional - pass NULL to use defaults.
+ * If provided, the config is copied so it doesn't need to remain valid.
+ *
  * Returns 1 on success, 0 on failure.
  */
 int ndb_negentropy_init(struct ndb_negentropy *neg,
-                         const struct ndb_negentropy_storage *storage);
+                         const struct ndb_negentropy_storage *storage,
+                         const struct ndb_negentropy_config *config);
 
 /*
  * Destroy a negentropy context and free resources.
@@ -681,6 +719,17 @@ int ndb_negentropy_initiate(struct ndb_negentropy *neg,
 int ndb_negentropy_reconcile(struct ndb_negentropy *neg,
                               const unsigned char *msg, size_t msglen,
                               unsigned char *out, size_t *outlen);
+
+/*
+ * Check if reconciliation is complete.
+ *
+ * Returns 1 if reconciliation is done (no more rounds needed),
+ * 0 if more rounds are required.
+ *
+ * Reconciliation is complete when reconcile() returns an empty
+ * response (just version byte, length == 1).
+ */
+int ndb_negentropy_is_complete(const struct ndb_negentropy *neg);
 
 /*
  * Get the IDs we have that the remote needs.

@@ -985,8 +985,8 @@ static void test_reconcile_init_destroy(void)
 	ndb_negentropy_storage_add(&storage, 1000, id);
 	ndb_negentropy_storage_seal(&storage);
 
-	/* Init context */
-	assert(ndb_negentropy_init(&neg, &storage) == 1);
+	/* Init context (pass NULL for default config) */
+	assert(ndb_negentropy_init(&neg, &storage, NULL) == 1);
 
 	/* Destroy */
 	ndb_negentropy_destroy(&neg);
@@ -1011,7 +1011,7 @@ static void test_reconcile_initiate(void)
 	ndb_negentropy_storage_seal(&storage);
 
 	/* Init context and generate initial message */
-	ndb_negentropy_init(&neg, &storage);
+	ndb_negentropy_init(&neg, &storage, NULL);
 	assert(ndb_negentropy_initiate(&neg, buf, sizeof(buf), &outlen) == 1);
 
 	/* Should have version + at least one range */
@@ -1055,11 +1055,11 @@ static void test_reconcile_identical_sets(void)
 	ndb_negentropy_storage_seal(&storage2);
 
 	/* Client initiates */
-	ndb_negentropy_init(&neg1, &storage1);
+	ndb_negentropy_init(&neg1, &storage1, NULL);
 	assert(ndb_negentropy_initiate(&neg1, buf1, sizeof(buf1), &len1) == 1);
 
 	/* Server processes and responds */
-	ndb_negentropy_init(&neg2, &storage2);
+	ndb_negentropy_init(&neg2, &storage2, NULL);
 	len2 = sizeof(buf2);
 	assert(ndb_negentropy_reconcile(&neg2, buf1, len1, buf2, &len2) == 1);
 
@@ -1072,6 +1072,58 @@ static void test_reconcile_identical_sets(void)
 	const unsigned char *have, *need;
 	assert(ndb_negentropy_get_have_ids(&neg2, &have) == 0);
 	assert(ndb_negentropy_get_need_ids(&neg2, &need) == 0);
+
+	ndb_negentropy_destroy(&neg1);
+	ndb_negentropy_destroy(&neg2);
+	ndb_negentropy_storage_destroy(&storage1);
+	ndb_negentropy_storage_destroy(&storage2);
+
+	printf("OK\n");
+}
+
+static void test_reconcile_is_complete(void)
+{
+	printf("  reconcile_is_complete... ");
+
+	struct ndb_negentropy_storage storage1, storage2;
+	struct ndb_negentropy neg1, neg2;
+	unsigned char buf1[1024], buf2[1024];
+	size_t len1, len2;
+
+	/* Create identical storages */
+	unsigned char id1[32] = {0x01};
+
+	ndb_negentropy_storage_init(&storage1);
+	ndb_negentropy_storage_add(&storage1, 1000, id1);
+	ndb_negentropy_storage_seal(&storage1);
+
+	ndb_negentropy_storage_init(&storage2);
+	ndb_negentropy_storage_add(&storage2, 1000, id1);
+	ndb_negentropy_storage_seal(&storage2);
+
+	/* Client initiates - should not be complete yet */
+	ndb_negentropy_init(&neg1, &storage1, NULL);
+	assert(ndb_negentropy_is_complete(&neg1) == 0);
+
+	assert(ndb_negentropy_initiate(&neg1, buf1, sizeof(buf1), &len1) == 1);
+	assert(ndb_negentropy_is_complete(&neg1) == 0);
+
+	/* Server processes and responds */
+	ndb_negentropy_init(&neg2, &storage2, NULL);
+	assert(ndb_negentropy_is_complete(&neg2) == 0);
+
+	len2 = sizeof(buf2);
+	assert(ndb_negentropy_reconcile(&neg2, buf1, len1, buf2, &len2) == 1);
+
+	/* Server should mark complete since it responds with SKIP */
+	/* (identical sets result in matching fingerprints) */
+
+	/* Client processes server's SKIP response */
+	len1 = sizeof(buf1);
+	assert(ndb_negentropy_reconcile(&neg1, buf2, len2, buf1, &len1) == 1);
+
+	/* Client should now be complete (response is just version byte) */
+	assert(ndb_negentropy_is_complete(&neg1) == 1);
 
 	ndb_negentropy_destroy(&neg1);
 	ndb_negentropy_destroy(&neg2);
@@ -1110,11 +1162,11 @@ static void test_reconcile_different_sets(void)
 	ndb_negentropy_storage_seal(&storage2);
 
 	/* Client initiates */
-	ndb_negentropy_init(&neg1, &storage1);
+	ndb_negentropy_init(&neg1, &storage1, NULL);
 	assert(ndb_negentropy_initiate(&neg1, buf1, sizeof(buf1), &len1) == 1);
 
 	/* Server processes and responds */
-	ndb_negentropy_init(&neg2, &storage2);
+	ndb_negentropy_init(&neg2, &storage2, NULL);
 	len2 = sizeof(buf2);
 	assert(ndb_negentropy_reconcile(&neg2, buf1, len1, buf2, &len2) == 1);
 
@@ -1214,6 +1266,7 @@ int main(void)
 	test_reconcile_init_destroy();
 	test_reconcile_initiate();
 	test_reconcile_identical_sets();
+	test_reconcile_is_complete();
 	test_reconcile_different_sets();
 
 	printf("\n=== All tests passed! ===\n");
