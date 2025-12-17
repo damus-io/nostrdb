@@ -259,4 +259,91 @@ size_t ndb_negentropy_to_hex(const unsigned char *bin, size_t len, char *hex);
 size_t ndb_negentropy_from_hex(const char *hex, size_t hexlen,
                                 unsigned char *bin, size_t binlen);
 
+
+/* ============================================================
+ * RANGE ENCODING/DECODING
+ * ============================================================
+ *
+ * A Range represents a contiguous section of the timestamp/ID space
+ * with associated data for reconciliation.
+ *
+ * Wire format:
+ *   <upperBound (Bound)> <mode (Varint)> <payload>
+ *
+ * The lower bound is implicit - it's the upper bound of the previous
+ * range (or 0/0 for the first range).
+ *
+ * Payload format depends on mode:
+ *   SKIP:            (empty)
+ *   FINGERPRINT:     16 bytes
+ *   IDLIST:          <count (Varint)> <id (32 bytes)>*
+ *   IDLIST_RESPONSE: <haveIds (IdList)> <bitfieldLen (Varint)> <bitfield>
+ */
+
+/*
+ * Range structure with payload data.
+ *
+ * For IDLIST and IDLIST_RESPONSE modes, the caller is responsible
+ * for allocating and freeing the id arrays. The encode/decode
+ * functions work with raw buffers; higher-level wrappers should
+ * manage memory.
+ */
+struct ndb_negentropy_range {
+	struct ndb_negentropy_bound upper_bound;
+	enum ndb_negentropy_mode mode;
+
+	/*
+	 * Payload data (interpretation depends on mode):
+	 * - SKIP: unused
+	 * - FINGERPRINT: fingerprint[16] contains the fingerprint
+	 * - IDLIST: ids points to (id_count * 32) bytes of IDs
+	 * - IDLIST_RESPONSE: have_ids + bitfield for client IDs
+	 */
+	union {
+		unsigned char fingerprint[16];
+
+		struct {
+			size_t id_count;
+			const unsigned char *ids;  /* id_count * 32 bytes */
+		} id_list;
+
+		struct {
+			size_t have_count;
+			const unsigned char *have_ids;  /* have_count * 32 bytes */
+			size_t bitfield_len;
+			const unsigned char *bitfield;
+		} id_list_response;
+	} payload;
+};
+
+/*
+ * Encode a range into a buffer.
+ *
+ * prev_timestamp: In/out parameter for bound delta encoding.
+ *
+ * For IDLIST mode, payload.id_list.ids must point to valid ID data.
+ * For IDLIST_RESPONSE mode, both have_ids and bitfield must be valid.
+ *
+ * Returns: Number of bytes written, or 0 on error.
+ */
+int ndb_negentropy_range_encode(unsigned char *buf, size_t buflen,
+                                 const struct ndb_negentropy_range *range,
+                                 uint64_t *prev_timestamp);
+
+/*
+ * Decode a range from a buffer.
+ *
+ * prev_timestamp: In/out parameter for bound delta decoding.
+ *
+ * For IDLIST and IDLIST_RESPONSE modes, the payload pointers will
+ * point directly into the input buffer (zero-copy). The caller must
+ * ensure the buffer remains valid while using the range data.
+ *
+ * Returns: Number of bytes consumed, or 0 on error.
+ */
+int ndb_negentropy_range_decode(const unsigned char *buf, size_t buflen,
+                                 struct ndb_negentropy_range *range,
+                                 uint64_t *prev_timestamp);
+
+
 #endif /* NDB_NEGENTROPY_H */

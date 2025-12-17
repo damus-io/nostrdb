@@ -376,6 +376,180 @@ static void test_fingerprint_deterministic(void)
 }
 
 /* ============================================================
+ * RANGE ENCODING TESTS
+ * ============================================================ */
+
+static void test_range_skip(void)
+{
+	printf("  range_skip... ");
+
+	struct ndb_negentropy_range range_in, range_out;
+	unsigned char buf[128];
+	uint64_t prev_ts_enc = 0, prev_ts_dec = 0;
+	int enc_len, dec_len;
+
+	/* SKIP mode has no payload */
+	range_in.upper_bound.timestamp = 1000;
+	range_in.upper_bound.prefix_len = 0;
+	range_in.mode = NDB_NEG_SKIP;
+
+	enc_len = ndb_negentropy_range_encode(buf, sizeof(buf), &range_in, &prev_ts_enc);
+	assert(enc_len > 0);
+
+	dec_len = ndb_negentropy_range_decode(buf, enc_len, &range_out, &prev_ts_dec);
+	assert(dec_len == enc_len);
+	assert(range_out.mode == NDB_NEG_SKIP);
+	assert(range_out.upper_bound.timestamp == 1000);
+
+	printf("OK\n");
+}
+
+static void test_range_fingerprint(void)
+{
+	printf("  range_fingerprint... ");
+
+	struct ndb_negentropy_range range_in, range_out;
+	unsigned char buf[128];
+	uint64_t prev_ts_enc = 0, prev_ts_dec = 0;
+	int enc_len, dec_len;
+
+	/* FINGERPRINT mode has 16-byte payload */
+	range_in.upper_bound.timestamp = 2000;
+	range_in.upper_bound.prefix_len = 0;
+	range_in.mode = NDB_NEG_FINGERPRINT;
+
+	/* Fill fingerprint with test data */
+	for (int i = 0; i < 16; i++)
+		range_in.payload.fingerprint[i] = (unsigned char)(0xAB + i);
+
+	enc_len = ndb_negentropy_range_encode(buf, sizeof(buf), &range_in, &prev_ts_enc);
+	assert(enc_len > 0);
+
+	dec_len = ndb_negentropy_range_decode(buf, enc_len, &range_out, &prev_ts_dec);
+	assert(dec_len == enc_len);
+	assert(range_out.mode == NDB_NEG_FINGERPRINT);
+	assert(range_out.upper_bound.timestamp == 2000);
+	assert(memcmp(range_out.payload.fingerprint, range_in.payload.fingerprint, 16) == 0);
+
+	printf("OK\n");
+}
+
+static void test_range_idlist(void)
+{
+	printf("  range_idlist... ");
+
+	struct ndb_negentropy_range range_in, range_out;
+	unsigned char buf[256];
+	unsigned char ids[3 * 32];  /* 3 IDs */
+	uint64_t prev_ts_enc = 0, prev_ts_dec = 0;
+	int enc_len, dec_len;
+
+	/* Create test IDs */
+	memset(ids, 0, sizeof(ids));
+	ids[0] = 0x11;   /* First ID starts with 0x11 */
+	ids[32] = 0x22;  /* Second ID starts with 0x22 */
+	ids[64] = 0x33;  /* Third ID starts with 0x33 */
+
+	/* IDLIST mode */
+	range_in.upper_bound.timestamp = 3000;
+	range_in.upper_bound.prefix_len = 0;
+	range_in.mode = NDB_NEG_IDLIST;
+	range_in.payload.id_list.id_count = 3;
+	range_in.payload.id_list.ids = ids;
+
+	enc_len = ndb_negentropy_range_encode(buf, sizeof(buf), &range_in, &prev_ts_enc);
+	assert(enc_len > 0);
+
+	dec_len = ndb_negentropy_range_decode(buf, enc_len, &range_out, &prev_ts_dec);
+	assert(dec_len == enc_len);
+	assert(range_out.mode == NDB_NEG_IDLIST);
+	assert(range_out.upper_bound.timestamp == 3000);
+	assert(range_out.payload.id_list.id_count == 3);
+
+	/* Verify zero-copy: pointer into buffer */
+	assert(range_out.payload.id_list.ids != NULL);
+	assert(range_out.payload.id_list.ids[0] == 0x11);
+	assert(range_out.payload.id_list.ids[32] == 0x22);
+	assert(range_out.payload.id_list.ids[64] == 0x33);
+
+	printf("OK\n");
+}
+
+static void test_range_idlist_response(void)
+{
+	printf("  range_idlist_response... ");
+
+	struct ndb_negentropy_range range_in, range_out;
+	unsigned char buf[256];
+	unsigned char have_ids[2 * 32];  /* 2 IDs server has */
+	unsigned char bitfield[2];       /* Bitfield for client IDs */
+	uint64_t prev_ts_enc = 0, prev_ts_dec = 0;
+	int enc_len, dec_len;
+
+	/* Create test data */
+	memset(have_ids, 0, sizeof(have_ids));
+	have_ids[0] = 0xAA;
+	have_ids[32] = 0xBB;
+	bitfield[0] = 0b10101010;  /* Some client IDs needed */
+	bitfield[1] = 0b01010101;
+
+	/* IDLIST_RESPONSE mode */
+	range_in.upper_bound.timestamp = 4000;
+	range_in.upper_bound.prefix_len = 0;
+	range_in.mode = NDB_NEG_IDLIST_RESPONSE;
+	range_in.payload.id_list_response.have_count = 2;
+	range_in.payload.id_list_response.have_ids = have_ids;
+	range_in.payload.id_list_response.bitfield_len = 2;
+	range_in.payload.id_list_response.bitfield = bitfield;
+
+	enc_len = ndb_negentropy_range_encode(buf, sizeof(buf), &range_in, &prev_ts_enc);
+	assert(enc_len > 0);
+
+	dec_len = ndb_negentropy_range_decode(buf, enc_len, &range_out, &prev_ts_dec);
+	assert(dec_len == enc_len);
+	assert(range_out.mode == NDB_NEG_IDLIST_RESPONSE);
+	assert(range_out.upper_bound.timestamp == 4000);
+	assert(range_out.payload.id_list_response.have_count == 2);
+	assert(range_out.payload.id_list_response.bitfield_len == 2);
+
+	/* Verify zero-copy pointers */
+	assert(range_out.payload.id_list_response.have_ids[0] == 0xAA);
+	assert(range_out.payload.id_list_response.have_ids[32] == 0xBB);
+	assert(range_out.payload.id_list_response.bitfield[0] == 0b10101010);
+	assert(range_out.payload.id_list_response.bitfield[1] == 0b01010101);
+
+	printf("OK\n");
+}
+
+static void test_range_empty_idlist(void)
+{
+	printf("  range_empty_idlist... ");
+
+	struct ndb_negentropy_range range_in, range_out;
+	unsigned char buf[64];
+	uint64_t prev_ts_enc = 0, prev_ts_dec = 0;
+	int enc_len, dec_len;
+
+	/* Empty IDLIST (count = 0) */
+	range_in.upper_bound.timestamp = 5000;
+	range_in.upper_bound.prefix_len = 0;
+	range_in.mode = NDB_NEG_IDLIST;
+	range_in.payload.id_list.id_count = 0;
+	range_in.payload.id_list.ids = NULL;
+
+	enc_len = ndb_negentropy_range_encode(buf, sizeof(buf), &range_in, &prev_ts_enc);
+	assert(enc_len > 0);
+
+	dec_len = ndb_negentropy_range_decode(buf, enc_len, &range_out, &prev_ts_dec);
+	assert(dec_len == enc_len);
+	assert(range_out.mode == NDB_NEG_IDLIST);
+	assert(range_out.payload.id_list.id_count == 0);
+	assert(range_out.payload.id_list.ids == NULL);
+
+	printf("OK\n");
+}
+
+/* ============================================================
  * MAIN
  * ============================================================ */
 
@@ -408,6 +582,13 @@ int main(void)
 	printf("\nFingerprint tests:\n");
 	test_fingerprint_empty();
 	test_fingerprint_deterministic();
+
+	printf("\nRange encoding tests:\n");
+	test_range_skip();
+	test_range_fingerprint();
+	test_range_idlist();
+	test_range_idlist_response();
+	test_range_empty_idlist();
 
 	printf("\n=== All tests passed! ===\n");
 	return 0;

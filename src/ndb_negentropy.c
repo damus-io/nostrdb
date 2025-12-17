@@ -419,3 +419,268 @@ int ndb_negentropy_bound_decode(const unsigned char *buf, size_t buflen,
 
 	return (int)offset;
 }
+
+
+/* ============================================================
+ * RANGE ENCODING/DECODING
+ * ============================================================
+ *
+ * Ranges are the core unit of negentropy messages. Each range
+ * specifies a section of the item space and what to do with it.
+ */
+
+
+/*
+ * Encode a range into a buffer.
+ *
+ * Format: <bound> <mode> <payload>
+ *
+ * We use early returns for each error condition to avoid deep nesting.
+ */
+int ndb_negentropy_range_encode(unsigned char *buf, size_t buflen,
+                                 const struct ndb_negentropy_range *range,
+                                 uint64_t *prev_timestamp)
+{
+	size_t offset = 0;
+	int written;
+
+	/* Guard: validate inputs */
+	if (buf == NULL || range == NULL || prev_timestamp == NULL)
+		return 0;
+
+	/* Encode the upper bound */
+	written = ndb_negentropy_bound_encode(buf + offset, buflen - offset,
+	                                       &range->upper_bound, prev_timestamp);
+	if (written == 0)
+		return 0;
+	offset += (size_t)written;
+
+	/* Encode the mode */
+	written = ndb_negentropy_varint_encode(buf + offset, buflen - offset,
+	                                        (uint64_t)range->mode);
+	if (written == 0)
+		return 0;
+	offset += (size_t)written;
+
+	/* Encode the payload based on mode */
+	switch (range->mode) {
+
+	case NDB_NEG_SKIP:
+		/* No payload for SKIP mode */
+		break;
+
+	case NDB_NEG_FINGERPRINT:
+		/* 16-byte fingerprint */
+		if (offset + 16 > buflen)
+			return 0;
+		memcpy(buf + offset, range->payload.fingerprint, 16);
+		offset += 16;
+		break;
+
+	case NDB_NEG_IDLIST: {
+		/*
+		 * IdList: <count (Varint)> <ids (32 bytes each)>
+		 */
+		size_t id_count = range->payload.id_list.id_count;
+		size_t ids_size = id_count * 32;
+
+		/* Write count */
+		written = ndb_negentropy_varint_encode(buf + offset, buflen - offset,
+		                                        (uint64_t)id_count);
+		if (written == 0)
+			return 0;
+		offset += (size_t)written;
+
+		/* Guard: ensure room for all IDs */
+		if (offset + ids_size > buflen)
+			return 0;
+
+		/* Write IDs */
+		if (id_count > 0 && range->payload.id_list.ids != NULL)
+			memcpy(buf + offset, range->payload.id_list.ids, ids_size);
+		offset += ids_size;
+		break;
+	}
+
+	case NDB_NEG_IDLIST_RESPONSE: {
+		/*
+		 * IdListResponse:
+		 *   <haveIds (IdList)> <bitfieldLen (Varint)> <bitfield>
+		 *
+		 * haveIds is an IdList (count + ids) of IDs the server has.
+		 * bitfield indicates which client IDs the server needs.
+		 */
+		size_t have_count = range->payload.id_list_response.have_count;
+		size_t have_size = have_count * 32;
+		size_t bf_len = range->payload.id_list_response.bitfield_len;
+
+		/* Write have_count */
+		written = ndb_negentropy_varint_encode(buf + offset, buflen - offset,
+		                                        (uint64_t)have_count);
+		if (written == 0)
+			return 0;
+		offset += (size_t)written;
+
+		/* Guard: ensure room for have_ids */
+		if (offset + have_size > buflen)
+			return 0;
+
+		/* Write have_ids */
+		if (have_count > 0 && range->payload.id_list_response.have_ids != NULL)
+			memcpy(buf + offset, range->payload.id_list_response.have_ids, have_size);
+		offset += have_size;
+
+		/* Write bitfield length */
+		written = ndb_negentropy_varint_encode(buf + offset, buflen - offset,
+		                                        (uint64_t)bf_len);
+		if (written == 0)
+			return 0;
+		offset += (size_t)written;
+
+		/* Guard: ensure room for bitfield */
+		if (offset + bf_len > buflen)
+			return 0;
+
+		/* Write bitfield */
+		if (bf_len > 0 && range->payload.id_list_response.bitfield != NULL)
+			memcpy(buf + offset, range->payload.id_list_response.bitfield, bf_len);
+		offset += bf_len;
+		break;
+	}
+
+	default:
+		/* Unknown mode */
+		return 0;
+	}
+
+	return (int)offset;
+}
+
+
+/*
+ * Decode a range from a buffer.
+ *
+ * For IDLIST and IDLIST_RESPONSE modes, the payload pointers point
+ * directly into the input buffer for zero-copy access.
+ */
+int ndb_negentropy_range_decode(const unsigned char *buf, size_t buflen,
+                                 struct ndb_negentropy_range *range,
+                                 uint64_t *prev_timestamp)
+{
+	size_t offset = 0;
+	int consumed;
+	uint64_t mode_val;
+
+	/* Guard: validate inputs */
+	if (buf == NULL || range == NULL || prev_timestamp == NULL)
+		return 0;
+
+	/* Decode the upper bound */
+	consumed = ndb_negentropy_bound_decode(buf + offset, buflen - offset,
+	                                        &range->upper_bound, prev_timestamp);
+	if (consumed == 0)
+		return 0;
+	offset += (size_t)consumed;
+
+	/* Decode the mode */
+	consumed = ndb_negentropy_varint_decode(buf + offset, buflen - offset, &mode_val);
+	if (consumed == 0)
+		return 0;
+	offset += (size_t)consumed;
+
+	/* Guard: mode must be valid */
+	if (mode_val > NDB_NEG_IDLIST_RESPONSE)
+		return 0;
+	range->mode = (enum ndb_negentropy_mode)mode_val;
+
+	/* Decode payload based on mode */
+	switch (range->mode) {
+
+	case NDB_NEG_SKIP:
+		/* No payload */
+		break;
+
+	case NDB_NEG_FINGERPRINT:
+		/* 16-byte fingerprint */
+		if (offset + 16 > buflen)
+			return 0;
+		memcpy(range->payload.fingerprint, buf + offset, 16);
+		offset += 16;
+		break;
+
+	case NDB_NEG_IDLIST: {
+		/*
+		 * IdList: <count (Varint)> <ids (32 bytes each)>
+		 */
+		uint64_t id_count;
+		size_t ids_size;
+
+		/* Read count */
+		consumed = ndb_negentropy_varint_decode(buf + offset, buflen - offset, &id_count);
+		if (consumed == 0)
+			return 0;
+		offset += (size_t)consumed;
+
+		ids_size = (size_t)id_count * 32;
+
+		/* Guard: ensure buffer has all IDs */
+		if (offset + ids_size > buflen)
+			return 0;
+
+		/* Point directly into buffer (zero-copy) */
+		range->payload.id_list.id_count = (size_t)id_count;
+		range->payload.id_list.ids = (id_count > 0) ? (buf + offset) : NULL;
+		offset += ids_size;
+		break;
+	}
+
+	case NDB_NEG_IDLIST_RESPONSE: {
+		/*
+		 * IdListResponse:
+		 *   <haveIds (IdList)> <bitfieldLen (Varint)> <bitfield>
+		 */
+		uint64_t have_count;
+		size_t have_size;
+		uint64_t bf_len;
+
+		/* Read have_count */
+		consumed = ndb_negentropy_varint_decode(buf + offset, buflen - offset, &have_count);
+		if (consumed == 0)
+			return 0;
+		offset += (size_t)consumed;
+
+		have_size = (size_t)have_count * 32;
+
+		/* Guard: ensure buffer has all have_ids */
+		if (offset + have_size > buflen)
+			return 0;
+
+		/* Point directly into buffer (zero-copy) */
+		range->payload.id_list_response.have_count = (size_t)have_count;
+		range->payload.id_list_response.have_ids = (have_count > 0) ? (buf + offset) : NULL;
+		offset += have_size;
+
+		/* Read bitfield length */
+		consumed = ndb_negentropy_varint_decode(buf + offset, buflen - offset, &bf_len);
+		if (consumed == 0)
+			return 0;
+		offset += (size_t)consumed;
+
+		/* Guard: ensure buffer has bitfield */
+		if (offset + bf_len > buflen)
+			return 0;
+
+		/* Point directly into buffer (zero-copy) */
+		range->payload.id_list_response.bitfield_len = (size_t)bf_len;
+		range->payload.id_list_response.bitfield = (bf_len > 0) ? (buf + offset) : NULL;
+		offset += bf_len;
+		break;
+	}
+
+	default:
+		/* Unknown mode */
+		return 0;
+	}
+
+	return (int)offset;
+}
