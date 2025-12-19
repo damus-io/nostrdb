@@ -6,6 +6,7 @@
  */
 
 #include "ndb_negentropy.h"
+#include "hex.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -143,63 +144,21 @@ int ndb_negentropy_varint_decode(const unsigned char *buf, size_t buflen,
 /* ============================================================
  * HEX ENCODING UTILITIES
  * ============================================================
- */
-
-/* Lookup table for hex encoding (lowercase as per nostr convention) */
-static const char hex_chars[] = "0123456789abcdef";
-
-
-/*
- * Convert binary data to lowercase hex string.
  *
- * Each input byte becomes two hex characters.
- * Output is NUL-terminated.
+ * These are thin wrappers around hex.h functions to maintain
+ * the negentropy API.
  */
+
 size_t ndb_negentropy_to_hex(const unsigned char *bin, size_t len, char *hex)
 {
-	size_t i;
-
-	for (i = 0; i < len; i++) {
-		hex[i * 2]     = hex_chars[(bin[i] >> 4) & 0x0F];
-		hex[i * 2 + 1] = hex_chars[bin[i] & 0x0F];
-	}
-
-	hex[len * 2] = '\0';
+	hex_encode(bin, len, hex);
 	return len * 2;
 }
 
-
-/*
- * Convert a single hex character to its numeric value.
- * Returns -1 for invalid characters.
- */
-static int hex_char_value(char c)
-{
-	if (c >= '0' && c <= '9')
-		return c - '0';
-
-	if (c >= 'a' && c <= 'f')
-		return c - 'a' + 10;
-
-	if (c >= 'A' && c <= 'F')
-		return c - 'A' + 10;
-
-	return -1;
-}
-
-
-/*
- * Convert hex string to binary data.
- *
- * Input length must be even (two hex chars per byte).
- * Invalid hex characters cause an error return.
- */
 size_t ndb_negentropy_from_hex(const char *hex, size_t hexlen,
                                 unsigned char *bin, size_t binlen)
 {
-	size_t i;
 	size_t out_len;
-	int high, low;
 
 	/* Guard: hex string must have even length */
 	if (hexlen % 2 != 0)
@@ -211,16 +170,8 @@ size_t ndb_negentropy_from_hex(const char *hex, size_t hexlen,
 	if (binlen < out_len)
 		return 0;
 
-	for (i = 0; i < out_len; i++) {
-		high = hex_char_value(hex[i * 2]);
-		low  = hex_char_value(hex[i * 2 + 1]);
-
-		/* Guard: both characters must be valid hex */
-		if (high < 0 || low < 0)
-			return 0;
-
-		bin[i] = (unsigned char)((high << 4) | low);
-	}
+	if (!hex_decode(hex, hexlen, bin, out_len))
+		return 0;
 
 	return out_len;
 }
