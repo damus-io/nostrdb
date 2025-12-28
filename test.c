@@ -1316,7 +1316,7 @@ static void test_fetch_last_noteid()
 	assert(name);
 	assert(lnurl);
 	assert(!strcmp(name, "jb55"));
-	assert(!strcmp(lnurl, "fixme"));
+	assert(!strcmp(lnurl, ""));  // profile has no lud16/lud06
 
 	//printf("note_key %" PRIu64 "\n", key);
 
