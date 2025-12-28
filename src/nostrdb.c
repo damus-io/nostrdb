@@ -6,6 +6,7 @@
 #include "random.h"
 #include "ccan/crypto/sha256/sha256.h"
 #include "bolt11/bolt11.h"
+#include "bolt11/bech32.h"
 #include "bolt11/amount.h"
 #include "lmdb.h"
 #include "metadata.h"
@@ -22,6 +23,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <assert.h>
+#include <strings.h>
 
 #include "bindings/c/profile_json_parser.h"
 #include "bindings/c/profile_builder.h"
@@ -3219,6 +3221,465 @@ void ndb_profile_record_builder_free(struct ndb_profile_record_builder *b)
 
 }
 
+/*
+ * LNURL computation from profile lud16/lud06 fields
+ *
+ * Per LUD-16 (https://github.com/lnurl/luds/blob/luds/16.md), a lightning
+ * address like "user@domain.com" maps to the LNURL-pay endpoint:
+ *   https://domain.com/.well-known/lnurlp/user
+ *
+ * This URL is then bech32-encoded with the "lnurl" HRP to produce the
+ * final lnurl string that can be used to fetch payment details.
+ */
+
+/** Maximum length for lightning addresses (user@domain) */
+#define MAX_LNADDR_LEN 256
+
+/**
+ * Maximum URL length for .well-known/lnurlp endpoint
+ * Components: "https://" (8) + domain (253) + "/.well-known/lnurlp/" (20) + user (64)
+ */
+#define MAX_LNURL_URL_LEN 384
+
+/**
+ * Bech32 output buffer size
+ * Components: hrp "lnurl" (5) + separator (1) + data (~url_len*8/5) + checksum (6) + null
+ * For 384-byte URL: 5 + 1 + 615 + 6 + 1 = 628; rounded to 1024 for safety
+ */
+#define MAX_LNURL_BECH32_LEN 1024
+
+/**
+ * Unescape a single JSON escape sequence for lnurl values.
+ *
+ * Only accepts escapes that produce valid URL/email characters.
+ * Rejects control characters (\n, \r, \t) since these cannot appear
+ * in valid lightning addresses or URLs. For \uXXXX escapes, use
+ * unescape_json_unicode() instead.
+ *
+ * @param c    Character after backslash
+ * @param out  Output character (set on success)
+ * @return     1 on success, 0 if escape would produce invalid character
+ */
+static int unescape_json_char(char c, char *out)
+{
+	switch (c) {
+	case '"':  *out = '"';  return 1;
+	case '\\': *out = '\\'; return 1;
+	case '/':  *out = '/';  return 1;
+	default:   return 0;  // Reject \n \r \t and other escapes
+	}
+}
+
+/**
+ * Parse a hex digit to its numeric value.
+ *
+ * @param c  Hex character (0-9, a-f, A-F)
+ * @return   Value 0-15, or -1 if invalid
+ */
+static int hex_digit_value(char c)
+{
+	if (c >= '0' && c <= '9') return c - '0';
+	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+	return -1;
+}
+
+/**
+ * Unescape a \uXXXX JSON unicode escape for lnurl values.
+ *
+ * Only accepts escapes that produce printable ASCII characters (0x20-0x7E).
+ * Rejects control characters and non-ASCII unicode.
+ *
+ * @param hex  Pointer to the 4 hex digits after \u
+ * @param out  Output character (set on success)
+ * @return     1 on success, 0 if invalid hex or non-printable-ASCII result
+ */
+static int unescape_json_unicode(const char *hex, char *out)
+{
+	int codepoint = 0;
+	int i, v;
+
+	for (i = 0; i < 4; i++) {
+		v = hex_digit_value(hex[i]);
+		if (v < 0)
+			return 0;
+		codepoint = (codepoint << 4) | v;
+	}
+
+	// Only accept printable ASCII (space through tilde)
+	if (codepoint < 0x20 || codepoint > 0x7E)
+		return 0;
+
+	*out = (char)codepoint;
+	return 1;
+}
+
+/**
+ * Extract and unescape a JSON string value for a given key.
+ *
+ * Searches for a "key": "value" pattern in the JSON content and writes
+ * the unescaped value to out_buf. Handles standard JSON escapes and
+ * \uXXXX unicode escapes for printable ASCII characters (0x20-0x7E).
+ * Non-ASCII unicode escapes are rejected.
+ *
+ * @param json      JSON content to search
+ * @param json_len  Length of JSON content
+ * @param key       Key name to find (without quotes)
+ * @param out_buf   Output buffer for unescaped value (null-terminated)
+ * @param max_len   Size of output buffer
+ * @return          Length of unescaped value, or 0 if not found/error
+ */
+static int extract_json_string(const char *json, int json_len,
+			       const char *key, char *out_buf, int max_len)
+{
+	int key_len = strlen(key);
+	const char *end = json + json_len;
+	const char *p;
+	const char *value_start;
+	int out_len;
+
+	for (p = json; p < end - key_len - 3; p++) {
+		// Look for "key" pattern
+		if (*p != '"')
+			continue;
+
+		// Skip if this quote is escaped (preceded by backslash)
+		if (p > json && p[-1] == '\\')
+			continue;
+
+		if (strncmp(p + 1, key, key_len) != 0)
+			continue;
+		if (p[key_len + 1] != '"')
+			continue;
+
+		// Found key, advance past it
+		p += key_len + 2;
+
+		// Skip whitespace and colon
+		while (p < end && (*p == ' ' || *p == '\t' ||
+				   *p == '\n' || *p == '\r' || *p == ':'))
+			p++;
+
+		// Expect opening quote - if not found, continue searching
+		if (p >= end || *p != '"')
+			continue;
+		p++;
+		value_start = p;
+
+		// Parse and unescape the string value
+		out_len = 0;
+		while (p < end && *p != '"') {
+			if (out_len >= max_len - 1)
+				break;  // value too long, try next match
+
+			if (*p != '\\') {
+				out_buf[out_len++] = *p++;
+				continue;
+			}
+
+			// Handle escape sequence
+			if (p + 1 >= end)
+				break;
+			p++;  // skip backslash
+
+			// Handle \uXXXX unicode escapes
+			if (*p == 'u') {
+				if (p + 4 >= end)
+					break;
+				if (!unescape_json_unicode(p + 1, &out_buf[out_len]))
+					break;  // invalid escape, try next match
+				out_len++;
+				p += 5;  // skip 'u' + 4 hex digits
+				continue;
+			}
+
+			if (!unescape_json_char(*p, &out_buf[out_len]))
+				break;  // invalid escape, try next match
+			out_len++;
+			p++;
+		}
+
+		// Successfully parsed to closing quote
+		if (p < end && *p == '"') {
+			out_buf[out_len] = '\0';
+			return out_len;
+		}
+
+		// Malformed value, continue searching from after the key
+		p = value_start;
+	}
+
+	return 0;
+}
+
+/**
+ * Find the '@' separator in a lightning address.
+ *
+ * @param addr      Lightning address string
+ * @param addr_len  Length of address
+ * @return          Pointer to '@', or NULL if not found or at invalid position
+ */
+static const char *find_lnaddr_separator(const char *addr, int addr_len)
+{
+	for (int i = 0; i < addr_len; i++) {
+		if (addr[i] == '@')
+			return addr + i;
+	}
+	return NULL;
+}
+
+/**
+ * Check if a character is valid for a lightning address.
+ *
+ * Valid characters are printable ASCII (0x21-0x7E) excluding '@'.
+ * Space (0x20) and control characters are rejected.
+ *
+ * @param c  Character to check
+ * @return   1 if valid, 0 if invalid
+ */
+static int is_valid_lnaddr_char(char c)
+{
+	// Must be printable ASCII (! through ~), excluding @
+	return c >= 0x21 && c <= 0x7E && c != '@';
+}
+
+/**
+ * Validate all characters in a lightning address segment.
+ *
+ * @param s    Segment string (user or domain part)
+ * @param len  Length of segment
+ * @return     1 if all characters valid, 0 if any invalid
+ */
+static int validate_lnaddr_segment(const char *s, int len)
+{
+	for (int i = 0; i < len; i++) {
+		if (!is_valid_lnaddr_char(s[i]))
+			return 0;
+	}
+	return 1;
+}
+
+/**
+ * Convert a lightning address to a bech32-encoded LNURL.
+ *
+ * Per LUD-16, converts "user@domain" to the bech32-encoded form of
+ * "https://domain/.well-known/lnurlp/user".
+ *
+ * @param addr      Lightning address (e.g., "user@domain.com")
+ * @param addr_len  Length of address
+ * @param output    Output buffer (must be at least MAX_LNURL_BECH32_LEN bytes)
+ * @return          1 on success, 0 on failure
+ */
+static int lnaddress_to_lnurl(const char *addr, int addr_len, char *output)
+{
+	const char *at;
+	int user_len, domain_len, url_len, ok;
+	char url[MAX_LNURL_URL_LEN];
+	uint8_t *data5;
+	size_t data5_len;
+
+	if (addr_len <= 0 || addr_len > MAX_LNADDR_LEN)
+		return 0;
+
+	at = find_lnaddr_separator(addr, addr_len);
+	if (!at)
+		return 0;
+
+	user_len = at - addr;
+	domain_len = addr_len - user_len - 1;
+
+	// Validate: user and domain must be non-empty and within RFC limits
+	if (user_len <= 0 || user_len > 64)
+		return 0;
+	if (domain_len <= 0 || domain_len > 253)
+		return 0;
+
+	// Validate: only printable non-space ASCII allowed
+	if (!validate_lnaddr_segment(addr, user_len))
+		return 0;
+	if (!validate_lnaddr_segment(at + 1, domain_len))
+		return 0;
+
+	// Build the LNURL-pay endpoint URL
+	url_len = snprintf(url, sizeof(url),
+			   "https://%.*s/.well-known/lnurlp/%.*s",
+			   domain_len, at + 1, user_len, addr);
+
+	if (url_len <= 0 || url_len >= (int)sizeof(url))
+		return 0;
+
+	// Allocate buffer for 8-to-5 bit conversion (url_len * 2 is safe upper bound)
+	data5 = malloc((size_t)url_len * 2);
+	if (!data5)
+		return 0;
+
+	data5_len = 0;
+	if (!bech32_convert_bits(data5, &data5_len, 5,
+				 (const uint8_t *)url, url_len, 8, 1)) {
+		free(data5);
+		return 0;
+	}
+
+	ok = bech32_encode(output, "lnurl", data5, data5_len,
+			   MAX_LNURL_BECH32_LEN, BECH32_ENCODING_BECH32);
+	free(data5);
+	return ok;
+}
+
+/**
+ * Check if a string starts with "lnurl" (case-insensitive).
+ *
+ * @param s    String to check
+ * @param len  Length of string
+ * @return     1 if starts with lnurl, 0 otherwise
+ */
+static int has_lnurl_prefix(const char *s, int len)
+{
+	if (len < 5)
+		return 0;
+
+	return (s[0] == 'l' || s[0] == 'L') &&
+	       (s[1] == 'n' || s[1] == 'N') &&
+	       (s[2] == 'u' || s[2] == 'U') &&
+	       (s[3] == 'r' || s[3] == 'R') &&
+	       (s[4] == 'l' || s[4] == 'L');
+}
+
+/**
+ * Validate and normalize a bech32-encoded lud06 LNURL.
+ *
+ * Verifies the string is valid BECH32 (not BECH32M) with HRP exactly "lnurl",
+ * then normalizes to lowercase for consistent storage.
+ *
+ * @param lud06  The lud06 value from profile JSON
+ * @param len    Length of lud06 string
+ * @return       Malloc'd lowercase lnurl string, or NULL if invalid
+ */
+static char *validate_lud06(const char *lud06, int len)
+{
+	char *copy;
+	char hrp[10];
+	uint8_t *data;
+	size_t data_len;
+	bech32_encoding enc;
+	int i;
+
+	if (len < 10 || len > 2000)
+		return NULL;
+
+	if (!has_lnurl_prefix(lud06, len))
+		return NULL;
+
+	copy = malloc(len + 1);
+	if (!copy)
+		return NULL;
+	memcpy(copy, lud06, len);
+	copy[len] = '\0';
+
+	// Validate by attempting bech32 decode
+	data = malloc(len);
+	if (!data) {
+		free(copy);
+		return NULL;
+	}
+
+	enc = bech32_decode(hrp, data, &data_len, copy, len);
+	free(data);
+
+	// LNURL must be BECH32 encoding (not BECH32M)
+	if (enc != BECH32_ENCODING_BECH32) {
+		free(copy);
+		return NULL;
+	}
+
+	// HRP must be exactly "lnurl" (case-insensitive, reject lnurlp, lnurlw, etc.)
+	if (strcasecmp(hrp, "lnurl") != 0) {
+		free(copy);
+		return NULL;
+	}
+
+	// Normalize to lowercase
+	for (i = 0; i < len; i++) {
+		if (copy[i] >= 'A' && copy[i] <= 'Z')
+			copy[i] = copy[i] - 'A' + 'a';
+	}
+
+	return copy;
+}
+
+/**
+ * Attempt to convert lud16 (lightning address) to lnurl.
+ *
+ * @param json      Profile JSON content
+ * @param json_len  Length of JSON
+ * @return          Malloc'd lnurl string, or NULL if lud16 not found/invalid
+ */
+static char *try_lud16_to_lnurl(const char *json, int json_len)
+{
+	char buf[MAX_LNADDR_LEN + 1];
+	char *result;
+	int value_len;
+
+	value_len = extract_json_string(json, json_len, "lud16", buf, sizeof(buf));
+	if (value_len <= 0 || value_len > MAX_LNADDR_LEN)
+		return NULL;
+
+	result = malloc(MAX_LNURL_BECH32_LEN);
+	if (!result)
+		return NULL;
+
+	if (!lnaddress_to_lnurl(buf, value_len, result)) {
+		free(result);
+		return NULL;
+	}
+
+	return result;
+}
+
+/**
+ * Attempt to extract and validate lud06 (bech32 lnurl).
+ *
+ * @param json      Profile JSON content
+ * @param json_len  Length of JSON
+ * @return          Malloc'd lnurl string, or NULL if lud06 not found/invalid
+ */
+static char *try_lud06(const char *json, int json_len)
+{
+	char buf[2048];
+	int value_len;
+
+	value_len = extract_json_string(json, json_len, "lud06", buf, sizeof(buf));
+	if (value_len <= 0)
+		return NULL;
+
+	return validate_lud06(buf, value_len);
+}
+
+/**
+ * Compute LNURL from profile JSON content.
+ *
+ * Extracts lightning payment info from a Nostr profile (kind 0) event.
+ * Tries lud16 first (lightning address format), then falls back to
+ * lud06 (raw bech32 lnurl).
+ *
+ * @param json      Profile JSON content (the note content field)
+ * @param json_len  Length of JSON content
+ * @return          Malloc'd lnurl string (caller must free), or NULL if
+ *                  no valid lightning address found
+ */
+static char *compute_lnurl_from_json(const char *json, int json_len)
+{
+	char *result;
+
+	// Prefer lud16 (user@domain format) as it's more common
+	result = try_lud16_to_lnurl(json, json_len);
+	if (result)
+		return result;
+
+	// Fall back to lud06 (raw bech32 lnurl)
+	return try_lud06(json, json_len);
+}
+
 int ndb_process_profile_note(struct ndb_note *note,
 			     struct ndb_profile_record_builder *profile)
 {
@@ -3246,13 +3707,20 @@ int ndb_process_profile_note(struct ndb_note *note,
 	}
 
 	uint64_t received_at = time(NULL);
-	const char *lnurl = "fixme";
+
+	// Compute lnurl from lud16 or lud06 in the profile JSON
+	char *lnurl = compute_lnurl_from_json(ndb_note_content(note),
+					      note->content_length);
 
 	NdbProfileRecord_profile_add(builder, profile_table);
 	NdbProfileRecord_received_at_add(builder, received_at);
 
 	flatcc_builder_ref_t lnurl_off;
-	lnurl_off = flatcc_builder_create_string_str(builder, lnurl);
+	lnurl_off = flatcc_builder_create_string_str(builder,
+						     lnurl ? lnurl : "");
+
+	if (lnurl)
+		free(lnurl);
 
 	NdbProfileRecord_lnurl_add(builder, lnurl_off);
 
