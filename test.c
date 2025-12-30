@@ -566,6 +566,55 @@ static void test_metadata()
 	printf("ok test_metadata\n");
 }
 
+// Regression test for issue #1228: LMDB can return metadata at misaligned
+// addresses. This test verifies that metadata operations work correctly
+// even when the metadata pointer is not 8-byte aligned.
+static void test_metadata_misaligned()
+{
+	unsigned char aligned_buffer[1024] __attribute__((aligned(8)));
+	unsigned char misaligned_buffer[1024 + 8];
+	union ndb_reaction_str str;
+	struct ndb_note_meta_builder builder;
+	struct ndb_note_meta *meta, *misaligned_meta;
+	struct ndb_note_meta_entry *entry;
+	size_t meta_size;
+	int ok, offset;
+
+	// Build valid metadata in aligned buffer
+	ok = ndb_note_meta_builder_init(&builder, aligned_buffer, sizeof(aligned_buffer));
+	assert(ok);
+
+	entry = ndb_note_meta_add_entry(&builder);
+	assert(entry);
+
+	ndb_reaction_set(&str, "🔥");
+	ndb_note_meta_reaction_set(entry, 42, str);
+
+	ndb_note_meta_build(&builder, &meta);
+	meta_size = ndb_note_meta_total_size(meta);
+
+	// Test with various misaligned offsets (1-7 bytes)
+	for (offset = 1; offset < 8; offset++) {
+		unsigned char *misaligned_ptr = misaligned_buffer + offset;
+
+		// Ensure we actually have a misaligned pointer
+		assert(((uintptr_t)misaligned_ptr % 8) != 0);
+
+		// Copy metadata to misaligned address
+		memcpy(misaligned_ptr, meta, meta_size);
+		misaligned_meta = (struct ndb_note_meta *)misaligned_ptr;
+
+		// These operations should work without crashing
+		assert(ndb_note_meta_entries_count(misaligned_meta) == 1);
+
+		entry = ndb_note_meta_find_entry(misaligned_meta, NDB_NOTE_META_REACTION, &str.binmoji);
+		assert(entry != NULL);
+		assert(*ndb_note_meta_reaction_count(entry) == 42);
+	}
+
+	printf("ok test_metadata_misaligned\n");
+}
+
 static void test_reaction_encoding()
 {
 	union ndb_reaction_str reaction;
@@ -2614,6 +2663,7 @@ int main(int argc, const char *argv[]) {
 	test_replay_attack();
 	test_custom_filter();
 	test_metadata();
+	test_metadata_misaligned();
 	test_count_metadata();
 	test_reaction_encoding();
 	test_reaction_counter();

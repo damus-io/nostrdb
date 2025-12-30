@@ -239,9 +239,12 @@ static struct ndb_note_meta_entry *ndb_note_meta_find_entry_impl(struct ndb_note
 
 	/* TODO(jb55): do bsearch for large sorted entries */
 
+	/* Note: entry pointers may not be 8-byte aligned because LMDB stores
+	 * values at arbitrary offsets within pages. This is fine because the
+	 * structs are packed (#pragma pack(push, 1)) and modern ARM/x86
+	 * handle misaligned access correctly. */
 	for (i = 0; i < meta->count; i++) {
 		entry = &entries[i];
-		assert(((uintptr_t)entry % 8) == 0);
 		/*
 		assert(entry->type < 100);
 		printf("finding %d/%d q:%d q:%"PRIx64" entry_type:%d entry:%"PRIx64"\n",
