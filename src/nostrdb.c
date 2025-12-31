@@ -3922,6 +3922,16 @@ struct ndb_note_meta *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char
 		return NULL;
 	}
 
+	// Debug: detect misaligned metadata pointers before they cause crashes
+	if (((uintptr_t)v.mv_data % 8) != 0) {
+		int i;
+		fprintf(stderr, "ndb: MISALIGNED META ptr=%p (off by %d) size=%zu id=",
+			v.mv_data, (int)((uintptr_t)v.mv_data % 8), v.mv_size);
+		for (i = 0; i < 32; i++)
+			fprintf(stderr, "%02x", id[i]);
+		fprintf(stderr, "\n");
+	}
+
 	return v.mv_data;
 }
 
