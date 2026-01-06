@@ -184,6 +184,13 @@ static int parse_node(struct ndb_markdown_parser *p, cmark_node *node, cmark_eve
 	const char *title;
 	struct ndb_str_block bech32_str;
 
+	// If inside an image, suppress all nodes except TEXT (for alt text)
+	// and IMAGE EXIT (to emit the image block)
+	if (p->in_image && type != CMARK_NODE_TEXT) {
+		if (type != CMARK_NODE_IMAGE)
+			return 1;
+	}
+
 	memset(&block, 0, sizeof(block));
 
 	switch (type) {
@@ -247,10 +254,16 @@ static int parse_node(struct ndb_markdown_parser *p, cmark_node *node, cmark_eve
 		return 1;
 
 	case CMARK_NODE_THEMATIC_BREAK:
+		// Leaf node: only emit on ENTER to avoid double-push
+		if (ev_type != CMARK_EVENT_ENTER)
+			return 1;
 		block.type = BLOCK_THEMATIC_BREAK;
 		return push_markdown_block(p, &block);
 
 	case CMARK_NODE_TEXT:
+		// Leaf node: only emit on ENTER
+		if (ev_type != CMARK_EVENT_ENTER)
+			return 1;
 		literal = cmark_node_get_literal(node);
 		if (literal) {
 			int len = (int)strlen(literal);
@@ -269,14 +282,23 @@ static int parse_node(struct ndb_markdown_parser *p, cmark_node *node, cmark_eve
 		return 1;
 
 	case CMARK_NODE_SOFTBREAK:
+		// Leaf node: only emit on ENTER
+		if (ev_type != CMARK_EVENT_ENTER)
+			return 1;
 		block.type = BLOCK_SOFTBREAK;
 		return push_markdown_block(p, &block);
 
 	case CMARK_NODE_LINEBREAK:
+		// Leaf node: only emit on ENTER
+		if (ev_type != CMARK_EVENT_ENTER)
+			return 1;
 		block.type = BLOCK_LINEBREAK;
 		return push_markdown_block(p, &block);
 
 	case CMARK_NODE_CODE:
+		// Leaf node: only emit on ENTER
+		if (ev_type != CMARK_EVENT_ENTER)
+			return 1;
 		literal = cmark_node_get_literal(node);
 		block.type = BLOCK_CODE_INLINE;
 		init_str_block(&block.block.str, literal, -1);
