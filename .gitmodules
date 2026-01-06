@@ -1,3 +1,6 @@
 [submodule "deps/secp256k1"]
 	path = deps/secp256k1
 	url = https://github.com/bitcoin-core/secp256k1
+[submodule "deps/cmark"]
+	path = deps/cmark
+	url = https://github.com/commonmark/cmark.git
