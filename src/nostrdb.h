@@ -556,6 +556,7 @@ struct ndb_image_block {
 
 struct ndb_block {
 	enum ndb_block_type type;
+	uint8_t version;  // 1 = regular, 2 = markdown (affects storage format)
 	union {
 		struct ndb_str_block str;
 		struct ndb_invoice_block invoice;

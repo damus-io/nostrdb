@@ -12,6 +12,13 @@ struct ndb_markdown_parser {
 	struct cursor content;
 	struct ndb_blocks *blocks;
 	const char *content_start;
+
+	// Image alt text collection state
+	int in_image;
+	char alt_buf[1024];
+	int alt_len;
+	const char *image_url;
+	const char *image_title;
 };
 
 // Push a string block by storing length and the actual string data
@@ -246,7 +253,18 @@ static int parse_node(struct ndb_markdown_parser *p, cmark_node *node, cmark_eve
 	case CMARK_NODE_TEXT:
 		literal = cmark_node_get_literal(node);
 		if (literal) {
-			return push_text_block(p, literal, (int)strlen(literal));
+			int len = (int)strlen(literal);
+			// If we're inside an image, collect text as alt text
+			if (p->in_image) {
+				int space = (int)sizeof(p->alt_buf) - p->alt_len - 1;
+				int copy_len = len < space ? len : space;
+				if (copy_len > 0) {
+					memcpy(p->alt_buf + p->alt_len, literal, copy_len);
+					p->alt_len += copy_len;
+				}
+				return 1;  // Don't push as separate TEXT block
+			}
+			return push_text_block(p, literal, len);
 		}
 		return 1;
 
@@ -299,17 +317,23 @@ static int parse_node(struct ndb_markdown_parser *p, cmark_node *node, cmark_eve
 
 	case CMARK_NODE_IMAGE:
 		if (ev_type == CMARK_EVENT_ENTER) {
-			url = cmark_node_get_url(node);
-			title = cmark_node_get_title(node);
+			// Save image info and start collecting alt text
+			p->in_image = 1;
+			p->alt_len = 0;
+			p->image_url = cmark_node_get_url(node);
+			p->image_title = cmark_node_get_title(node);
+			return 1;
+		} else {
+			// EXIT: push image block with collected alt text
+			p->in_image = 0;
+			p->alt_buf[p->alt_len] = '\0';
 
 			block.type = BLOCK_IMAGE;
-			init_str_block(&block.block.image.url, url, -1);
-			init_str_block(&block.block.image.title, title, -1);
-			// Alt text comes from child nodes, initialize empty
-			init_str_block(&block.block.image.alt, "", 0);
+			init_str_block(&block.block.image.url, p->image_url, -1);
+			init_str_block(&block.block.image.title, p->image_title, -1);
+			init_str_block(&block.block.image.alt, p->alt_buf, p->alt_len);
 			return push_markdown_block(p, &block);
 		}
-		return 1;
 
 	case CMARK_NODE_HTML_BLOCK:
 	case CMARK_NODE_HTML_INLINE:
@@ -344,6 +368,10 @@ int ndb_parse_markdown_content(unsigned char *buf, int buf_size,
 	            (unsigned char *)content + content_len, &parser.content);
 
 	parser.content_start = content;
+	parser.in_image = 0;
+	parser.alt_len = 0;
+	parser.image_url = NULL;
+	parser.image_title = NULL;
 	parser.blocks->words = 0;
 	parser.blocks->num_blocks = 0;
 	parser.blocks->blocks_size = 0;

@@ -109,6 +109,8 @@ static int pull_block(const char *content, struct cursor *cur, struct ndb_block 
 	if (!pull_block_type(cur, &block->type))
 		return 0;
 
+	block->version = version;
+
 	switch (block->type) {
 	case BLOCK_HASHTAG:
 	case BLOCK_TEXT:
@@ -256,6 +258,9 @@ struct ndb_str_block *ndb_block_str(struct ndb_block *block)
 	case BLOCK_MENTION_INDEX:
 		return NULL;
 	case BLOCK_MENTION_BECH32:
+		// v2 (markdown) stores raw string in block.str, not mention_bech32.str
+		if (block->version == 2)
+			return &block->block.str;
 		return &block->block.mention_bech32.str;
 	case BLOCK_INVOICE:
 		return &block->block.invoice.invstr;
@@ -292,6 +297,9 @@ uint32_t ndb_str_block_len(struct ndb_str_block *str_block) {
 }
 
 struct nostr_bech32 *ndb_bech32_block(struct ndb_block *block) {
+	// v2 (markdown) only stores raw bech32 string, not decoded data
+	if (block->version == 2)
+		return NULL;
 	return &block->block.mention_bech32.bech32;
 }
 

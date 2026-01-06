@@ -2735,6 +2735,92 @@ static void test_markdown_lists() {
 	assert(found_list_item);
 }
 
+static void test_markdown_block_count() {
+	unsigned char buf[8192];
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_block_iterator iterator, *iter = &iterator;
+	int block_count = 0;
+
+	// Simple heading + text: should be HEADING, TEXT (not duplicated)
+	const char *content = "# Title";
+
+	assert(ndb_parse_markdown_content(buf, sizeof(buf), content, strlen(content), &blocks));
+
+	ndb_blocks_iterate_start(content, blocks, iter);
+
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		block_count++;
+	}
+
+	// Should be exactly 2 blocks: HEADING and TEXT
+	assert(block_count == 2);
+}
+
+static void test_markdown_bech32_block() {
+	unsigned char buf[8192];
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_block_iterator iterator, *iter = &iterator;
+	int found_mention = 0;
+
+	const char *content = "[profile](nostr:npub1xtscya34g58tk0z605fvr788k263gsu6cy9x0mhnm87echrgufzsevkk5s)";
+
+	assert(ndb_parse_markdown_content(buf, sizeof(buf), content, strlen(content), &blocks));
+
+	ndb_blocks_iterate_start(content, blocks, iter);
+
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		if (ndb_get_block_type(block) == BLOCK_MENTION_BECH32) {
+			// For v2 (markdown), ndb_block_str should return the raw bech32 string
+			struct ndb_str_block *str = ndb_block_str(block);
+			assert(str != NULL);
+			assert(str->len > 0);
+			assert(strncmp(str->str, "npub1", 5) == 0);
+
+			// For v2, ndb_bech32_block should return NULL (not decoded)
+			struct nostr_bech32 *bech32 = ndb_bech32_block(block);
+			assert(bech32 == NULL);
+
+			found_mention = 1;
+		}
+	}
+
+	assert(found_mention);
+}
+
+static void test_markdown_image_alt() {
+	unsigned char buf[8192];
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_block_iterator iterator, *iter = &iterator;
+	int found_image = 0;
+
+	const char *content = "![this is alt text](https://example.com/image.png)";
+
+	assert(ndb_parse_markdown_content(buf, sizeof(buf), content, strlen(content), &blocks));
+
+	ndb_blocks_iterate_start(content, blocks, iter);
+
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		if (ndb_get_block_type(block) == BLOCK_IMAGE) {
+			struct ndb_image_block *image = ndb_block_image(block);
+			assert(image != NULL);
+
+			// Check URL
+			assert(strncmp(image->url.str, "https://example.com/image.png", image->url.len) == 0);
+
+			// Check alt text is captured (not empty)
+			assert(image->alt.len > 0);
+			assert(strncmp(image->alt.str, "this is alt text", image->alt.len) == 0);
+
+			found_image = 1;
+		}
+	}
+
+	assert(found_image);
+}
+
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
@@ -2811,6 +2897,9 @@ int main(int argc, const char *argv[]) {
 	test_markdown_code_block();
 	test_markdown_links();
 	test_markdown_lists();
+	test_markdown_block_count();
+	test_markdown_bech32_block();
+	test_markdown_image_alt();
 
 	printf("All tests passed!\n");       // Print this if all tests pass.
 }
