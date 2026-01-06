@@ -1,8 +1,14 @@
+/**
+ * nip23.c - NIP-23 long-form content helpers
+ *
+ * Provides metadata extraction for NIP-23 articles (kind 30023/30024).
+ * Extracts title, summary, image, identifier, published_at, and hashtags.
+ */
+
 #include "nostrdb.h"
 #include <string.h>
 #include <stdlib.h>
 
-// NIP-23 kind values
 #define NIP23_KIND_LONGFORM       30023
 #define NIP23_KIND_LONGFORM_DRAFT 30024
 

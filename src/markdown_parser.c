@@ -1,3 +1,10 @@
+/**
+ * markdown_parser.c - NIP-23 markdown content parser
+ *
+ * Parses markdown content into nostrdb blocks using libcmark.
+ * Produces version 2 blocks with inline string storage.
+ */
+
 #include "nostrdb.h"
 #include "block.h"
 #include "cursor.h"
@@ -7,15 +14,17 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define MAX_ALT_TEXT_LEN 1024
+
 struct ndb_markdown_parser {
 	struct cursor buffer;
 	struct cursor content;
 	struct ndb_blocks *blocks;
 	const char *content_start;
 
-	// Image alt text collection state
+	/* Image alt text collection state */
 	int in_image;
-	char alt_buf[1024];
+	char alt_buf[MAX_ALT_TEXT_LEN];
 	int alt_len;
 	const char *image_url;
 	const char *image_title;
@@ -269,7 +278,7 @@ static int parse_node(struct ndb_markdown_parser *p, cmark_node *node, cmark_eve
 			int len = (int)strlen(literal);
 			// If we're inside an image, collect text as alt text
 			if (p->in_image) {
-				int space = (int)sizeof(p->alt_buf) - p->alt_len - 1;
+				int space = MAX_ALT_TEXT_LEN - p->alt_len - 1;
 				int copy_len = len < space ? len : space;
 				if (copy_len > 0) {
 					memcpy(p->alt_buf + p->alt_len, literal, copy_len);
@@ -339,23 +348,22 @@ static int parse_node(struct ndb_markdown_parser *p, cmark_node *node, cmark_eve
 
 	case CMARK_NODE_IMAGE:
 		if (ev_type == CMARK_EVENT_ENTER) {
-			// Save image info and start collecting alt text
+			/* Save image info and start collecting alt text */
 			p->in_image = 1;
 			p->alt_len = 0;
 			p->image_url = cmark_node_get_url(node);
 			p->image_title = cmark_node_get_title(node);
 			return 1;
-		} else {
-			// EXIT: push image block with collected alt text
-			p->in_image = 0;
-			p->alt_buf[p->alt_len] = '\0';
-
-			block.type = BLOCK_IMAGE;
-			init_str_block(&block.block.image.url, p->image_url, -1);
-			init_str_block(&block.block.image.title, p->image_title, -1);
-			init_str_block(&block.block.image.alt, p->alt_buf, p->alt_len);
-			return push_markdown_block(p, &block);
 		}
+		/* EXIT: push image block with collected alt text */
+		p->in_image = 0;
+		p->alt_buf[p->alt_len] = '\0';
+
+		block.type = BLOCK_IMAGE;
+		init_str_block(&block.block.image.url, p->image_url, -1);
+		init_str_block(&block.block.image.title, p->image_title, -1);
+		init_str_block(&block.block.image.alt, p->alt_buf, p->alt_len);
+		return push_markdown_block(p, &block);
 
 	case CMARK_NODE_HTML_BLOCK:
 	case CMARK_NODE_HTML_INLINE:
@@ -368,6 +376,16 @@ static int parse_node(struct ndb_markdown_parser *p, cmark_node *node, cmark_eve
 	}
 }
 
+/**
+ * Parse markdown content into nostrdb blocks.
+ *
+ * @param buf       Output buffer for block data
+ * @param buf_size  Size of output buffer
+ * @param content   Markdown content to parse
+ * @param content_len Length of content
+ * @param blocks_p  Output pointer to parsed blocks
+ * @return 1 on success, 0 on failure
+ */
 int ndb_parse_markdown_content(unsigned char *buf, int buf_size,
                                const char *content, int content_len,
                                struct ndb_blocks **blocks_p)
