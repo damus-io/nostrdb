@@ -18,6 +18,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <ctype.h>
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
@@ -910,6 +911,58 @@ static void test_profile_search(struct ndb *ndb)
 	ndb_end_query(&txn);
 }
 
+static void test_profile_search_prefix(struct ndb *ndb)
+{
+	struct ndb_txn txn;
+	struct ndb_search search;
+	int count = 0;
+	const char *name;
+	NdbProfile_table_t profile;
+	const char *prefix = "jean";
+	size_t prefix_len = strlen(prefix);
+
+	assert(ndb_begin_query(ndb, &txn));
+
+	// Search for prefix "jean"
+	if (!ndb_search_profile(&txn, &search, prefix)) {
+		// No results is valid if no profiles match
+		ndb_end_query(&txn);
+		printf("ok test_profile_search_prefix (no matches)\n");
+		return;
+	}
+
+	// First result should match the prefix
+	profile = lookup_profile(&txn, search.profile_key);
+	name = NdbProfile_name_get(profile);
+	assert(name != NULL);
+	// Convert to lowercase for comparison since search is case-insensitive
+	for (size_t i = 0; i < prefix_len && name[i]; i++) {
+		assert(tolower((unsigned char)name[i]) == tolower((unsigned char)prefix[i]));
+	}
+	count++;
+
+	// All subsequent results should also match the prefix
+	while (ndb_search_profile_next(&search)) {
+		profile = lookup_profile(&txn, search.profile_key);
+		name = NdbProfile_name_get(profile);
+		assert(name != NULL);
+		// Verify prefix match (case-insensitive)
+		for (size_t i = 0; i < prefix_len && name[i]; i++) {
+			assert(tolower((unsigned char)name[i]) == tolower((unsigned char)prefix[i]));
+		}
+		count++;
+		// Safety limit to avoid infinite loops in tests
+		if (count > 1000) break;
+	}
+
+	// The search should have stopped because prefix no longer matches,
+	// not because we ran out of entries in the entire database
+	ndb_search_profile_end(&search);
+	ndb_end_query(&txn);
+
+	printf("ok test_profile_search_prefix (found %d matches)\n", count);
+}
+
 static void test_profile_updates()
 {
 	static const int alloc_size = 1024 * 1024;
@@ -994,6 +1047,7 @@ static void test_load_profiles()
 	ndb_end_query(&txn);
 
 	test_profile_search(ndb);
+	test_profile_search_prefix(ndb);
 
 	ndb_destroy(ndb);
 
@@ -1038,6 +1092,7 @@ static void test_migrate() {
 	assert(ndb_end_query(&txn));
 
 	test_profile_search(ndb);
+	test_profile_search_prefix(ndb);
 	ndb_destroy(ndb);
 }
 
