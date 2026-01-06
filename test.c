@@ -883,7 +883,7 @@ static void test_profile_search(struct ndb *ndb)
 {
 	struct ndb_txn txn;
 	struct ndb_search search;
-	int i;
+	int count = 0;
 	const char *name;
 	NdbProfile_table_t profile;
 
@@ -893,22 +893,21 @@ static void test_profile_search(struct ndb *ndb)
 	profile = lookup_profile(&txn, search.profile_key);
 	name = NdbProfile_name_get(profile);
 	assert(!strncmp(name, "jean", 4));
+	count++;
 
-	assert(ndb_search_profile_next(&search));
-	//print_search(&txn, &search);
-	profile = lookup_profile(&txn, search.profile_key);
-	name = NdbProfile_name_get(profile);
-	//assert(strncmp(name, "jean", 4));
-
-	for (i = 0; i < 3; i++) {
-		ndb_search_profile_next(&search);
+	// With prefix matching fix, _next only returns profiles matching "jean"
+	while (ndb_search_profile_next(&search)) {
 		//print_search(&txn, &search);
+		profile = lookup_profile(&txn, search.profile_key);
+		name = NdbProfile_name_get(profile);
+		// All results must match the "jean" prefix
+		assert(!strncmp(name, "jean", 4));
+		count++;
 	}
-
-	//assert(!strcmp(name, "jb55"));
 
 	ndb_search_profile_end(&search);
 	ndb_end_query(&txn);
+	printf("test_profile_search: found %d profiles matching 'jean'\n", count);
 }
 
 static void test_profile_search_prefix(struct ndb *ndb)
