@@ -417,8 +417,26 @@ enum ndb_block_type {
     BLOCK_MENTION_BECH32 = 4,
     BLOCK_URL            = 5,
     BLOCK_INVOICE        = 6,
+
+    // Markdown block types (NIP-23 long-form content)
+    BLOCK_HEADING        = 7,   // heading with level 1-6
+    BLOCK_PARAGRAPH      = 8,   // paragraph container
+    BLOCK_CODE_BLOCK     = 9,   // fenced or indented code block
+    BLOCK_BLOCKQUOTE     = 10,  // blockquote container
+    BLOCK_LIST           = 11,  // list container (ordered or bullet)
+    BLOCK_LIST_ITEM      = 12,  // list item
+    BLOCK_THEMATIC_BREAK = 13,  // horizontal rule
+
+    // Markdown inline types
+    BLOCK_EMPH           = 14,  // emphasis (italic)
+    BLOCK_STRONG         = 15,  // strong (bold)
+    BLOCK_LINK           = 16,  // link with url and title
+    BLOCK_IMAGE          = 17,  // image with url, title and alt text
+    BLOCK_CODE_INLINE    = 18,  // inline code span
+    BLOCK_LINEBREAK      = 19,  // hard line break
+    BLOCK_SOFTBREAK      = 20,  // soft line break
 };
-#define NDB_NUM_BLOCK_TYPES 6
+#define NDB_NUM_BLOCK_TYPES 20
 #define NDB_MAX_RELAYS 24
 
 struct ndb_relays {
@@ -504,6 +522,38 @@ struct ndb_invoice_block {
 	struct ndb_invoice invoice;
 };
 
+// Markdown block types for NIP-23 long-form content
+enum ndb_list_type {
+	NDB_LIST_BULLET  = 0,
+	NDB_LIST_ORDERED = 1,
+};
+
+struct ndb_heading_block {
+	uint8_t level;  // 1-6
+};
+
+struct ndb_code_block {
+	struct ndb_str_block info;     // language info (e.g., "c", "python")
+	struct ndb_str_block literal;  // code content
+};
+
+struct ndb_list_block {
+	enum ndb_list_type list_type;
+	int start;      // starting number for ordered lists
+	uint8_t tight;  // 1 if tight list, 0 otherwise
+};
+
+struct ndb_link_block {
+	struct ndb_str_block url;
+	struct ndb_str_block title;
+};
+
+struct ndb_image_block {
+	struct ndb_str_block url;
+	struct ndb_str_block title;
+	struct ndb_str_block alt;  // alt text from child nodes
+};
+
 struct ndb_block {
 	enum ndb_block_type type;
 	union {
@@ -511,6 +561,13 @@ struct ndb_block {
 		struct ndb_invoice_block invoice;
 		struct ndb_mention_bech32_block mention_bech32;
 		uint32_t mention_index;
+
+		// Markdown block types
+		struct ndb_heading_block heading;
+		struct ndb_code_block code_block;
+		struct ndb_list_block list;
+		struct ndb_link_block link;
+		struct ndb_image_block image;
 	} block;
 };
 
@@ -771,5 +828,27 @@ uint32_t ndb_str_block_len(struct ndb_str_block *);
 
 // BECH32 BLOCKS
 struct nostr_bech32 *ndb_bech32_block(struct ndb_block *block);
+
+// MARKDOWN BLOCKS (NIP-23)
+struct ndb_heading_block *ndb_block_heading(struct ndb_block *block);
+struct ndb_code_block *ndb_block_code(struct ndb_block *block);
+struct ndb_list_block *ndb_block_list(struct ndb_block *block);
+struct ndb_link_block *ndb_block_link(struct ndb_block *block);
+struct ndb_image_block *ndb_block_image(struct ndb_block *block);
+
+// MARKDOWN CONTENT PARSER (NIP-23)
+int ndb_parse_markdown_content(unsigned char *buf, int buf_size,
+                               const char *content, int content_len,
+                               struct ndb_blocks **blocks_p);
+
+// NIP-23 LONG-FORM CONTENT HELPERS
+int ndb_note_is_longform(struct ndb_note *note);
+int ndb_note_is_longform_draft(struct ndb_note *note);
+struct ndb_str ndb_note_longform_title(struct ndb_note *note);
+struct ndb_str ndb_note_longform_image(struct ndb_note *note);
+struct ndb_str ndb_note_longform_summary(struct ndb_note *note);
+struct ndb_str ndb_note_longform_identifier(struct ndb_note *note);
+uint64_t ndb_note_longform_published_at(struct ndb_note *note);
+int ndb_note_longform_hashtags(struct ndb_note *note, struct ndb_str *tags, int max_tags);
 
 #endif

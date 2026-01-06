@@ -19,6 +19,26 @@ int pull_str_block(struct cursor *buf, const char *content, struct ndb_str_block
 	return cursor_pull_varint_u32(buf, &block->len);
 }
 
+// Pull a string block stored inline (for markdown blocks)
+static int pull_md_str_block(struct cursor *buf, struct ndb_str_block *block) {
+	uint32_t len;
+	if (!cursor_pull_varint_u32(buf, &len))
+		return 0;
+
+	block->len = len;
+
+	if (len > 0) {
+		// The string data is stored inline in the buffer
+		block->str = (const char *)buf->p;
+		if (!cursor_skip(buf, len))
+			return 0;
+	} else {
+		block->str = "";
+	}
+
+	return 1;
+}
+
 static int pull_nostr_bech32_type(struct cursor *cur, enum nostr_bech32_type *type)
 {
 	uint64_t inttype;
@@ -82,7 +102,7 @@ static int pull_block_type(struct cursor *cur, enum ndb_block_type *type)
 	return 1;
 }
 
-static int pull_block(const char *content, struct cursor *cur, struct ndb_block *block)
+static int pull_block(const char *content, struct cursor *cur, struct ndb_block *block, int version)
 {
 	unsigned char *start = cur->p;
 
@@ -93,8 +113,14 @@ static int pull_block(const char *content, struct cursor *cur, struct ndb_block 
 	case BLOCK_HASHTAG:
 	case BLOCK_TEXT:
 	case BLOCK_URL:
-		if (!pull_str_block(cur, content, &block->block.str))
-			goto fail;
+		// Version 2 (markdown) uses inline string storage
+		if (version == 2) {
+			if (!pull_md_str_block(cur, &block->block.str))
+				goto fail;
+		} else {
+			if (!pull_str_block(cur, content, &block->block.str))
+				goto fail;
+		}
 		break;
 
 	case BLOCK_MENTION_INDEX:
@@ -103,14 +129,80 @@ static int pull_block(const char *content, struct cursor *cur, struct ndb_block 
 		break;
 
 	case BLOCK_MENTION_BECH32:
-		if (!pull_bech32_mention(content, cur, &block->block.mention_bech32))
-			goto fail;
+		// Version 2 (markdown) stores only the bech32 string inline
+		if (version == 2) {
+			if (!pull_md_str_block(cur, &block->block.str))
+				goto fail;
+		} else {
+			if (!pull_bech32_mention(content, cur, &block->block.mention_bech32))
+				goto fail;
+		}
 		break;
 
 	case BLOCK_INVOICE:
 		// we only push invoice strs here
 		if (!pull_invoice(content, cur, &block->block.invoice))
 			goto fail;
+		break;
+
+	// Markdown block types - use inline string storage
+	case BLOCK_HEADING:
+		if (!cursor_pull_byte(cur, &block->block.heading.level))
+			goto fail;
+		break;
+
+	case BLOCK_CODE_BLOCK:
+		if (!pull_md_str_block(cur, &block->block.code_block.info))
+			goto fail;
+		if (!pull_md_str_block(cur, &block->block.code_block.literal))
+			goto fail;
+		break;
+
+	case BLOCK_LIST:
+		{
+			uint8_t list_type;
+			uint32_t start;
+			if (!cursor_pull_byte(cur, &list_type))
+				goto fail;
+			block->block.list.list_type = list_type;
+			if (!cursor_pull_varint_u32(cur, &start))
+				goto fail;
+			block->block.list.start = start;
+			if (!cursor_pull_byte(cur, &block->block.list.tight))
+				goto fail;
+		}
+		break;
+
+	case BLOCK_LINK:
+		if (!pull_md_str_block(cur, &block->block.link.url))
+			goto fail;
+		if (!pull_md_str_block(cur, &block->block.link.title))
+			goto fail;
+		break;
+
+	case BLOCK_IMAGE:
+		if (!pull_md_str_block(cur, &block->block.image.url))
+			goto fail;
+		if (!pull_md_str_block(cur, &block->block.image.title))
+			goto fail;
+		if (!pull_md_str_block(cur, &block->block.image.alt))
+			goto fail;
+		break;
+
+	case BLOCK_CODE_INLINE:
+		if (!pull_md_str_block(cur, &block->block.str))
+			goto fail;
+		break;
+
+	case BLOCK_PARAGRAPH:
+	case BLOCK_BLOCKQUOTE:
+	case BLOCK_LIST_ITEM:
+	case BLOCK_THEMATIC_BREAK:
+	case BLOCK_LINEBREAK:
+	case BLOCK_SOFTBREAK:
+	case BLOCK_EMPH:
+	case BLOCK_STRONG:
+		// These are markers only, no additional data
 		break;
 	}
 
@@ -140,7 +232,7 @@ struct ndb_block *ndb_blocks_iterate_next(struct ndb_block_iterator *iter)
 	cur.end = iter->blocks->blocks + iter->blocks->blocks_size;
 
 	while (cur.p < cur.end) {
-		if (!pull_block(iter->content, &cur, &iter->block)) {
+		if (!pull_block(iter->content, &cur, &iter->block, iter->blocks->version)) {
 			iter->p = cur.p;
 			return NULL;
 		} else {
@@ -159,6 +251,7 @@ struct ndb_str_block *ndb_block_str(struct ndb_block *block)
 	case BLOCK_HASHTAG:
 	case BLOCK_TEXT:
 	case BLOCK_URL:
+	case BLOCK_CODE_INLINE:
 		return &block->block.str;
 	case BLOCK_MENTION_INDEX:
 		return NULL;
@@ -166,6 +259,25 @@ struct ndb_str_block *ndb_block_str(struct ndb_block *block)
 		return &block->block.mention_bech32.str;
 	case BLOCK_INVOICE:
 		return &block->block.invoice.invstr;
+
+	// Markdown block types - return NULL or relevant string
+	case BLOCK_HEADING:
+	case BLOCK_PARAGRAPH:
+	case BLOCK_BLOCKQUOTE:
+	case BLOCK_LIST:
+	case BLOCK_LIST_ITEM:
+	case BLOCK_THEMATIC_BREAK:
+	case BLOCK_LINEBREAK:
+	case BLOCK_SOFTBREAK:
+	case BLOCK_EMPH:
+	case BLOCK_STRONG:
+		return NULL;
+	case BLOCK_CODE_BLOCK:
+		return &block->block.code_block.literal;
+	case BLOCK_LINK:
+		return &block->block.link.url;
+	case BLOCK_IMAGE:
+		return &block->block.image.url;
 	}
 
 	return NULL;

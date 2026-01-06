@@ -262,6 +262,24 @@ int push_block(struct ndb_content_parser *p, struct ndb_block *block)
 			}
 		}
 		break;
+
+	// Markdown block types are handled by the markdown_parser, not here
+	case BLOCK_HEADING:
+	case BLOCK_PARAGRAPH:
+	case BLOCK_CODE_BLOCK:
+	case BLOCK_BLOCKQUOTE:
+	case BLOCK_LIST:
+	case BLOCK_LIST_ITEM:
+	case BLOCK_THEMATIC_BREAK:
+	case BLOCK_EMPH:
+	case BLOCK_STRONG:
+	case BLOCK_LINK:
+	case BLOCK_IMAGE:
+	case BLOCK_CODE_INLINE:
+	case BLOCK_LINEBREAK:
+	case BLOCK_SOFTBREAK:
+		// These types should not be pushed through the regular content parser
+		goto fail;
 	}
 
 	p->blocks->num_blocks++;

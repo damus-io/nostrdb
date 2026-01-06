@@ -2603,6 +2603,138 @@ void test_replay_attack() {
 	delete_test_db();
 }
 
+// NIP-23 markdown parsing tests
+static void test_markdown_parsing() {
+	unsigned char buf[8192];
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_block_iterator iterator, *iter = &iterator;
+	int block_count = 0;
+
+	// Simple markdown with heading and paragraph
+	const char *content = "# Hello World\n\nThis is a paragraph.";
+
+	assert(ndb_parse_markdown_content(buf, sizeof(buf), content, strlen(content), &blocks));
+	assert(blocks->num_blocks > 0);
+
+	ndb_blocks_iterate_start(content, blocks, iter);
+
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		block_count++;
+		enum ndb_block_type type = ndb_get_block_type(block);
+
+		// First block should be heading
+		if (block_count == 1) {
+			assert(type == BLOCK_HEADING);
+			struct ndb_heading_block *heading = ndb_block_heading(block);
+			assert(heading != NULL);
+			assert(heading->level == 1);
+		}
+	}
+
+	assert(block_count > 0);
+}
+
+static void test_markdown_code_block() {
+	unsigned char buf[8192];
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_block_iterator iterator, *iter = &iterator;
+	int found_code_block = 0;
+
+	const char *content = "```c\nint main() { return 0; }\n```";
+
+	assert(ndb_parse_markdown_content(buf, sizeof(buf), content, strlen(content), &blocks));
+
+	ndb_blocks_iterate_start(content, blocks, iter);
+
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		if (ndb_get_block_type(block) == BLOCK_CODE_BLOCK) {
+			struct ndb_code_block *code = ndb_block_code(block);
+			assert(code != NULL);
+			// The info string should contain "c"
+			assert(code->info.len >= 1);
+			assert(strncmp(code->info.str, "c", 1) == 0);
+			found_code_block = 1;
+		}
+	}
+
+	assert(found_code_block);
+}
+
+static void test_markdown_links() {
+	unsigned char buf[8192];
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_block_iterator iterator, *iter = &iterator;
+	int found_link = 0;
+	int found_nostr_mention = 0;
+
+	// Test regular link
+	const char *content = "[example](https://example.com)";
+
+	assert(ndb_parse_markdown_content(buf, sizeof(buf), content, strlen(content), &blocks));
+
+	ndb_blocks_iterate_start(content, blocks, iter);
+
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		if (ndb_get_block_type(block) == BLOCK_LINK) {
+			struct ndb_link_block *link = ndb_block_link(block);
+			assert(link != NULL);
+			assert(strncmp(link->url.str, "https://example.com", link->url.len) == 0);
+			found_link = 1;
+		}
+	}
+
+	assert(found_link);
+
+	// Test nostr: link (should become BLOCK_MENTION_BECH32)
+	const char *nostr_content = "[profile](nostr:npub1xtscya34g58tk0z605fvr788k263gsu6cy9x0mhnm87echrgufzsevkk5s)";
+
+	assert(ndb_parse_markdown_content(buf, sizeof(buf), nostr_content, strlen(nostr_content), &blocks));
+
+	ndb_blocks_iterate_start(nostr_content, blocks, iter);
+
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		if (ndb_get_block_type(block) == BLOCK_MENTION_BECH32) {
+			found_nostr_mention = 1;
+		}
+	}
+
+	assert(found_nostr_mention);
+}
+
+static void test_markdown_lists() {
+	unsigned char buf[8192];
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_block_iterator iterator, *iter = &iterator;
+	int found_list = 0;
+	int found_list_item = 0;
+
+	const char *content = "- Item 1\n- Item 2\n- Item 3";
+
+	assert(ndb_parse_markdown_content(buf, sizeof(buf), content, strlen(content), &blocks));
+
+	ndb_blocks_iterate_start(content, blocks, iter);
+
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		enum ndb_block_type type = ndb_get_block_type(block);
+		if (type == BLOCK_LIST) {
+			struct ndb_list_block *list = ndb_block_list(block);
+			assert(list != NULL);
+			assert(list->list_type == NDB_LIST_BULLET);
+			found_list = 1;
+		}
+		if (type == BLOCK_LIST_ITEM) {
+			found_list_item = 1;
+		}
+	}
+
+	assert(found_list);
+	assert(found_list_item);
+}
+
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
@@ -2673,6 +2805,12 @@ int main(int argc, const char *argv[]) {
 
 	// profiles
 	test_replacement();
+
+	// NIP-23 markdown parsing
+	test_markdown_parsing();
+	test_markdown_code_block();
+	test_markdown_links();
+	test_markdown_lists();
 
 	printf("All tests passed!\n");       // Print this if all tests pass.
 }
