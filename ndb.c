@@ -8,9 +8,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <errno.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include "bindings/c/profile_reader.h"
+
+// ndb provides a somewhat random tool to replace streams of hex strings
+// with profile names...
+struct stream_parser_state
+{
+	char hexbuf[64];
+	int hexlen;
+};
 
 static int usage()
 {
@@ -24,6 +34,7 @@ static int usage()
 	printf("	profile <pubkey>                            print the raw profile data for a pubkey\n");
 	printf("	note-relays <note-id>                       list the relays a given note id has been seen on\n");
 	printf("	print-search-keys\n");
+	printf("	resolve-pubkeys                   convert hex pubkeys to profile names in a stream\n");
 	printf("	print-kind-keys\n");
 	printf("	print-tag-keys\n");
 	printf("	print-relay-kind-index-keys\n");
@@ -139,6 +150,121 @@ static void ndb_print_text_search_result(struct ndb_txn *txn,
 	print_note(note);
 }
 
+
+static NdbProfile_table_t lookup_profile_by_pubkey(struct ndb_txn *txn,
+                                                   const unsigned char pubkey[32],
+                                                   uint64_t *out_pk)
+{
+	void *root;
+	size_t len;
+	uint64_t pk = 0;
+
+	root = ndb_get_profile_by_pubkey(txn, pubkey, &len, &pk);
+	if (!root)
+		return 0;
+
+	if (out_pk)
+		*out_pk = pk;
+
+	NdbProfileRecord_table_t profile_record = NdbProfileRecord_as_root(root);
+	return NdbProfileRecord_profile_get(profile_record);
+}
+
+static const char *best_profile_name(NdbProfile_table_t profile)
+{
+	const char *display, *name;
+
+	display = NdbProfile_display_name_get(profile);
+	if (display && display[0])
+		return display;
+
+	name = NdbProfile_name_get(profile);
+	if (name && name[0])
+		return name;
+
+	return NULL;
+}
+
+
+static int write_all(int fd, const void *buf, size_t len)
+{
+	const unsigned char *p = (const unsigned char *)buf;
+	while (len > 0) {
+		ssize_t n = write(fd, p, len);
+		if (n < 0) {
+			if (errno == EINTR) continue;
+			return 0;
+		}
+		p += (size_t)n;
+		len -= (size_t)n;
+	}
+	return 1;
+}
+
+static inline int is_hex_char(unsigned char c)
+{
+	return (c >= '0' && c <= '9') ||
+	       (c >= 'a' && c <= 'f') ||
+	       (c >= 'A' && c <= 'F');
+}
+
+static int resolve_pubkeys(struct ndb_txn *txn, int in_fd, int out_fd)
+{
+	unsigned char buf[4096];
+	unsigned char pubkey[32];
+	struct stream_parser_state st = {0};
+
+	for (;;) {
+		ssize_t n = read(in_fd, buf, sizeof(buf));
+		if (n <= 0)
+			break;
+
+		for (ssize_t i = 0; i < n; i++) {
+			unsigned char c = buf[i];
+
+			if (is_hex_char(c)) {
+				st.hexbuf[st.hexlen++] = (char)c;
+			} else {
+				if (st.hexlen > 0) {
+					// overflow: flush and restart
+					write_all(out_fd, st.hexbuf, st.hexlen);
+					st.hexlen = 0;
+				}
+				write_all(out_fd, &c, 1);
+				continue;
+			}
+
+			if (st.hexlen == 64) {
+				if (hex_decode(st.hexbuf, 64, pubkey,
+					       sizeof(pubkey)))
+				{
+					NdbProfile_table_t profile =
+						lookup_profile_by_pubkey(txn, pubkey, NULL);
+
+					const char *name =
+						profile ? best_profile_name(profile)
+							: NULL;
+
+					if (name) {
+						write_all(out_fd, name, strlen(name));
+					} else {
+						write_all(out_fd, st.hexbuf, 64);
+					}
+				} else {
+					write_all(out_fd, st.hexbuf, 64);
+				}
+
+				st.hexlen = 0;
+			}
+		}
+	}
+
+	// flush trailing partial hex at EOF
+	if (st.hexlen)
+		write_all(out_fd, st.hexbuf, st.hexlen);
+
+	return 1;
+}
 
 int main(int argc, char *argv[])
 {
@@ -447,6 +573,10 @@ int main(int argc, char *argv[])
 	} else if (argc == 2 && !strcmp(argv[1], "print-search-keys")) {
 		ndb_begin_query(ndb, &txn);
 		ndb_print_search_keys(&txn);
+		ndb_end_query(&txn);
+	} else if (argc == 2 && !strcmp(argv[1], "resolve-pubkeys")) {
+		ndb_begin_query(ndb, &txn);
+		resolve_pubkeys(&txn, STDIN_FILENO, STDOUT_FILENO);
 		ndb_end_query(&txn);
 	} else if (argc == 2 && !strcmp(argv[1], "print-kind-keys")) {
 		ndb_begin_query(ndb, &txn);
