@@ -645,19 +645,32 @@ int ndb_filter_end(struct ndb_filter *filter)
 	filter->elem_buf.end = filter->elem_buf.p;
 
 	// move the data buffer to the end of the element buffer
-	memmove(filter->elem_buf.p, filter->data_buf.start, data_len);
+	if (data_len > 0)
+		memmove(filter->elem_buf.p, filter->data_buf.start, data_len);
 
-	// realloc the whole thing
-	rel = realloc(filter->elem_buf.start, elem_len + data_len);
-	if (rel)
+	if (elem_len + data_len == 0) {
+		// if we don't require data storage, just free the
+		// buffer
+		free(filter->elem_buf.start);
+
+		filter->elem_buf.start = 0;
+		filter->elem_buf.end = 0;
+		filter->elem_buf.p = 0;
+
+		filter->data_buf.start = 0;
+		filter->data_buf.end = 0;
+		filter->data_buf.p = 0;
+	} else if ((rel = realloc(filter->elem_buf.start, elem_len + data_len))) {
 		filter->elem_buf.start = rel;
-	assert(filter->elem_buf.start);
-	filter->elem_buf.end = filter->elem_buf.start + elem_len;
-	filter->elem_buf.p = filter->elem_buf.end;
 
-	filter->data_buf.start = filter->elem_buf.end;
-	filter->data_buf.end = filter->data_buf.start + data_len;
-	filter->data_buf.p = filter->data_buf.end;
+		assert(filter->elem_buf.start);
+		filter->elem_buf.end = filter->elem_buf.start + elem_len;
+		filter->elem_buf.p = filter->elem_buf.end;
+
+		filter->data_buf.start = filter->elem_buf.end;
+		filter->data_buf.end = filter->data_buf.start + data_len;
+		filter->data_buf.p = filter->data_buf.end;
+	}
 
 	filter->finalized = 1;
 
