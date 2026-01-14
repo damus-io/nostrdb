@@ -52,9 +52,9 @@ struct bolt11;
  * We explicitly multiply by two in the enum to be unambiguous
  */
 enum ndb_metadata_type {
-    NDB_NOTE_META_RESERVED = 0, /* not used */
-    NDB_NOTE_META_COUNTS   = 100, /* replies, quotes, etc */
-    NDB_NOTE_META_REACTION = 200, /* count of all the reactions on a post, grouped by different reaction strings */
+	NDB_NOTE_META_RESERVED = 0, /* not used */
+	NDB_NOTE_META_COUNTS   = 100, /* replies, quotes, etc */
+	NDB_NOTE_META_REACTION = 200, /* count of all the reactions on a post, grouped by different reaction strings */
 };
 
 #include "nip44.h"
