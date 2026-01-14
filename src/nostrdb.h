@@ -127,6 +127,15 @@ typedef enum ndb_idres (*ndb_id_fn)(void *, const char *);
 // callback function for when we receive new subscription results
 typedef void (*ndb_sub_fn)(void *, uint64_t subid);
 
+struct ndb_query_result {
+	struct ndb_note *note;
+	uint64_t note_size;
+	uint64_t note_id;
+};
+
+// callback function for when we visit a note during a query (used in ndb_query_visit)
+typedef enum ndb_visitor_action (*ndb_visitor_fn)(void *ctx, struct ndb_query_result *res);
+
 // id callback + closure data
 struct ndb_id_cb {
 	ndb_id_fn fn;
@@ -521,14 +530,41 @@ struct ndb_block_iterator {
 	unsigned char *p;
 };
 
-struct ndb_query_result {
-	struct ndb_note *note;
-	uint64_t note_size;
-	uint64_t note_id;
+enum ndb_query_type {
+	/* standard query, fills a result buffer */
+	NDB_QUERY_TYPE_STANDARD = 1,
+
+	/* visitor query. scan/folds over data */
+	NDB_QUERY_TYPE_VISITOR  = 2
+};
+
+/* visitor actions, this allows us to prematurely stop the query */
+enum ndb_visitor_action {
+	NDB_VISITOR_STOP = 0,
+	NDB_VISITOR_CONT = 1,
 };
 
 struct ndb_query_results {
 	struct cursor cur;
+};
+
+struct ndb_query_state {
+	enum ndb_query_type type;
+	uint64_t limit;
+
+	union {
+		struct {
+			int capacity;
+			struct ndb_query_results results;
+		} query;
+
+		struct {
+			uint64_t visited;
+			void *ctx;
+			int done;
+			ndb_visitor_fn visitor;
+		} visitor;
+	};
 };
 
 // CONFIG
@@ -665,6 +701,7 @@ void ndb_text_search_config_set_limit(struct ndb_text_search_config *, int limit
 
 // QUERY
 int ndb_query(struct ndb_txn *txn, struct ndb_filter *filters, int num_filters, struct ndb_query_result *results, int result_capacity, int *count);
+int ndb_query_visit(struct ndb_txn *txn, struct ndb_filter *filters, int num_filters, ndb_visitor_fn visitor, void *ctx);
 
 // NOTE METADATA
 int ndb_note_meta_builder_init(struct ndb_note_meta_builder *builder, unsigned char *, size_t);

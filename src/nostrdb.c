@@ -1508,8 +1508,7 @@ static int ndb_filter_group_add(struct ndb_filter_group *group,
 	return ndb_filter_clone(&group->filters[group->num_filters++], filter);
 }
 
-static int ndb_filter_group_matches(struct ndb_filter_group *group,
-				    struct ndb_note *note)
+static int ndb_filter_group_matches(struct ndb_filter_group *group, struct ndb_note *note)
 {
 	int i;
 	struct ndb_filter *filter;
@@ -4212,10 +4211,27 @@ static uint64_t *ndb_filter_get_int(struct ndb_filter *filter,
 	return el;
 }
 
-static inline int push_query_result(struct ndb_query_results *results,
+static inline int push_query_result(struct ndb_query_state *state,
 				    struct ndb_query_result *result)
 {
-	return cursor_push(&results->cur, (unsigned char*)result, sizeof(*result));
+	enum ndb_visitor_action action;
+
+	switch (state->type) {
+	case NDB_QUERY_TYPE_STANDARD:
+		return cursor_push(&state->query.results.cur,
+				   (unsigned char*)result, sizeof(*result));
+	case NDB_QUERY_TYPE_VISITOR:
+		action = state->visitor.visitor(state->visitor.ctx, result);
+		state->visitor.visited++;
+		if (action == NDB_VISITOR_STOP) {
+			state->visitor.done = 1;
+			return 0;
+		}
+		return 1;
+	}
+
+	assert(!"corrupt query state");
+	return 0;
 }
 
 static int compare_query_results(const void *pa, const void *pb)
@@ -4246,18 +4262,35 @@ static void ndb_query_result_init(struct ndb_query_result *res,
 	};
 }
 
-static int query_is_full(struct ndb_query_results *results, int limit)
+static int query_is_full(struct ndb_query_state *state)
 {
-	if (results->cur.p >= results->cur.end)
-		return 1;
+	size_t count;
 
-	return cursor_count(&results->cur, sizeof(struct ndb_query_result)) >= limit;
+	switch (state->type) {
+	case NDB_QUERY_TYPE_STANDARD:
+		if (state->query.results.cur.p >= state->query.results.cur.end)
+			return 1;
+		/* limit 0 means no limit */
+		if (state->limit == 0)
+			return 0;
+		count = cursor_count(&state->query.results.cur,
+				     sizeof(struct ndb_query_result));
+		return count >= state->limit;
+	case NDB_QUERY_TYPE_VISITOR:
+		if (state->visitor.done)
+			return 1;
+		if (state->limit == 0)
+			return 0;
+		return state->visitor.visited >= state->limit;
+	}
+
+	assert(!"corrupt query state");
+	return 0;
 }
 
 static int ndb_query_plan_execute_search(struct ndb_txn *txn,
 					 struct ndb_filter *filter,
-					 struct ndb_query_results *results,
-					 int limit)
+					 struct ndb_query_state *results)
 {
 	const char *search;
 	int i;
@@ -4275,7 +4308,7 @@ static int ndb_query_plan_execute_search(struct ndb_txn *txn,
 		return 0;
 
 	for (i = 0; i < text_results.num_results; i++) {
-		if (query_is_full(results, limit))
+		if (query_is_full(results))
 			break;
 
 		text_result = &text_results.results[i];
@@ -4293,8 +4326,7 @@ static int ndb_query_plan_execute_search(struct ndb_txn *txn,
 
 static int ndb_query_plan_execute_ids(struct ndb_txn *txn,
 				      struct ndb_filter *filter,
-				      struct ndb_query_results *results,
-				      int limit)
+				      struct ndb_query_state *results)
 {
 	MDB_cursor *cur;
 	MDB_dbi db;
@@ -4327,7 +4359,7 @@ static int ndb_query_plan_execute_ids(struct ndb_txn *txn,
 
 	// for each id in our ids filter, find in the db
 	for (i = 0; i < ids->count; i++) {
-		if (query_is_full(results, limit))
+		if (query_is_full(results))
 			break;
 
 		id = ndb_filter_get_id_element(filter, ids, i);
@@ -4412,8 +4444,7 @@ static int ndb_encode_tag_key(unsigned char *buf, int buf_size,
 
 static int ndb_query_plan_execute_authors(struct ndb_txn *txn,
 					  struct ndb_filter *filter,
-					  struct ndb_query_results *results,
-					  int limit)
+					  struct ndb_query_state *results)
 {
 	MDB_val k, v;
 	MDB_cursor *cur;
@@ -4459,7 +4490,7 @@ static int ndb_query_plan_execute_authors(struct ndb_txn *txn,
 			continue;
 
 		// for each id in our ids filter, find in the db
-		while (!query_is_full(results, limit)) {
+		while (!query_is_full(results)) {
 			ptsid = (struct ndb_tsid *)k.mv_data;
 			note_key = *(uint64_t*)v.mv_data;
 
@@ -4502,8 +4533,7 @@ next:
 
 static int ndb_query_plan_execute_created_at(struct ndb_txn *txn,
 					     struct ndb_filter *filter,
-					     struct ndb_query_results *results,
-					     int limit)
+					     struct ndb_query_state *results)
 {
 	MDB_dbi db;
 	MDB_val k, v;
@@ -4541,7 +4571,7 @@ static int ndb_query_plan_execute_created_at(struct ndb_txn *txn,
 	if (!ndb_cursor_start(cur, &k, &v))
 		return 1;
 
-	while (!query_is_full(results, limit)) {
+	while (!query_is_full(results)) {
 		pkey = (struct ndb_tsid *)k.mv_data;
 		note_id = *(uint64_t*)v.mv_data;
 		assert(v.mv_size == 8);
@@ -4574,8 +4604,7 @@ next:
 
 static int ndb_query_plan_execute_tags(struct ndb_txn *txn,
 				       struct ndb_filter *filter,
-				       struct ndb_query_results *results,
-				       int limit)
+				       struct ndb_query_state *results)
 {
 	MDB_cursor *cur;
 	MDB_dbi db;
@@ -4624,7 +4653,7 @@ static int ndb_query_plan_execute_tags(struct ndb_txn *txn,
 			continue;
 
 		// for each id in our ids filter, find in the db
-		while (!query_is_full(results, limit)) {
+		while (!query_is_full(results)) {
 			// check if tag value matches, bail if not
 			if (((unsigned char *)k.mv_data)[0] != tags->field.tag)
 				break;
@@ -4669,8 +4698,7 @@ fail:
 static int ndb_query_plan_execute_author_kinds(
 		struct ndb_txn *txn,
 		struct ndb_filter *filter,
-		struct ndb_query_results *results,
-		int limit)
+		struct ndb_query_state *results)
 {
 	MDB_cursor *cur;
 	MDB_dbi db;
@@ -4709,14 +4737,14 @@ static int ndb_query_plan_execute_author_kinds(
 		return 0;
 
 	for (j = 0; j < authors->count; j++) {
-		if (query_is_full(results, limit))
+		if (query_is_full(results))
 			break;
 
 		if (!(author = ndb_filter_get_id_element(filter, authors, j)))
 			continue;
 
 	for (i = 0; i < kinds->count; i++) {
-		if (query_is_full(results, limit))
+		if (query_is_full(results))
 			break;
 
 		kind = kinds->elements[i];
@@ -4732,7 +4760,7 @@ static int ndb_query_plan_execute_author_kinds(
 			continue;
 
 		// scan the kind subindex
-		while (!query_is_full(results, limit)) {
+		while (!query_is_full(results)) {
 			pkey = (struct ndb_id_u64_ts*)k.mv_data;
 
 			ndb_debug("scanning subindex kind:%"PRIu64" created_at:%"PRIu64" pubkey:",
@@ -4779,8 +4807,7 @@ next:
 static int ndb_query_plan_execute_profile_search(
 		struct ndb_txn *txn,
 		struct ndb_filter *filter,
-		struct ndb_query_results *results,
-		int limit)
+		struct ndb_query_state *results)
 {
 	const char *search;
 	int i;
@@ -4817,7 +4844,7 @@ static int ndb_query_plan_execute_profile_search(
 	if (!(filter_pubkey = ndb_filter_get_id_element(f, els, 0)))
 		goto fail;
 
-	for (i = 0; !query_is_full(results, limit); i++) {
+	for (i = 0; !query_is_full(results); i++) {
 		if (i == 0) {
 			if (!ndb_search_profile(txn, &profile_search, search))
 				break;
@@ -4830,7 +4857,7 @@ static int ndb_query_plan_execute_profile_search(
 		memcpy(filter_pubkey, profile_search.key->id, 32);
 
 		// Look up the corresponding note associated with that pubkey
-		if (!ndb_query_plan_execute_author_kinds(txn, f, results, limit))
+		if (!ndb_query_plan_execute_author_kinds(txn, f, results))
 			goto fail;
 	}
 
@@ -4846,8 +4873,7 @@ fail:
 static int ndb_query_plan_execute_relay_kinds(
 		struct ndb_txn *txn,
 		struct ndb_filter *filter,
-		struct ndb_query_results *results,
-		int limit)
+		struct ndb_query_state *results)
 {
 	MDB_cursor *cur;
 	MDB_dbi db;
@@ -4883,14 +4909,14 @@ static int ndb_query_plan_execute_relay_kinds(
 		return 0;
 
 	for (j = 0; j < relays->count; j++) {
-		if (query_is_full(results, limit))
+		if (query_is_full(results))
 			break;
 
 		if (!(relay = ndb_filter_get_string_element(filter, relays, j)))
 			continue;
 
 	for (i = 0; i < kinds->count; i++) {
-		if (query_is_full(results, limit))
+		if (query_is_full(results))
 			break;
 
 		kind = kinds->elements[i];
@@ -4917,7 +4943,7 @@ static int ndb_query_plan_execute_relay_kinds(
 			continue;
 
 		// scan the kind subindex
-		while (!query_is_full(results, limit)) {
+		while (!query_is_full(results)) {
 			ndb_parse_relay_kind_key(&relay_key, k.mv_data);
 
 			ndb_debug("inside kind subindex ");
@@ -4959,8 +4985,7 @@ next:
 
 static int ndb_query_plan_execute_kinds(struct ndb_txn *txn,
 					struct ndb_filter *filter,
-					struct ndb_query_results *results,
-					int limit)
+					struct ndb_query_state *results)
 {
 	MDB_cursor *cur;
 	MDB_dbi db;
@@ -4995,7 +5020,7 @@ static int ndb_query_plan_execute_kinds(struct ndb_txn *txn,
 		return 0;
 
 	for (i = 0; i < kinds->count; i++) {
-		if (query_is_full(results, limit))
+		if (query_is_full(results))
 			break;
 
 		kind = kinds->elements[i];
@@ -5009,7 +5034,7 @@ static int ndb_query_plan_execute_kinds(struct ndb_txn *txn,
 			continue;
 
 		// for each id in our ids filter, find in the db
-		while (!query_is_full(results, limit)) {
+		while (!query_is_full(results)) {
 			ptsid = (struct ndb_u64_ts *)k.mv_data;
 			if (ptsid->u64 != kind)
 				break;
@@ -5097,95 +5122,172 @@ static const char *ndb_query_plan_name(enum ndb_query_plan plan_id)
 	return "unknown";
 }
 
-static int ndb_query_filter(struct ndb_txn *txn, struct ndb_filter *filter,
-			    struct ndb_query_result *res, int capacity,
-			    int *results_out)
+/* Fill an ndb_query_state with the correct limit depending on the 
+ * result capacity and filter limit.
+ *
+ * The behavior is slightly different depending on whether its a standard
+ * query or visitor query.
+ *
+ * Standard queries have a capacity, so we modify the limit based on this if
+ * needed.
+ *
+ * For visitor queries, no capacity is needed, so it will be NULL. In this
+ * case, we only use the filter limit to limit visitor queries. If there is
+ * no limit, the visitor will scan over everything matching the query.
+ */
+static void ndb_query_state_fill_limit(
+		struct ndb_query_state *state,
+		struct ndb_filter *filter,
+		int *result_capacity)
 {
-	struct ndb_query_results results;
-	uint64_t limit, *pint;
+	uint64_t *pint;
+
+	pint = ndb_filter_get_int(filter, NDB_FILTER_LIMIT);
+
+	/* default: visitor = unbounded (0), standard = bounded by capacity */
+	state->limit = result_capacity ? (uint64_t)(*result_capacity) : 0;
+
+	/* filter limit: 0 means "no limit" (don't clamp) */
+	if (pint && *pint != 0) {
+		state->limit = result_capacity
+			     ? (uint64_t)min(*result_capacity, (int)*pint)
+			     : *pint;
+ 	}
+}
+
+/* build an initial query state for a normal nostrdb query */
+static void ndb_query_state_make_query(
+		struct ndb_query_state *state,
+		struct ndb_filter *filter,
+		struct ndb_query_result *results,
+		int capacity)
+{
+
+	state->type = NDB_QUERY_TYPE_STANDARD;
+	state->query.capacity = capacity;
+
+	ndb_query_state_fill_limit(state, filter, &capacity);
+
+	/* build our safe results buffer based on the filled in limit */
+	make_cursor((unsigned char *)results,
+		    ((unsigned char *)results) + state->limit * sizeof(*results),
+		    &state->query.results.cur);
+}
+
+/* build an initial query state for folds/visitors */
+static void ndb_query_state_make_visitor(
+		struct ndb_query_state *state,
+		struct ndb_filter *filter,
+		ndb_visitor_fn visitor,
+		void *ctx)
+{
+	state->type = NDB_QUERY_TYPE_VISITOR;
+	state->visitor.done = 0;
+	state->visitor.visited = 0;
+	state->visitor.visitor = visitor;
+	state->visitor.ctx = ctx;
+
+	ndb_query_state_fill_limit(state, filter, NULL);
+}
+
+static int ndb_query_filter(struct ndb_txn *txn, struct ndb_filter *filter,
+			    struct ndb_query_state *state)
+{
 	enum ndb_query_plan plan;
-	limit = capacity;
-
-	if ((pint = ndb_filter_get_int(filter, NDB_FILTER_LIMIT)))
-		limit = *pint;
-
-	limit = min(capacity, limit);
-	make_cursor((unsigned char *)res,
-		    ((unsigned char *)res) + limit * sizeof(*res),
-		    &results.cur);
 
 	plan = ndb_filter_plan(filter);
 	ndb_debug("using query plan '%s'\n", ndb_query_plan_name(plan));
 	switch (plan) {
 	// We have a list of ids, just open a cursor and jump to each once
 	case NDB_PLAN_IDS:
-		if (!ndb_query_plan_execute_ids(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_ids(txn, filter, state))
 			return 0;
 		break;
 	case NDB_PLAN_RELAY_KINDS:
-		if (!ndb_query_plan_execute_relay_kinds(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_relay_kinds(txn, filter, state))
 			return 0;
 		break;
 	case NDB_PLAN_SEARCH:
-		if (!ndb_query_plan_execute_search(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_search(txn, filter, state))
 			return 0;
 		break;
 
 	case NDB_PLAN_PROFILE_SEARCH:
-		if (!ndb_query_plan_execute_profile_search(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_profile_search(txn, filter, state))
 			return 0;
 		break;
 
 	// We have just kinds, just scan the kind index
 	case NDB_PLAN_KINDS:
-		if (!ndb_query_plan_execute_kinds(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_kinds(txn, filter, state))
 			return 0;
 		break;
 	case NDB_PLAN_TAGS:
-		if (!ndb_query_plan_execute_tags(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_tags(txn, filter, state))
 			return 0;
 		break;
 	case NDB_PLAN_CREATED:
-		if (!ndb_query_plan_execute_created_at(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_created_at(txn, filter, state))
 			return 0;
 		break;
 	case NDB_PLAN_AUTHORS:
-		if (!ndb_query_plan_execute_authors(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_authors(txn, filter, state))
 			return 0;
 		break;
 	case NDB_PLAN_AUTHOR_KINDS:
-		if (!ndb_query_plan_execute_author_kinds(txn, filter, &results, limit))
+		if (!ndb_query_plan_execute_author_kinds(txn, filter, state))
 			return 0;
 		break;
 	}
 
-	*results_out = cursor_count(&results.cur, sizeof(*res));
+	return 1;
+}
+
+int ndb_query_visit(struct ndb_txn *txn,
+		    struct ndb_filter *filters, int num_filters,
+		    ndb_visitor_fn visitor,
+		    void *ctx)
+{
+	int i;
+	struct ndb_query_state state;
+
+	if (num_filters == 0)
+		return 0;
+
+	ndb_query_state_make_visitor(&state, &filters[0], visitor, ctx);
+
+	for (i = 0; i < num_filters; i++) {
+		if (!ndb_query_filter(txn, &filters[i], &state))
+			return 0;
+
+		if (query_is_full(&state))
+			break;
+	}
+
 	return 1;
 }
 
 int ndb_query(struct ndb_txn *txn, struct ndb_filter *filters, int num_filters,
 	      struct ndb_query_result *results, int result_capacity, int *count)
 {
-	int i, out;
-	struct ndb_query_result *p = results;
+	int i;
+	struct ndb_query_state state;
 
-	out = 0;
-	*count = 0;
+	if (num_filters == 0)
+		return 0;
+
+	ndb_query_state_make_query(&state, &filters[0], results, result_capacity);
 
 	for (i = 0; i < num_filters; i++) {
-		if (!ndb_query_filter(txn, &filters[i], p,
-				      result_capacity, &out)) {
+		if (!ndb_query_filter(txn, &filters[i], &state))
 			return 0;
-		}
 
-		*count += out;
-		p += out;
-		result_capacity -= out;
-		if (result_capacity <= 0)
+		if (query_is_full(&state))
 			break;
 	}
 
 	// sort results
+	*count = cursor_count(&state.query.results.cur, sizeof(*results));
 	qsort(results, *count, sizeof(*results), compare_query_results);
 	return 1;
 }
