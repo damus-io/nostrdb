@@ -276,6 +276,14 @@ enum ndb_query_plan {
 	NDB_PLAN_SEARCH,
 	NDB_PLAN_RELAY_KINDS,
 	NDB_PLAN_PROFILE_SEARCH,
+
+	/* The all notes scan is a special case where we have basically an
+	 * empty filter
+	 * This is useful for folds over the entire DB. We can skip the
+	 * expensive (N+1 query) index + lookup note scans. Instead opting to
+	 * simply walk over the notes table.
+	 */
+	NDB_PLAN_ALL_NOTES,
 };
 
 // A id + u64 + timestamp
@@ -4337,6 +4345,39 @@ static int ndb_query_plan_execute_search(struct ndb_txn *txn,
 	return 1;
 }
 
+static int ndb_query_plan_all_notes(struct ndb_txn *txn, struct ndb_query_state *results)
+{
+	MDB_cursor *cur;
+	MDB_dbi db;
+	MDB_val k, v;
+	int rc;
+	struct ndb_query_result res;
+	uint64_t note_id;
+	struct ndb_note *note;
+	size_t note_size;
+
+	db = txn->lmdb->dbs[NDB_DB_NOTE];
+	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur)))
+		return 0;
+
+	rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
+	while (rc == MDB_SUCCESS) {
+		memcpy(&note_id, k.mv_data, sizeof(note_id));
+		note = (struct ndb_note *)v.mv_data;
+		note_size = v.mv_size;
+
+		ndb_query_result_init(&res, note, note_size, note_id);
+		if (!push_query_result(results, &res))
+			break;
+
+		rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+	}
+
+	mdb_cursor_close(cur);
+
+	return 1;
+}
+
 static int ndb_query_plan_execute_ids(struct ndb_txn *txn,
 				      struct ndb_filter *filter,
 				      struct ndb_query_state *results)
@@ -5082,6 +5123,10 @@ next:
 	return 1;
 }
 
+static int filter_is_empty(struct ndb_filter *filter) {
+	return filter->elem_buf.start == NULL;
+}
+
 static enum ndb_query_plan ndb_filter_plan(struct ndb_filter *filter)
 {
 	struct ndb_filter_elements *ids, *kinds, *authors, *tags, *search, *relays;
@@ -5092,6 +5137,9 @@ static enum ndb_query_plan ndb_filter_plan(struct ndb_filter *filter)
 	authors = ndb_filter_find_elements(filter, NDB_FILTER_AUTHORS);
 	tags = ndb_filter_find_elements(filter, NDB_FILTER_TAGS);
 	relays = ndb_filter_find_elements(filter, NDB_FILTER_RELAYS);
+
+	if (filter_is_empty(filter))
+		return NDB_PLAN_ALL_NOTES;
 
 	// profile search
 	if (kinds && kinds->count == 1 && kinds->elements[0] == 0 && search) {
@@ -5130,6 +5178,7 @@ static const char *ndb_query_plan_name(enum ndb_query_plan plan_id)
 		case NDB_PLAN_RELAY_KINDS: return "relay_kinds";
 		case NDB_PLAN_AUTHOR_KINDS: return "author_kinds";
 		case NDB_PLAN_PROFILE_SEARCH: return "profile_search";
+		case NDB_PLAN_ALL_NOTES: return "all_notes";
 	}
 
 	return "unknown";
@@ -5212,6 +5261,10 @@ static int ndb_query_filter(struct ndb_txn *txn, struct ndb_filter *filter,
 	ndb_debug("using query plan '%s'\n", ndb_query_plan_name(plan));
 	switch (plan) {
 	// We have a list of ids, just open a cursor and jump to each once
+	case NDB_PLAN_ALL_NOTES:
+		if (!ndb_query_plan_all_notes(txn, state))
+			return 0;
+		break;
 	case NDB_PLAN_IDS:
 		if (!ndb_query_plan_execute_ids(txn, filter, state))
 			return 0;
