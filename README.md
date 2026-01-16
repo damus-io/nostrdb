@@ -8,6 +8,7 @@ The unfairly fast nostr database backed by lmdb.
 nostrdb stores nostr events as a custom in-memory representation that enables
 zero-copy and O(1) access to all note fields. This is similar to flatbuffers
 but it is custom built for nostr events.
+
 These events are then memory-mapped inside lmdb, enabling insanely fast,
 zero-copy access and querying.
 
@@ -33,7 +34,8 @@ static archive and the libraries nostrdb relies on:
 ```
 cc app.c libnostrdb.a \
   -Isrc -Ideps/lmdb -Ideps/secp256k1/include \
-  -llmdb -lsecp256k1 -lpthread -lzstd
+  deps/lmdb/liblmdb.a deps/secp256k1/.libs/libsecp256k1.a \
+  -lpthread -lzstd
 ```
 
 `/var/lib/nostrdb` is a convenient default path for the LMDB environment, but any
@@ -75,8 +77,6 @@ int main(void) {
         goto cleanup;
 
     struct ndb_filter filter;
-    unsigned char filter_buf[4096];
-
     ndb_filter_init(&filter);
     ndb_filter_start_field(&filter, NDB_FILTER_KINDS);
     ndb_filter_add_int_element(&filter, 1);
@@ -140,8 +140,6 @@ constraints to apply.
 
 ```c
 struct ndb_filter filter;
-unsigned char buf[4096];
-
 ndb_filter_init(&filter);
 ndb_filter_start_field(&filter, NDB_FILTER_IDS);
 ndb_filter_add_id_element(&filter, some_id32);
@@ -228,7 +226,11 @@ struct ndb_keypair keypair;
 ndb_decode_key("nsec1...", &keypair);
 ndb_builder_finalize(&builder, &note, &keypair);
 
-ndb_process_event(db, (const char *)note, builder.note_cur.size);
+// Convert to JSON and ingest
+char json_buf[4096];
+int json_len = ndb_note_json(note, json_buf, sizeof(json_buf));
+if (json_len > 0)
+    ndb_process_event(db, json_buf, json_len);
 ```
 
 Supporting functions include `ndb_calculate_id`, `ndb_sign_id`,
