@@ -34,8 +34,7 @@ static archive and the libraries nostrdb relies on:
 ```
 cc app.c libnostrdb.a \
   -Isrc -Ideps/lmdb -Ideps/secp256k1/include \
-  deps/lmdb/liblmdb.a deps/secp256k1/.libs/libsecp256k1.a \
-  -lpthread -lzstd
+  -llmdb -lsecp256k1 -lpthread -lzstd
 ```
 
 `/var/lib/nostrdb` is a convenient default path for the LMDB environment, but any
@@ -65,6 +64,7 @@ int main(void) {
     if (ndb_init(&db, "/var/lib/nostrdb", &cfg) != 0)
         return 1;
 
+    // Replace "..." with valid hex: id/pubkey (32 bytes), sig (64 bytes)
     const char *ldjson =
         "{\"id\":\"...\",\"pubkey\":\"...\",\"kind\":1,\"content\":\"hello\","
         "\"created_at\":1700000000,\"tags\":[],\"sig\":\"...\"}\n";
