@@ -5,6 +5,11 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <sys/types.h>
+#ifdef _MSC_VER
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
 
 /**
  * base64_maps_t - structure to hold maps for encode/decode
