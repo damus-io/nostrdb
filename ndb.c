@@ -269,7 +269,7 @@ static int resolve_pubkeys(struct ndb_txn *txn, int in_fd, int out_fd)
 int main(int argc, char *argv[])
 {
 	struct ndb *ndb;
-	int i, flags, limit, count, current_field, len, res;
+	int i, flags, limit, count, current_field, res;
 	long nanos;
 	struct ndb_stat stat;
 	struct ndb_txn txn;
@@ -417,8 +417,7 @@ int main(int argc, char *argv[])
 					current_field = NDB_FILTER_IDS;
 				}
 
-				len = strlen(argv[1]);
-				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
+				if (strlen(argv[1]) != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
 					fprintf(stderr, "invalid hex id\n");
 					res = 42;
 					goto cleanup;
@@ -437,7 +436,31 @@ int main(int argc, char *argv[])
 				}
 				current_field = 'e';
 
-				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
+				if (strlen(argv[1]) != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
+					fprintf(stderr, "invalid hex id\n");
+					res = 42;
+					goto cleanup;
+				}
+
+				if (!ndb_filter_add_id_element(f, tmp_id)) {
+					fprintf(stderr, "too many event ids\n");
+					res = 43;
+					goto cleanup;
+				}
+
+				argv += 2;
+				argc -= 2;
+			} else if (!strcmp(argv[0], "-p")) {
+				if (current_field != 'p') {
+					if (!ndb_filter_start_tag_field(f, 'p')) {
+						fprintf(stderr, "field already started\n");
+						res = 44;
+						goto cleanup;
+					}
+				}
+				current_field = 'p';
+
+				if (strlen(argv[1]) != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
 					fprintf(stderr, "invalid hex id\n");
 					res = 42;
 					goto cleanup;
@@ -461,7 +484,7 @@ int main(int argc, char *argv[])
 				}
 				current_field = 'q';
 
-				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
+				if (strlen(argv[1]) != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
 					fprintf(stderr, "invalid hex id\n");
 					res = 42;
 					goto cleanup;
@@ -483,8 +506,7 @@ int main(int argc, char *argv[])
 					current_field = NDB_FILTER_AUTHORS;
 				}
 
-				len = strlen(argv[1]);
-				if (len != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
+				if (strlen(argv[1]) != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
 					fprintf(stderr, "invalid hex pubkey\n");
 					res = 42;
 					goto cleanup;
@@ -551,8 +573,7 @@ int main(int argc, char *argv[])
 			argv++;
 			argc--;
 
-			len = strlen(argv[0]);
-			if (len != 64 || !hex_decode(argv[0], 64, tmp_id, sizeof(tmp_id))) {
+			if (strlen(argv[0]) != 64 || !hex_decode(argv[0], 64, tmp_id, sizeof(tmp_id))) {
 				fprintf(stderr, "invalid --add-key hex pubkey\n");
 				res = 42;
 				goto cleanup;
