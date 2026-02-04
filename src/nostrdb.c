@@ -5217,41 +5217,6 @@ static void ndb_query_state_fill_limit(
  	}
 }
 
-/* build an initial query state for a normal nostrdb query */
-static void ndb_query_state_make_query(
-		struct ndb_query_state *state,
-		struct ndb_filter *filter,
-		struct ndb_query_result *results,
-		int capacity)
-{
-
-	state->type = NDB_QUERY_TYPE_STANDARD;
-	state->query.capacity = capacity;
-
-	ndb_query_state_fill_limit(state, filter, &capacity);
-
-	/* build our safe results buffer based on the filled in limit */
-	make_cursor((unsigned char *)results,
-		    ((unsigned char *)results) + state->limit * sizeof(*results),
-		    &state->query.results.cur);
-}
-
-/* build an initial query state for folds/visitors */
-static void ndb_query_state_make_visitor(
-		struct ndb_query_state *state,
-		struct ndb_filter *filter,
-		ndb_visitor_fn visitor,
-		void *ctx)
-{
-	state->type = NDB_QUERY_TYPE_VISITOR;
-	state->visitor.done = 0;
-	state->visitor.visited = 0;
-	state->visitor.visitor = visitor;
-	state->visitor.ctx = ctx;
-
-	ndb_query_state_fill_limit(state, filter, NULL);
-}
-
 static int ndb_query_filter(struct ndb_txn *txn, struct ndb_filter *filter,
 			    struct ndb_query_state *state)
 {
@@ -5315,19 +5280,30 @@ int ndb_query_visit(struct ndb_txn *txn,
 		    void *ctx)
 {
 	int i;
+	uint64_t visited;
 	struct ndb_query_state state;
 
 	if (num_filters == 0)
 		return 0;
 
-	ndb_query_state_make_visitor(&state, &filters[0], visitor, ctx);
+	state.type = NDB_QUERY_TYPE_VISITOR;
+	state.visitor.done = 0;
+	state.visitor.visited = 0;
+	state.visitor.visitor = visitor;
+	state.visitor.ctx = ctx;
 
 	for (i = 0; i < num_filters; i++) {
+		if (state.visitor.done)
+			break;
+
+		/* update limit for this filter: set to absolute target count */
+		visited = state.visitor.visited;
+		ndb_query_state_fill_limit(&state, &filters[i], NULL);
+		if (state.limit != 0)
+			state.limit += visited;
+
 		if (!ndb_query_filter(txn, &filters[i], &state))
 			return 0;
-
-		if (query_is_full(&state))
-			break;
 	}
 
 	return 1;
@@ -5336,20 +5312,31 @@ int ndb_query_visit(struct ndb_txn *txn,
 int ndb_query(struct ndb_txn *txn, struct ndb_filter *filters, int num_filters,
 	      struct ndb_query_result *results, int result_capacity, int *count)
 {
-	int i;
+	int i, used, remaining;
 	struct ndb_query_state state;
 
 	if (num_filters == 0)
 		return 0;
 
-	ndb_query_state_make_query(&state, &filters[0], results, result_capacity);
+	state.type = NDB_QUERY_TYPE_STANDARD;
+	state.query.capacity = result_capacity;
+	make_cursor((unsigned char *)results,
+		    ((unsigned char *)results) + result_capacity * sizeof(*results),
+		    &state.query.results.cur);
 
 	for (i = 0; i < num_filters; i++) {
+		/* calculate remaining capacity */
+		used = cursor_count(&state.query.results.cur, sizeof(*results));
+		remaining = result_capacity - used;
+		if (remaining <= 0)
+			break;
+
+		/* update limit for this filter: set to absolute target count */
+		ndb_query_state_fill_limit(&state, &filters[i], &remaining);
+		state.limit += used;
+
 		if (!ndb_query_filter(txn, &filters[i], &state))
 			return 0;
-
-		if (query_is_full(&state))
-			break;
 	}
 
 	// sort results
