@@ -31,6 +31,7 @@ static int usage()
 	printf("	stat\n");
 	printf("	query [--kind 42] [--id abcdef...] [--notekey key] [--search term] [--limit 42] \n");
 	printf("	      [-e abcdef...] [--author abcdef... -a bcdef...] [--relay wss://relay.damus.io]\n");
+	printf("	      [--tag <char> <value>]        query by any single-char tag (e.g. --tag d myid)\n");
 	printf("	profile <pubkey>                            print the raw profile data for a pubkey\n");
 	printf("	note-relays <note-id>                       list the relays a given note id has been seen on\n");
 	printf("	print-search-keys\n");
@@ -498,8 +499,50 @@ int main(int argc, char *argv[])
 
 				argv += 2;
 				argc -= 2;
-			} 
-			else if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--author")) {
+			} else if (!strcmp(argv[0], "-T") || !strcmp(argv[0], "--tag")) {
+				// Generic tag query: --tag <char> <value>
+				if (argc < 3) {
+					fprintf(stderr, "--tag requires a tag character and value\n");
+					res = 42;
+					goto cleanup;
+				}
+
+				char tag_char = argv[1][0];
+				if (argv[1][1] != '\0') {
+					fprintf(stderr, "tag must be a single character\n");
+					res = 42;
+					goto cleanup;
+				}
+
+				if (current_field != tag_char) {
+					ndb_filter_end_field(f);
+					if (!ndb_filter_start_tag_field(f, tag_char)) {
+						fprintf(stderr, "failed to start tag field\n");
+						res = 44;
+						goto cleanup;
+					}
+				}
+				current_field = tag_char;
+
+				// Check if value is a 64-char hex string (32-byte ID)
+				if (strlen(argv[2]) == 64 && hex_decode(argv[2], 64, tmp_id, sizeof(tmp_id))) {
+					if (!ndb_filter_add_id_element(f, tmp_id)) {
+						fprintf(stderr, "too many tag values\n");
+						res = 43;
+						goto cleanup;
+					}
+				} else {
+					// Treat as string
+					if (!ndb_filter_add_str_element(f, argv[2])) {
+						fprintf(stderr, "too many tag values\n");
+						res = 43;
+						goto cleanup;
+					}
+				}
+
+				argv += 3;
+				argc -= 3;
+			} else if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--author")) {
 				if (current_field != NDB_FILTER_AUTHORS) {
 					ndb_filter_end_field(f);
 					ndb_filter_start_field(f, NDB_FILTER_AUTHORS);
