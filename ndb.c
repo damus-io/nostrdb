@@ -429,13 +429,14 @@ int main(int argc, char *argv[])
 				argc -= 2;
 			} else if (!strcmp(argv[0], "-e")) {
 				if (current_field != 'e') {
+					ndb_filter_end_field(f);
 					if (!ndb_filter_start_tag_field(f, 'e')) {
-						fprintf(stderr, "field already started\n");
+						fprintf(stderr, "failed to start tag field\n");
 						res = 44;
 						goto cleanup;
 					}
+					current_field = 'e';
 				}
-				current_field = 'e';
 
 				if (strlen(argv[1]) != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
 					fprintf(stderr, "invalid hex id\n");
@@ -453,13 +454,14 @@ int main(int argc, char *argv[])
 				argc -= 2;
 			} else if (!strcmp(argv[0], "-p")) {
 				if (current_field != 'p') {
+					ndb_filter_end_field(f);
 					if (!ndb_filter_start_tag_field(f, 'p')) {
-						fprintf(stderr, "field already started\n");
+						fprintf(stderr, "failed to start tag field\n");
 						res = 44;
 						goto cleanup;
 					}
+					current_field = 'p';
 				}
-				current_field = 'p';
 
 				if (strlen(argv[1]) != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
 					fprintf(stderr, "invalid hex id\n");
@@ -477,13 +479,14 @@ int main(int argc, char *argv[])
 				argc -= 2;
 			} else if (!strcmp(argv[0], "-q")) {
 				if (current_field != 'q') {
+					ndb_filter_end_field(f);
 					if (!ndb_filter_start_tag_field(f, 'q')) {
-						fprintf(stderr, "field already started\n");
+						fprintf(stderr, "failed to start tag field\n");
 						res = 44;
 						goto cleanup;
 					}
+					current_field = 'q';
 				}
-				current_field = 'q';
 
 				if (strlen(argv[1]) != 64 || !hex_decode(argv[1], 64, tmp_id, sizeof(tmp_id))) {
 					fprintf(stderr, "invalid hex id\n");
