@@ -189,6 +189,7 @@ struct ndb_search {
 	struct ndb_search_key *key;
 	uint64_t profile_key;
 	void *cursor; // MDB_cursor *
+	char query[24]; // Original query for prefix matching
 };
 
 // From-client event
