@@ -2522,12 +2522,24 @@ static void test_note_relay_index()
 	assert(ndb_wait_for_notes(ndb, subid, &note_key, 1) == 1);
 	assert(note_key > 0);
 
-	// 4) Check that we have both relays
+	// 4) Check that we have all relays. The relay writes go through the
+	//    writer thread asynchronously, so poll until they're all visible.
+	{
+		int attempts;
+		for (attempts = 0; attempts < 100; attempts++) {
+			assert(ndb_begin_query(ndb, &txn));
+			int got_all =
+				ndb_note_seen_on_relay(&txn, note_key, "wss://relay.damus.io") &&
+				ndb_note_seen_on_relay(&txn, note_key, "wss://relay.mit.edu") &&
+				ndb_note_seen_on_relay(&txn, note_key, "wss://nostr.mom") &&
+				ndb_note_seen_on_relay(&txn, note_key, "ws://monad.jb55.com:8080");
+			ndb_end_query(&txn);
+			if (got_all) break;
+			usleep(10000); // 10ms
+		}
+		assert(attempts < 100);
+	}
 	assert(ndb_begin_query(ndb, &txn));
-	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://relay.damus.io"));
-	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://relay.mit.edu"));
-	assert(ndb_note_seen_on_relay(&txn, note_key, "wss://nostr.mom"));
-	assert(ndb_note_seen_on_relay(&txn, note_key, "ws://monad.jb55.com:8080"));
 
 	// walk the relays
 	struct ndb_note_relay_iterator iter;
