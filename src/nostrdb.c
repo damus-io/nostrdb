@@ -244,6 +244,7 @@ struct ndb_monitor {
 	// subscriptions efficiently without going through a message queue, so
 	// we use a simple mutex here.
 	pthread_mutex_t mutex;
+	pthread_cond_t cond;
 };
 
 struct ndb {
@@ -6840,6 +6841,9 @@ static void ndb_notify_subscriptions(struct ndb_monitor *monitor,
 		}
 	}
 
+	// wake up any threads blocked in ndb_wait_for_notes
+	pthread_cond_broadcast(&monitor->cond);
+
 	ndb_monitor_unlock(monitor);
 }
 
@@ -7557,6 +7561,7 @@ static void ndb_monitor_init(struct ndb_monitor *monitor, ndb_sub_fn cb,
 	monitor->sub_cb = cb;
 	monitor->sub_cb_ctx = sub_cb_ctx;
 	pthread_mutex_init(&monitor->mutex, NULL);
+	pthread_cond_init(&monitor->cond, NULL);
 }
 
 void ndb_filter_group_destroy(struct ndb_filter_group *group)
@@ -7593,6 +7598,7 @@ static void ndb_monitor_destroy(struct ndb_monitor *monitor)
 	ndb_monitor_unlock(monitor);
 
 	pthread_mutex_destroy(&monitor->mutex);
+	pthread_cond_destroy(&monitor->cond);
 }
 
 int ndb_init(struct ndb **pndb, const char *filename, const struct ndb_config *config)
@@ -10007,30 +10013,35 @@ int ndb_poll_for_notes(struct ndb *ndb, uint64_t subid, uint64_t *note_ids,
 int ndb_wait_for_notes(struct ndb *ndb, uint64_t subid, uint64_t *note_ids,
                        int note_id_capacity)
 {
+	int res;
 	struct ndb_subscription *sub;
-	struct prot_queue *queue_inbox;
 
-        // this is not a valid subscription id
+	// this is not a valid subscription id
 	if (subid == 0)
 		return 0;
 
 	ndb_monitor_lock(&ndb->monitor);
 
-        if (!(sub = ndb_monitor_find_subscription(&ndb->monitor, subid, NULL))) {
-		ndb_monitor_unlock(&ndb->monitor);
-		return 0;
-	}
+	for (;;) {
+		sub = ndb_monitor_find_subscription(&ndb->monitor,
+						    subid, NULL);
+		if (!sub) {
+			res = 0;
+			break;
+		}
 
-	queue_inbox = &sub->inbox;
+		res = prot_queue_try_pop_all(&sub->inbox, note_ids,
+					     note_id_capacity);
+		if (res > 0)
+			break;
+
+		// nothing available yet — wait for the writer to signal
+		pthread_cond_wait(&ndb->monitor.cond, &ndb->monitor.mutex);
+	}
 
 	ndb_monitor_unlock(&ndb->monitor);
 
-	// there is technically a race condition if the thread yeilds at this
-	// comment and a subscription is added/removed. A deadlock in the
-	// writer queue would be much worse though. This function is dubious
-	// anyways.
-
-        return prot_queue_pop_all(queue_inbox, note_ids, note_id_capacity);
+	return res;
 }
 
 int ndb_unsubscribe(struct ndb *ndb, uint64_t subid)
