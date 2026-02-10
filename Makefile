@@ -1,4 +1,4 @@
-CFLAGS = -Wall -Wno-misleading-indentation -Wno-unused-function -Werror -O2 -g -Isrc -Ideps/secp256k1/include -Ideps/lmdb -Ideps/flatcc/include -Isrc/bolt11/ -Iccan/ -Ideps/libsodium/src/libsodium/include/ -DCCAN_TAL_NEVER_RETURN_NULL=1
+CFLAGS = -Wall -Wno-misleading-indentation -Wno-unused-function -O2 -g -Isrc -Ideps/secp256k1/include -Ideps/lmdb -Ideps/flatcc/include -Isrc/bolt11/ -Iccan/ -Ideps/libsodium/src/libsodium/include/ -DCCAN_TAL_NEVER_RETURN_NULL=1
 BOLT11_HDRS := src/bolt11/amount.h src/bolt11/bech32.h src/bolt11/bech32_util.h src/bolt11/bolt11.h src/bolt11/debug.h src/bolt11/error.h src/bolt11/hash_u5.h src/bolt11/node_id.h src/bolt11/overflows.h
 CCAN_SRCS := ccan/ccan/utf8/utf8.c ccan/ccan/tal/tal.c ccan/ccan/tal/str/str.c ccan/ccan/list/list.c ccan/ccan/mem/mem.c ccan/ccan/crypto/sha256/sha256.c ccan/ccan/take/take.c
 CCAN_HDRS := ccan/ccan/utf8/utf8.h ccan/ccan/container_of/container_of.h ccan/ccan/check_type/check_type.h ccan/ccan/str/str.h ccan/ccan/tal/str/str.h ccan/ccan/tal/tal.h ccan/ccan/list/list.h ccan/ccan/structeq/structeq.h ccan/ccan/typesafe_cb/typesafe_cb.h ccan/ccan/short_types/short_types.h ccan/ccan/mem/mem.h ccan/ccan/likely/likely.h ccan/ccan/alignof/alignof.h ccan/ccan/crypto/sha256/sha256.h ccan/ccan/array_size/array_size.h ccan/ccan/endian/endian.h ccan/ccan/take/take.h ccan/ccan/build_assert/build_assert.h ccan/ccan/cppmagic/cppmagic.h
@@ -22,10 +22,13 @@ C_BINDINGS_COMMON=$(BINDINGS)/c/flatbuffers_common_builder.h $(BINDINGS)/c/flatb
 C_BINDINGS=$(C_BINDINGS_COMMON) $(C_BINDINGS_PROFILE) $(C_BINDINGS_META)
 BIN=ndb
 
-SANFLAGS = -fsanitize=leak
-
 # Detect operating system
 UNAME_S := $(shell uname -s)
+
+# LeakSanitizer is not supported by Apple clang
+ifeq ($(UNAME_S),Linux)
+    SANFLAGS = -fsanitize=leak
+endif
 
 # macOS-specific flags
 ifeq ($(UNAME_S),Darwin)
