@@ -5312,36 +5312,96 @@ int ndb_query_visit(struct ndb_txn *txn,
 int ndb_query(struct ndb_txn *txn, struct ndb_filter *filters, int num_filters,
 	      struct ndb_query_result *results, int result_capacity, int *count)
 {
-	int i, used, remaining;
+	int i, total, dst, cap, ok;
 	struct ndb_query_state state;
+	struct ndb_query_result *tmp, *buf;
+	int *counts;
 
 	if (num_filters == 0)
 		return 0;
 
-	state.type = NDB_QUERY_TYPE_STANDARD;
-	state.query.capacity = result_capacity;
-	make_cursor((unsigned char *)results,
-		    ((unsigned char *)results) + result_capacity * sizeof(*results),
-		    &state.query.results.cur);
+	/* single filter: run directly into output buffer */
+	if (num_filters == 1) {
+		state.type = NDB_QUERY_TYPE_STANDARD;
+		state.query.capacity = result_capacity;
+		make_cursor((unsigned char *)results,
+			    ((unsigned char *)results) +
+			    result_capacity * sizeof(*results),
+			    &state.query.results.cur);
 
-	for (i = 0; i < num_filters; i++) {
-		/* calculate remaining capacity */
-		used = cursor_count(&state.query.results.cur, sizeof(*results));
-		remaining = result_capacity - used;
-		if (remaining <= 0)
-			break;
+		ndb_query_state_fill_limit(&state, &filters[0],
+					   &result_capacity);
 
-		/* update limit for this filter: set to absolute target count */
-		ndb_query_state_fill_limit(&state, &filters[i], &remaining);
-		state.limit += used;
-
-		if (!ndb_query_filter(txn, &filters[i], &state))
+		if (!ndb_query_filter(txn, &filters[0], &state))
 			return 0;
+
+		*count = cursor_count(&state.query.results.cur,
+				      sizeof(*results));
+		qsort(results, *count, sizeof(*results),
+		      compare_query_results);
+		return 1;
 	}
 
-	// sort results
-	*count = cursor_count(&state.query.results.cur, sizeof(*results));
-	qsort(results, *count, sizeof(*results), compare_query_results);
+	/* multi-filter: run each filter into its own buffer, then merge
+	 * the results by created_at so that every filter gets a fair
+	 * chance to contribute */
+	tmp = malloc(num_filters * result_capacity * sizeof(*tmp));
+	counts = calloc(num_filters, sizeof(int));
+	if (!tmp || !counts) {
+		free(tmp);
+		free(counts);
+		return 0;
+	}
+
+	ok = 1;
+	for (i = 0; i < num_filters; i++) {
+		buf = tmp + i * result_capacity;
+		cap = result_capacity;
+
+		state.type = NDB_QUERY_TYPE_STANDARD;
+		state.query.capacity = cap;
+		make_cursor((unsigned char *)buf,
+			    ((unsigned char *)buf) + cap * sizeof(*buf),
+			    &state.query.results.cur);
+
+		ndb_query_state_fill_limit(&state, &filters[i], &cap);
+
+		if (!ndb_query_filter(txn, &filters[i], &state)) {
+			ok = 0;
+			break;
+		}
+
+		counts[i] = cursor_count(&state.query.results.cur,
+					 sizeof(*buf));
+	}
+
+	if (!ok) {
+		free(tmp);
+		free(counts);
+		return 0;
+	}
+
+	/* compact: remove gaps between per-filter result slabs */
+	total = counts[0];
+	dst = counts[0];
+	for (i = 1; i < num_filters; i++) {
+		if (counts[i] > 0) {
+			buf = tmp + i * result_capacity;
+			memmove(tmp + dst, buf, counts[i] * sizeof(*tmp));
+			dst += counts[i];
+			total += counts[i];
+		}
+	}
+
+	/* sort all results by created_at descending */
+	qsort(tmp, total, sizeof(*tmp), compare_query_results);
+
+	/* copy top results into output */
+	*count = total < result_capacity ? total : result_capacity;
+	memcpy(results, tmp, *count * sizeof(*results));
+
+	free(tmp);
+	free(counts);
 	return 1;
 }
 
