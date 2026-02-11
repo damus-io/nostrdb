@@ -84,13 +84,6 @@ typedef int (*ndb_migrate_fn)(struct ndb_txn *);
 typedef int (*ndb_word_parser_fn)(void *, const char *word, int word_len,
 				  int word_index);
 
-/* parsed nip10 reply data */
-struct ndb_note_reply {
-	unsigned char *root;
-	unsigned char *reply;
-	unsigned char *mention;
-};
-
 // these must be byte-aligned, they are directly accessing the serialized data
 // representation
 #pragma pack(push, 1)
@@ -2075,7 +2068,7 @@ static unsigned char *ndb_note_last_id_tag(struct ndb_note *note, char type)
 	return last;
 }
 
-/* get reply information from a note */
+/* parse NIP-10 reply data from e tags */
 static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_reply)
 {
 	unsigned char *root, *reply, *mention, *id;
@@ -2140,7 +2133,23 @@ static void ndb_parse_reply(struct ndb_note *note, struct ndb_note_reply *note_r
 	note_reply->mention = mention;
 }
 
-static int ndb_is_reply_to_root(struct ndb_note_reply *reply)
+/* get reply information from a note, with NIP-22 uppercase E tag support */
+void ndb_note_get_reply(struct ndb_note *note, struct ndb_note_reply *note_reply)
+{
+	unsigned char *e_root;
+
+	ndb_parse_reply(note, note_reply);
+
+	/* NIP-22: uppercase E tag overrides root */
+	e_root = ndb_note_last_id_tag(note, 'E');
+	if (e_root) {
+		if (note_reply->root && !note_reply->reply)
+			note_reply->reply = note_reply->root;
+		note_reply->root = e_root;
+	}
+}
+
+int ndb_note_reply_is_to_root(struct ndb_note_reply *reply)
 {
 	if (reply->root && !reply->reply)
 		return 1;
@@ -2197,12 +2206,12 @@ int ndb_count_replies(struct ndb_txn *txn, const unsigned char *note_id, uint16_
 			break;
 		if (!(note = ndb_get_note_by_key(txn, note_key, &size)))
 			continue;
-		if (ndb_note_kind(note) != 1)
+		if (ndb_note_kind(note) != 1 && ndb_note_kind(note) != 1111)
 			continue;
 
-		ndb_parse_reply(note, &reply);
+		ndb_note_get_reply(note, &reply);
 
-		if (ndb_is_reply_to_root(&reply)) {
+		if (ndb_note_reply_is_to_root(&reply)) {
 			reply_id = reply.root;
 		} else {
 			reply_id = reply.reply;
@@ -6364,8 +6373,8 @@ static void ndb_process_note_stats(
 		ndb_increment_quote_metadata(txn, quoted_note_id, scratch, scratch_size);
 	}
 
-	ndb_parse_reply(note, &reply);
-	if (ndb_is_reply_to_root(&reply)) {
+	ndb_note_get_reply(note, &reply);
+	if (ndb_note_reply_is_to_root(&reply)) {
 		reply_id = reply.root;
 	} else {
 		reply_id = reply.reply;
@@ -6486,8 +6495,8 @@ static uint64_t ndb_write_note(secp256k1_context *secp,
 	if (ndb_relay_kind_key_init(&relay_key, note_key, kind, ndb_note_created_at(note->note), note->relay))
 		ndb_write_note_relay_indexes(txn, &relay_key);
 
-	// only parse content and do fulltext index on text and longform notes
-	if (kind == 1 || kind == 30023) {
+	// only parse content and do fulltext index on text, longform, and comment notes
+	if (kind == 1 || kind == 30023 || kind == 1111) {
 		if (!ndb_flag_set(ndb_flags, NDB_FLAG_NO_FULLTEXT)) {
 			if (!ndb_write_note_fulltext_index(txn, note->note, note_key))
 				return 0;
@@ -9823,6 +9832,7 @@ enum ndb_common_kind ndb_kind_to_common_kind(int kind)
 		case 30000: return NDB_CKIND_LIST;
 		case 30023: return NDB_CKIND_LONGFORM;
 		case 30315: return NDB_CKIND_STATUS;
+		case 1111:  return NDB_CKIND_COMMENT;
 	}
 
 	return -1;
@@ -9846,6 +9856,7 @@ const char *ndb_kind_name(enum ndb_common_kind ck)
 		case NDB_CKIND_LIST:         return "list";
 		case NDB_CKIND_LONGFORM:     return "longform";
 		case NDB_CKIND_STATUS:       return "status";
+		case NDB_CKIND_COMMENT:      return "comment";
 		case NDB_CKIND_COUNT:        return "unknown";
 	}
 
