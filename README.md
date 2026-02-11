@@ -49,6 +49,12 @@ settings
 
 ### Building
 
+#### Dependencies required
+
+- autoconf
+- libtool
+
+
 ```bash
 $ make ndb
 ```
