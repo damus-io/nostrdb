@@ -3646,11 +3646,17 @@ int ndb_search_profile(struct ndb_txn *txn, struct ndb_search *search, const cha
 	int rc;
 	struct ndb_search_key s;
 	MDB_val k, v;
+	size_t query_len;
 	search->cursor = NULL;
 
 	MDB_cursor **cursor = (MDB_cursor **)&search->cursor;
 
 	ndb_make_search_key_low(&s, query);
+
+	// Store the lowercased query for prefix matching in subsequent calls
+	lowercase_strncpy(search->query, query, sizeof(search->query) - 1);
+	search->query[sizeof(search->query) - 1] = '\0';
+	query_len = strlen(search->query);
 
 	k.mv_data = &s;
 	k.mv_size = sizeof(s);
@@ -3671,6 +3677,11 @@ int ndb_search_profile(struct ndb_txn *txn, struct ndb_search *search, const cha
 		search->key = k.mv_data;
 		assert(v.mv_size == 8);
 		search->profile_key = *((uint64_t*)v.mv_data);
+
+		// Verify the first result matches the query prefix
+		if (strncmp(search->key->search, search->query, query_len) != 0) {
+			goto cleanup;
+		}
 		return 1;
 	}
 
@@ -3691,10 +3702,12 @@ int ndb_search_profile_next(struct ndb_search *search)
 	int rc;
 	MDB_val k, v;
 	unsigned char *init_id;
+	size_t query_len;
 
 	init_id = search->key->id;
 	k.mv_data = search->key;
 	k.mv_size = sizeof(*search->key);
+	query_len = strlen(search->query);
 
 retry:
 	if ((rc = mdb_cursor_get(search->cursor, &k, &v, MDB_NEXT))) {
@@ -3705,6 +3718,11 @@ retry:
 		search->key = k.mv_data;
 		assert(v.mv_size == 8);
 		search->profile_key = *((uint64_t*)v.mv_data);
+
+		// Check if this result still matches the query prefix
+		if (strncmp(search->key->search, search->query, query_len) != 0) {
+			return 0;
+		}
 
 		// skip duplicate pubkeys
 		if (!memcmp(init_id, search->key->id, 32))
