@@ -280,6 +280,7 @@ enum ndb_common_kind {
 	NDB_CKIND_LIST,
 	NDB_CKIND_LONGFORM,
 	NDB_CKIND_STATUS,
+	NDB_CKIND_COMMENT,
 	NDB_CKIND_COUNT, // should always be last
 };
 
@@ -760,6 +761,14 @@ uint16_t *ndb_note_flags(struct ndb_note *);
 int ndb_note_is_rumor(struct ndb_note *note);
 unsigned char *ndb_note_rumor_receiver_pubkey(struct ndb_note *note);
 unsigned char *ndb_note_rumor_giftwrap_id(struct ndb_note *note);
+
+struct ndb_note_reply {
+	unsigned char *root;
+	unsigned char *reply;
+	unsigned char *mention;
+};
+void ndb_note_get_reply(struct ndb_note *note, struct ndb_note_reply *reply);
+int ndb_note_reply_is_to_root(struct ndb_note_reply *reply);
 
 /// write the note as json to a buffer
 int ndb_note_json(struct ndb_note *, char *buf, int buflen);
