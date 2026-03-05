@@ -610,6 +610,38 @@ static void lowercase_strncpy(char *dst, const char *src, int n) {
 	}
 }
 
+static int ndb_strncasecmp(const char *a, const char *b, size_t n)
+{
+	size_t i;
+	for (i = 0; i < n; i++) {
+		int ca = tolower((unsigned char)a[i]);
+		int cb = tolower((unsigned char)b[i]);
+		if (ca != cb)
+			return ca - cb;
+		if (ca == '\0')
+			return 0;
+	}
+	return 0;
+}
+
+static const char *ndb_strcasestr(const char *haystack, const char *needle)
+{
+	size_t nlen;
+
+	if (!haystack || !needle)
+		return NULL;
+
+	nlen = strlen(needle);
+	if (nlen == 0)
+		return haystack;
+
+	for (; *haystack; haystack++) {
+		if (ndb_strncasecmp(haystack, needle, nlen) == 0)
+			return haystack;
+	}
+	return NULL;
+}
+
 static inline int ndb_filter_elem_is_ptr(struct ndb_filter_field *field) {
 	return field->elem_type == NDB_ELEMENT_STRING || field->elem_type == NDB_ELEMENT_ID;
 }
@@ -1628,6 +1660,18 @@ static int ndb_write_profile_search_word_indices(struct ndb_txn *txn,
 								    profile_key))
 					return 0;
 			}
+		}
+	}
+
+	// write per-camelCase-boundary indices
+	// "TheGrinder" -> also index from 'G' boundary -> "grinder"
+	for (p = name; *p && *(p + 1); p++) {
+		if (islower((unsigned char)*p) && isupper((unsigned char)*(p + 1))) {
+			ndb_make_search_key(index, note->pubkey,
+					    note->created_at, p + 1);
+			if (!ndb_write_profile_search_index(txn, index,
+							    profile_key))
+				return 0;
 		}
 	}
 
@@ -4937,6 +4981,77 @@ next:
 	return 1;
 }
 
+static int ndb_profile_search_contains_fallback(
+		struct ndb_txn *txn,
+		const char *search,
+		unsigned char *filter_pubkey,
+		struct ndb_filter *note_filter,
+		struct ndb_query_state *results,
+		unsigned char found_pubkeys[][32],
+		int *num_found)
+{
+	int rc, j, already_found;
+	MDB_cursor *cur;
+	MDB_val k, v;
+	void *profile_root;
+	NdbProfileRecord_table_t record;
+	NdbProfile_table_t profile;
+	struct ndb_note *note;
+	const char *name, *display_name;
+	uint64_t note_key;
+	size_t len;
+
+	if ((rc = mdb_cursor_open(txn->mdb_txn,
+				  txn->lmdb->dbs[NDB_DB_PROFILE], &cur))) {
+		return 0;
+	}
+
+	while (!query_is_full(results) &&
+	       mdb_cursor_get(cur, &k, &v, MDB_NEXT) == 0) {
+		profile_root = v.mv_data;
+		record = NdbProfileRecord_as_root(profile_root);
+		note_key = NdbProfileRecord_note_key(record);
+		note = ndb_get_note_by_key(txn, note_key, &len);
+		if (!note)
+			continue;
+
+		// skip pubkeys already seen (index phase or earlier fallback hits)
+		already_found = 0;
+		for (j = 0; j < *num_found; j++) {
+			if (!memcmp(note->pubkey, found_pubkeys[j], 32)) {
+				already_found = 1;
+				break;
+			}
+		}
+		if (already_found)
+			continue;
+
+		profile = NdbProfileRecord_profile_get(record);
+		name = NdbProfile_name_get(profile);
+		display_name = NdbProfile_display_name_get(profile);
+
+		if ((name && ndb_strcasestr(name, search)) ||
+		    (display_name && ndb_strcasestr(display_name, search))) {
+			// record pubkey before emitting to prevent
+			// duplicate profile rows from re-entering
+			if (*num_found < 64)
+				memcpy(found_pubkeys[(*num_found)++],
+				       note->pubkey, 32);
+
+			memcpy(filter_pubkey, note->pubkey, 32);
+			if (!ndb_query_plan_execute_author_kinds(txn,
+								 note_filter,
+								 results)) {
+				mdb_cursor_close(cur);
+				return 0;
+			}
+		}
+	}
+
+	mdb_cursor_close(cur);
+	return 1;
+}
+
 static int ndb_query_plan_execute_profile_search(
 		struct ndb_txn *txn,
 		struct ndb_filter *filter,
@@ -4952,8 +5067,20 @@ static int ndb_query_plan_execute_profile_search(
 	struct ndb_search profile_search;
 	struct ndb_filter note_filter, *f = &note_filter;
 
+	// track pubkeys found by index phase for dedup
+	unsigned char found_pubkeys[64][32];
+	int num_found = 0;
+
+	// lowercased query for prefix comparison
+	char lowered_query[sizeof(((struct ndb_search_key *)0)->search)];
+	int query_len;
+
 	if (!(search = ndb_filter_find_search(filter)))
 		return 0;
+
+	lowercase_strncpy(lowered_query, search, sizeof(lowered_query) - 1);
+	lowered_query[sizeof(lowered_query) - 1] = '\0';
+	query_len = strlen(lowered_query);
 
 	if (!ndb_filter_init_with(f, 1))
 		return 0;
@@ -4986,8 +5113,18 @@ static int ndb_query_plan_execute_profile_search(
 				break;
 		}
 
+		// stop when index entries no longer prefix-match the query
+		if (strncmp(profile_search.key->search, lowered_query,
+			    query_len) != 0)
+			break;
+
 		// Copy pubkey into filter
 		memcpy(filter_pubkey, profile_search.key->id, 32);
+
+		// record pubkey for dedup with fallback
+		if (num_found < 64)
+			memcpy(found_pubkeys[num_found++],
+			       profile_search.key->id, 32);
 
 		// Look up the corresponding note associated with that pubkey
 		if (!ndb_query_plan_execute_author_kinds(txn, f, results))
@@ -4995,6 +5132,17 @@ static int ndb_query_plan_execute_profile_search(
 	}
 
 	ndb_search_profile_end(&profile_search);
+
+	// if index phase didn't fill results, run linear fallback
+	if (!query_is_full(results)) {
+		if (!ndb_profile_search_contains_fallback(txn, search,
+							  filter_pubkey, f,
+							  results,
+							  found_pubkeys,
+							  &num_found))
+			goto fail;
+	}
+
 	ndb_filter_destroy(f);
 	return 1;
 

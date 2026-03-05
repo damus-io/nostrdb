@@ -1137,6 +1137,38 @@ static void test_profile_word_search(struct ndb *ndb)
 	ndb_end_query(&txn);
 }
 
+// test that a mid-name prefix query finds the profile via the full-name
+// index entry. "selenej" prefix-matches "selenejin" (the lowercased
+// full name "SeleneJin"). This does NOT exercise camelCase boundary
+// splitting — see test_profile_camelcase_standalone for that.
+static void test_profile_fullname_prefix_search(struct ndb *ndb)
+{
+	struct ndb_txn txn;
+	struct ndb_search search;
+	const char *name;
+	NdbProfile_table_t profile;
+	int found;
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_search_profile(&txn, &search, "selenej"));
+
+	found = 0;
+	do {
+		profile = lookup_profile(&txn, search.profile_key);
+		name = NdbProfile_name_get(profile);
+
+		if (name && strstr(name, "Selene")) {
+			found = 1;
+			break;
+		}
+	} while (ndb_search_profile_next(&search));
+
+	assert(found);
+
+	ndb_search_profile_end(&search);
+	ndb_end_query(&txn);
+}
+
 static void test_load_profiles()
 {
 	static const int alloc_size = 1024 * 1024;
@@ -1170,6 +1202,7 @@ static void test_load_profiles()
 
 	test_profile_search(ndb);
 	test_profile_word_search(ndb);
+	test_profile_fullname_prefix_search(ndb);
 
 	ndb_destroy(ndb);
 
@@ -2751,6 +2784,49 @@ static void test_note_relay_index()
 	printf("ok test_note_relay_index\n");
 }
 
+static void test_profile_camelcase_standalone() {
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_config config;
+	struct ndb_filter filter, *f = &filter;
+	int count;
+	struct ndb_query_result result;
+
+	delete_test_db();
+	ndb_default_config(&config);
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	// kind-0 profile with name "TheGrinder" (no spaces anywhere)
+	const char ev[] = "[\"EVENT\",{\"id\": \"0000000000000000000000000000000000000000000000000000000000000001\",\"pubkey\": \"0000000000000000000000000000000000000000000000000000000000000002\",\"created_at\": 1700000000,\"kind\": 0,\"tags\": [],\"content\": \"{\\\"name\\\":\\\"TheGrinder\\\"}\",\"sig\": \"0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"}]";
+
+	assert(ndb_process_client_event(ndb, ev, sizeof(ev)));
+
+	// wait for ingestion
+	sleep(1);
+
+	// now search for "grinder" — should find "TheGrinder" via camelCase split
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_SEARCH));
+	assert(ndb_filter_add_str_element(f, "grinder"));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 0));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_query(&txn, f, 1, &result, 1, &count));
+	ndb_end_query(&txn);
+
+	assert(count == 1);
+
+	ndb_filter_destroy(f);
+	ndb_destroy(ndb);
+
+	printf("ok test_profile_camelcase_standalone\n");
+}
+
 static void test_nip50_profile_search() {
 	struct ndb *ndb;
 	struct ndb_txn txn;
@@ -2996,6 +3072,8 @@ int main(int argc, const char *argv[]) {
 	test_fetch_last_noteid();
 
 	test_timeline_query();
+
+	test_profile_camelcase_standalone();
 
 	// fulltext
 	test_fulltext();
