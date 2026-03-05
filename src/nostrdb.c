@@ -1600,6 +1600,40 @@ static int ndb_write_profile_search_index(struct ndb_txn *txn,
 }
 
 
+// write search index entries for each word in a name so that
+// "The Fishcake" is findable by searching "fishcake"
+static int ndb_write_profile_search_word_indices(struct ndb_txn *txn,
+						 struct ndb_search_key *index,
+						 struct ndb_note *note,
+						 uint64_t profile_key,
+						 const char *name)
+{
+	const char *p;
+
+	// write full name index
+	ndb_make_search_key(index, note->pubkey, note->created_at, name);
+	if (!ndb_write_profile_search_index(txn, index, profile_key))
+		return 0;
+
+	// write per-word indices starting from each subsequent word
+	for (p = name; *p; p++) {
+		if (isspace((unsigned char)*p)) {
+			// skip runs of whitespace
+			while (*(p + 1) && isspace((unsigned char)*(p + 1)))
+				p++;
+			if (*(p + 1)) {
+				ndb_make_search_key(index, note->pubkey,
+						    note->created_at, p + 1);
+				if (!ndb_write_profile_search_index(txn, index,
+								    profile_key))
+					return 0;
+			}
+		}
+	}
+
+	return 1;
+}
+
 // map usernames and display names to profile keys for user searching
 static int ndb_write_profile_search_indices(struct ndb_txn *txn,
 					    struct ndb_note *note,
@@ -1616,22 +1650,20 @@ static int ndb_write_profile_search_indices(struct ndb_txn *txn,
 	const char *name = NdbProfile_name_get(profile);
 	const char *display_name = NdbProfile_display_name_get(profile);
 
-	// words + pubkey + created
 	if (name) {
-		ndb_make_search_key(&index, note->pubkey, note->created_at,
-				    name);
-		if (!ndb_write_profile_search_index(txn, &index, profile_key))
+		if (!ndb_write_profile_search_word_indices(txn, &index, note,
+							   profile_key, name))
 			return 0;
 	}
 
 	if (display_name) {
 		// don't write the same name/display_name twice
-		if (name && !strcmp(display_name, name)) {
+		if (name && !strcmp(display_name, name))
 			return 1;
-		}
-		ndb_make_search_key(&index, note->pubkey, note->created_at,
-				    display_name);
-		if (!ndb_write_profile_search_index(txn, &index, profile_key))
+
+		if (!ndb_write_profile_search_word_indices(txn, &index, note,
+							   profile_key,
+							   display_name))
 			return 0;
 	}
 
@@ -2896,12 +2928,24 @@ static int ndb_migrate_utf8_profile_names(struct ndb_txn *txn)
 	return ret;
 }
 
+static int ndb_migrate_word_search_indices(struct ndb_txn *txn)
+{
+	// drop and rebuild search index with per-word entries
+	if (mdb_drop(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_PROFILE_SEARCH], 0)) {
+		fprintf(stderr, "ndb_migrate_word_search_indices: mdb_drop failed\n");
+		return 0;
+	}
+
+	return ndb_migrate_user_search_indices(txn);
+}
+
 static struct ndb_migration MIGRATIONS[] = {
 	{ .fn = ndb_migrate_user_search_indices },
 	{ .fn = ndb_migrate_lower_user_search_indices },
 	{ .fn = ndb_migrate_utf8_profile_names },
 	{ .fn = ndb_migrate_profile_indices },
 	{ .fn = ndb_migrate_metadata },
+	{ .fn = ndb_migrate_word_search_indices },
 };
 
 

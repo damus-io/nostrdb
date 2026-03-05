@@ -1105,6 +1105,38 @@ static void test_profile_updates()
 	free(json);
 }
 
+// test that searching a non-first word in a display name finds the profile.
+// "Selene Jin" should be findable by searching "jin"
+static void test_profile_word_search(struct ndb *ndb)
+{
+	struct ndb_txn txn;
+	struct ndb_search search;
+	const char *name, *display_name;
+	NdbProfile_table_t profile;
+	int found;
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_search_profile(&txn, &search, "jin"));
+
+	found = 0;
+	do {
+		profile = lookup_profile(&txn, search.profile_key);
+		name = NdbProfile_name_get(profile);
+		display_name = NdbProfile_display_name_get(profile);
+
+		if ((name && strstr(name, "Jin")) ||
+		    (display_name && strstr(display_name, "Jin"))) {
+			found = 1;
+			break;
+		}
+	} while (ndb_search_profile_next(&search));
+
+	assert(found);
+
+	ndb_search_profile_end(&search);
+	ndb_end_query(&txn);
+}
+
 static void test_load_profiles()
 {
 	static const int alloc_size = 1024 * 1024;
@@ -1137,6 +1169,7 @@ static void test_load_profiles()
 	ndb_end_query(&txn);
 
 	test_profile_search(ndb);
+	test_profile_word_search(ndb);
 
 	ndb_destroy(ndb);
 
