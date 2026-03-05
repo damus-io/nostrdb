@@ -2827,6 +2827,72 @@ static void test_profile_camelcase_standalone() {
 	printf("ok test_profile_camelcase_standalone\n");
 }
 
+// End-to-end test for index-phase dedup (issue #125).
+//
+// Bug: When a profile name produces multiple search index entries that
+// prefix-match the same query, the same pubkey is emitted multiple times,
+// wasting result slots and hiding other matching profiles.
+//
+// Repro: profile A "Fish Fisherman" produces index entries "fish fisherman"
+// (full name) and "fish" (word split). Query "fish" prefix-matches both,
+// so without dedup profile A appears twice — consuming both result slots
+// and hiding profile B "Fishy".
+//
+// After fix: each pubkey appears at most once, so both profiles are returned.
+static void test_profile_search_index_dedup() {
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_config config;
+	struct ndb_filter filter, *f = &filter;
+	int count;
+	struct ndb_query_result results[2];
+
+	delete_test_db();
+	ndb_default_config(&config);
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	// Profile A: name "Fish Fisherman" — word-split produces entries
+	// "fish fisherman" (full) and "fish" (word). Both prefix-match "fish".
+	const char ev_a[] = "[\"EVENT\",{\"id\": \"0000000000000000000000000000000000000000000000000000000000000a01\",\"pubkey\": \"000000000000000000000000000000000000000000000000000000000000aa01\",\"created_at\": 1700000000,\"kind\": 0,\"tags\": [],\"content\": \"{\\\"name\\\":\\\"Fish Fisherman\\\"}\",\"sig\": \"0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"}]";
+
+	// Profile B: name "Fishy" — single entry "fishy". Also prefix-matches "fish".
+	const char ev_b[] = "[\"EVENT\",{\"id\": \"0000000000000000000000000000000000000000000000000000000000000b01\",\"pubkey\": \"000000000000000000000000000000000000000000000000000000000000bb01\",\"created_at\": 1700000001,\"kind\": 0,\"tags\": [],\"content\": \"{\\\"name\\\":\\\"Fishy\\\"}\",\"sig\": \"0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"}]";
+
+	assert(ndb_process_client_event(ndb, ev_a, sizeof(ev_a)));
+	assert(ndb_process_client_event(ndb, ev_b, sizeof(ev_b)));
+	sleep(1);
+
+	// Query "fish" with capacity=2.
+	// Without dedup fix: profile A fills both slots (duplicate), profile B hidden.
+	// With dedup fix: profile A once + profile B once = 2 distinct results.
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_SEARCH));
+	assert(ndb_filter_add_str_element(f, "fish"));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 0));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_query(&txn, f, 1, results, 2, &count));
+	ndb_end_query(&txn);
+
+	// Must find exactly 2 distinct profiles
+	assert(count == 2);
+
+	// The two results must have different pubkeys
+	const unsigned char *pk0 = ndb_note_pubkey(results[0].note);
+	const unsigned char *pk1 = ndb_note_pubkey(results[1].note);
+	assert(memcmp(pk0, pk1, 32) != 0);
+
+	ndb_filter_destroy(f);
+	ndb_destroy(ndb);
+
+	printf("ok test_profile_search_index_dedup\n");
+}
+
 static void test_nip50_profile_search() {
 	struct ndb *ndb;
 	struct ndb_txn txn;
@@ -3074,6 +3140,8 @@ int main(int argc, const char *argv[]) {
 	test_timeline_query();
 
 	test_profile_camelcase_standalone();
+
+	test_profile_search_index_dedup();
 
 	// fulltext
 	test_fulltext();

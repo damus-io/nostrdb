@@ -5118,6 +5118,20 @@ static int ndb_query_plan_execute_profile_search(
 			    query_len) != 0)
 			break;
 
+		// skip pubkeys we've already emitted (non-consecutive dupes)
+		{
+			int already_found = 0, k;
+			for (k = 0; k < num_found; k++) {
+				if (!memcmp(found_pubkeys[k],
+					    profile_search.key->id, 32)) {
+					already_found = 1;
+					break;
+				}
+			}
+			if (already_found)
+				continue;
+		}
+
 		// Copy pubkey into filter
 		memcpy(filter_pubkey, profile_search.key->id, 32);
 
