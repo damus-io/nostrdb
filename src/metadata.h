@@ -83,10 +83,12 @@ STATIC_ASSERT(sizeof(struct ndb_note_meta) == 16, note_meta_entry_should_be_16_b
 
 #pragma pack(pop)
 
+// even bits are reserved for system flags; odd bits are reserved for
+// user-defined flags.
 enum ndb_note_meta_flags {
-	NDB_NOTE_META_FLAG_DELETED      = 0,
-	NDB_NOTE_META_FLAG_SEEN         = 2,
-	NDB_NOTE_META_FLAG_ZAP_VERIFIED = 4,
+	NDB_NOTE_META_FLAG_DELETED      = (1 << 0),
+	NDB_NOTE_META_FLAG_SEEN         = (1 << 2),
+	NDB_NOTE_META_FLAG_ZAP_VERIFIED = (1 << 4),
 };
 
 #endif /* NDB_METADATA_H */
