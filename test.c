@@ -1,5 +1,6 @@
 
 #include "nostrdb.h"
+#include "metadata.h"
 #include "hex.h"
 #include "io.h"
 #include "bolt11/bolt11.h"
@@ -990,6 +991,262 @@ static void test_multiple_zaps()
 
 	ndb_destroy(ndb);
 	printf("ok test_multiple_zaps\n");
+}
+
+// NIP-09 soft-delete tests
+//
+// note ids and pubkeys are deliberately distinguishable hex bytes (0xa1,
+// 0xb2, etc) so test signatures don't need to be real — we run with
+// NDB_FLAG_SKIP_NOTE_VERIFY.
+
+static void test_delete_soft()
+{
+	struct ndb *ndb;
+	struct ndb_filter filter;
+	struct ndb_config config;
+	struct ndb_txn txn;
+	struct ndb_query_result results[2];
+	uint64_t subid, note_ids[4];
+	int count;
+	ndb_default_config(&config);
+
+	// target: kind 1, id=aaaa..., author=bbbb...
+	const char *target_json =
+		"{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
+		"\"pubkey\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\","
+		"\"created_at\":1700000000,\"kind\":1,\"tags\":[],\"content\":\"delete me\","
+		"\"sig\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}";
+
+	// kind 5 from SAME author bbbb... referencing target aaaa...
+	const char *delete_json =
+		"{\"id\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\","
+		"\"pubkey\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\","
+		"\"created_at\":1700000001,\"kind\":5,"
+		"\"tags\":[[\"e\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]],"
+		"\"content\":\"bye\","
+		"\"sig\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}";
+
+	static const unsigned char target_id[32] = {
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa
+	};
+	static const unsigned char delete_id[32] = {
+		0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd,
+		0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd,
+		0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd,
+		0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd
+	};
+
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+	delete_test_db();
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	// ingest target, wait for writer
+	kind_filter(&filter, 1);
+	subid = ndb_subscribe(ndb, &filter, 1);
+	ndb_process_event(ndb, target_json, strlen(target_json));
+	assert(ndb_wait_for_notes(ndb, subid, note_ids, 4) >= 1);
+	ndb_unsubscribe(ndb, subid);
+	ndb_filter_destroy(&filter);
+
+	// ingest delete, wait for writer
+	kind_filter(&filter, 5);
+	subid = ndb_subscribe(ndb, &filter, 1);
+	ndb_process_event(ndb, delete_json, strlen(delete_json));
+	assert(ndb_wait_for_notes(ndb, subid, note_ids, 4) >= 1);
+	ndb_unsubscribe(ndb, subid);
+	ndb_filter_destroy(&filter);
+
+	// query by id for target — should now be hidden
+	ndb_filter_init(&filter);
+	ndb_filter_start_field(&filter, NDB_FILTER_IDS);
+	ndb_filter_add_id_element(&filter, target_id);
+	ndb_filter_end_field(&filter);
+	ndb_filter_end(&filter);
+
+	ndb_begin_query(ndb, &txn);
+	count = 0;
+	assert(ndb_query(&txn, &filter, 1, results, 2, &count));
+	assert(count == 0);
+
+	// kind-5 itself should still be queryable
+	ndb_filter_destroy(&filter);
+	ndb_filter_init(&filter);
+	ndb_filter_start_field(&filter, NDB_FILTER_IDS);
+	ndb_filter_add_id_element(&filter, delete_id);
+	ndb_filter_end_field(&filter);
+	ndb_filter_end(&filter);
+
+	count = 0;
+	assert(ndb_query(&txn, &filter, 1, results, 2, &count));
+	assert(count == 1);
+
+	// metadata should have DELETED set
+	{
+		struct ndb_note_meta *meta = ndb_get_note_meta(&txn, target_id);
+		assert(meta);
+		assert(*ndb_note_meta_flags(meta) & NDB_NOTE_META_FLAG_DELETED);
+	}
+	ndb_end_query(&txn);
+	ndb_filter_destroy(&filter);
+
+	ndb_destroy(ndb);
+	printf("ok test_delete_soft\n");
+}
+
+static void test_delete_wrong_author()
+{
+	struct ndb *ndb;
+	struct ndb_filter filter;
+	struct ndb_config config;
+	struct ndb_txn txn;
+	struct ndb_query_result results[2];
+	uint64_t subid, note_ids[4];
+	int count;
+	ndb_default_config(&config);
+
+	// target: author bbbb...
+	const char *target_json =
+		"{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
+		"\"pubkey\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\","
+		"\"created_at\":1700000000,\"kind\":1,\"tags\":[],\"content\":\"keep me\","
+		"\"sig\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}";
+
+	// kind 5 from DIFFERENT author 9999... — should NOT delete
+	const char *delete_json =
+		"{\"id\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\","
+		"\"pubkey\":\"9999999999999999999999999999999999999999999999999999999999999999\","
+		"\"created_at\":1700000001,\"kind\":5,"
+		"\"tags\":[[\"e\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]],"
+		"\"content\":\"censor!\","
+		"\"sig\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}";
+
+	static const unsigned char target_id[32] = {
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa
+	};
+
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+	delete_test_db();
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	kind_filter(&filter, 1);
+	subid = ndb_subscribe(ndb, &filter, 1);
+	ndb_process_event(ndb, target_json, strlen(target_json));
+	assert(ndb_wait_for_notes(ndb, subid, note_ids, 4) >= 1);
+	ndb_unsubscribe(ndb, subid);
+	ndb_filter_destroy(&filter);
+
+	kind_filter(&filter, 5);
+	subid = ndb_subscribe(ndb, &filter, 1);
+	ndb_process_event(ndb, delete_json, strlen(delete_json));
+	assert(ndb_wait_for_notes(ndb, subid, note_ids, 4) >= 1);
+	ndb_unsubscribe(ndb, subid);
+	ndb_filter_destroy(&filter);
+
+	// target should still be queryable (forged delete rejected)
+	ndb_filter_init(&filter);
+	ndb_filter_start_field(&filter, NDB_FILTER_IDS);
+	ndb_filter_add_id_element(&filter, target_id);
+	ndb_filter_end_field(&filter);
+	ndb_filter_end(&filter);
+
+	ndb_begin_query(ndb, &txn);
+	count = 0;
+	assert(ndb_query(&txn, &filter, 1, results, 2, &count));
+	assert(count == 1);
+
+	{
+		struct ndb_note_meta *meta = ndb_get_note_meta(&txn, target_id);
+		// either no meta at all, or DELETED not set
+		assert(meta == NULL || !(*ndb_note_meta_flags(meta) & NDB_NOTE_META_FLAG_DELETED));
+	}
+	ndb_end_query(&txn);
+	ndb_filter_destroy(&filter);
+
+	ndb_destroy(ndb);
+	printf("ok test_delete_wrong_author\n");
+}
+
+static void test_delete_out_of_order()
+{
+	struct ndb *ndb;
+	struct ndb_filter filter;
+	struct ndb_config config;
+	struct ndb_txn txn;
+	struct ndb_query_result results[2];
+	uint64_t subid, note_ids[4];
+	int count;
+	ndb_default_config(&config);
+
+	// kind-5 first, target arrives second (same author)
+	const char *delete_json =
+		"{\"id\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\","
+		"\"pubkey\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\","
+		"\"created_at\":1700000001,\"kind\":5,"
+		"\"tags\":[[\"e\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]],"
+		"\"content\":\"bye\","
+		"\"sig\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}";
+
+	const char *target_json =
+		"{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
+		"\"pubkey\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\","
+		"\"created_at\":1700000000,\"kind\":1,\"tags\":[],\"content\":\"late\","
+		"\"sig\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}";
+
+	static const unsigned char target_id[32] = {
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+		0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa
+	};
+
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+	delete_test_db();
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	// delete arrives first, target doesn't exist yet
+	kind_filter(&filter, 5);
+	subid = ndb_subscribe(ndb, &filter, 1);
+	ndb_process_event(ndb, delete_json, strlen(delete_json));
+	assert(ndb_wait_for_notes(ndb, subid, note_ids, 4) >= 1);
+	ndb_unsubscribe(ndb, subid);
+	ndb_filter_destroy(&filter);
+
+	// now target arrives
+	kind_filter(&filter, 1);
+	subid = ndb_subscribe(ndb, &filter, 1);
+	ndb_process_event(ndb, target_json, strlen(target_json));
+	assert(ndb_wait_for_notes(ndb, subid, note_ids, 4) >= 1);
+	ndb_unsubscribe(ndb, subid);
+	ndb_filter_destroy(&filter);
+
+	// target should be hidden by the prior tombstone
+	ndb_filter_init(&filter);
+	ndb_filter_start_field(&filter, NDB_FILTER_IDS);
+	ndb_filter_add_id_element(&filter, target_id);
+	ndb_filter_end_field(&filter);
+	ndb_filter_end(&filter);
+
+	ndb_begin_query(ndb, &txn);
+	count = 0;
+	assert(ndb_query(&txn, &filter, 1, results, 2, &count));
+	assert(count == 0);
+
+	{
+		struct ndb_note_meta *meta = ndb_get_note_meta(&txn, target_id);
+		assert(meta);
+		assert(*ndb_note_meta_flags(meta) & NDB_NOTE_META_FLAG_DELETED);
+	}
+	ndb_end_query(&txn);
+	ndb_filter_destroy(&filter);
+
+	ndb_destroy(ndb);
+	printf("ok test_delete_out_of_order\n");
 }
 
 static void test_metadata()
@@ -3224,6 +3481,9 @@ int main(int argc, const char *argv[]) {
 	test_pns_reprocess();
 	test_zap_verification();
 	test_multiple_zaps();
+	test_delete_soft();
+	test_delete_wrong_author();
+	test_delete_out_of_order();
 	test_nip44_round_trip();
 	test_nip44_test_vector();
 	test_nip44_decrypt();

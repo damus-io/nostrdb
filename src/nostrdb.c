@@ -195,6 +195,7 @@ enum ndb_writer_msgtype {
 	NDB_WRITER_MIGRATE, // migrate the database
 	NDB_WRITER_NOTE_RELAY, // we already have the note, but we have more relays to write
 	NDB_WRITER_NOTE_META, // write note metadata to the db
+	NDB_WRITER_DELETE_NOTE, // apply a NIP-09 deletion (soft delete via metadata)
 };
 
 // keys used for storing data in the NDB metadata database (NDB_DB_NDB_META)
@@ -1321,7 +1322,12 @@ static int compare_kinds(const void *pa, const void *pb)
 
 //
 // returns 1 if a filter matches a note
-static int ndb_filter_matches_with(struct ndb_filter *filter,
+//
+// when txn is non-NULL, notes flagged NDB_NOTE_META_FLAG_DELETED in the
+// metadata table are hidden (kind-5 deletion events themselves still pass).
+// pass NULL for pre-write filter checks where no DB lookup is desired.
+static int ndb_filter_matches_with(struct ndb_txn *txn,
+				   struct ndb_filter *filter,
 				   struct ndb_note *note, int already_matched,
 				   struct ndb_note_relay_iterator *relay_iter)
 {
@@ -1329,6 +1335,12 @@ static int ndb_filter_matches_with(struct ndb_filter *filter,
 	struct ndb_filter_elements *els;
 	struct search_id_state state;
 	struct ndb_filter_custom *custom;
+
+	if (txn && note->kind != 5) {
+		struct ndb_note_meta *meta = ndb_get_note_meta(txn, ndb_note_id(note));
+		if (meta && (*ndb_note_meta_flags(meta) & NDB_NOTE_META_FLAG_DELETED))
+			return 0;
+	}
 
 	state.filter = filter;
 
@@ -1427,14 +1439,14 @@ cont:
 
 int ndb_filter_matches(struct ndb_filter *filter, struct ndb_note *note)
 {
-	return ndb_filter_matches_with(filter, note, 0, NULL);
+	return ndb_filter_matches_with(NULL, filter, note, 0, NULL);
 }
 
 int ndb_filter_matches_with_relay(struct ndb_filter *filter,
 				  struct ndb_note *note,
 				  struct ndb_note_relay_iterator *note_relay_iter)
 {
-	return ndb_filter_matches_with(filter, note, 0, note_relay_iter);
+	return ndb_filter_matches_with(NULL, filter, note, 0, note_relay_iter);
 }
 
 // because elements are stored as offsets and qsort doesn't support context,
@@ -2806,6 +2818,11 @@ struct ndb_writer_note_meta {
 	struct ndb_note_meta *metadata;
 };
 
+struct ndb_writer_delete_note {
+	unsigned char target_id[32];
+	unsigned char deleter_pubkey[32];
+};
+
 // Used in the writer thread when writing ndb_profile_fetch_record's
 //   kv = pubkey: recor
 struct ndb_writer_last_fetch {
@@ -2831,6 +2848,7 @@ struct ndb_writer_msg {
 		struct ndb_writer_last_fetch last_fetch;
 		struct ndb_writer_blocks blocks;
 		struct ndb_writer_note_meta note_meta;
+		struct ndb_writer_delete_note delete_note;
 	};
 };
 
@@ -3395,6 +3413,37 @@ static int ndb_ingest_event(struct ndb_ingester *ingester, const char *json,
 }
 
 
+// NIP-09: for each "e" tag, queue a writer message to soft-delete the
+// referenced note. Author verification is performed on the writer side
+// (since we may not have the target yet — see tombstone handling).
+static void ndb_process_deletion_event(struct ndb_ingester *ingester,
+				       struct ndb_note *note)
+{
+	struct ndb_iterator iter;
+	struct ndb_str name, value;
+	struct ndb_writer_msg msg;
+
+	msg.type = NDB_WRITER_DELETE_NOTE;
+	memcpy(msg.delete_note.deleter_pubkey, ndb_note_pubkey(note), 32);
+
+	ndb_tags_iterate_start(note, &iter);
+	while (ndb_tags_iterate_next(&iter)) {
+		if (iter.tag->count < 2)
+			continue;
+
+		name = ndb_tag_str(note, iter.tag, 0);
+		if (name.flag != NDB_PACKED_STR || name.str[0] != 'e' || name.str[1] != '\0')
+			continue;
+
+		value = ndb_tag_str(note, iter.tag, 1);
+		if (value.flag != NDB_PACKED_ID)
+			continue;
+
+		memcpy(msg.delete_note.target_id, value.id, 32);
+		prot_queue_push(ingester->writer_inbox, &msg);
+	}
+}
+
 static int ndb_ingester_process_note(secp256k1_context *secp,
 				     struct ndb_note *note,
 				     size_t note_size,
@@ -3467,6 +3516,9 @@ static int ndb_ingester_process_note(secp256k1_context *secp,
 		ndb_process_pns_event(ingester, note, pns_keys, npns_keys,
 				      relay, scratch, scratch_size,
 				      keys, nkeys, secp);
+	} else if (note->kind == 5) {
+		ndb_process_deletion_event(ingester, note);
+		// kind-5 itself is still written below via NDB_WRITER_NOTE
 	}
 
 	msg.type = NDB_WRITER_NOTE;
@@ -4004,6 +4056,51 @@ struct ndb_note_meta *ndb_get_note_meta(struct ndb_txn *txn, const unsigned char
 	}
 
 	return v.mv_data;
+}
+
+// NIP-09 soft delete. If the target exists, verify the deleter matches the
+// note's author. If the target hasn't arrived yet, trust the kind-5 and mark
+// deleted in advance — the metadata is keyed on note id, so it works whether
+// or not the note is present.
+static int ndb_writer_apply_deletion(struct ndb_txn *txn,
+				     const unsigned char *target_id,
+				     const unsigned char *deleter_pubkey)
+{
+	struct ndb_note *target;
+	struct ndb_note_meta *existing;
+	struct ndb_note_meta hdr;
+	unsigned char scratch[4096];
+	size_t sz;
+	MDB_val k, v;
+	int rc;
+
+	target = ndb_get_note_by_id(txn, target_id, NULL, NULL);
+	if (target && memcmp(ndb_note_pubkey(target), deleter_pubkey, 32) != 0)
+		return 0; // forged: kind-5 author doesn't own the target
+
+	existing = ndb_get_note_meta(txn, target_id);
+	if (existing) {
+		sz = ndb_note_meta_total_size(existing);
+		if (sz > sizeof(scratch))
+			return 0;
+		memcpy(scratch, existing, sz);
+		existing = (struct ndb_note_meta *)scratch;
+		*ndb_note_meta_flags(existing) |= NDB_NOTE_META_FLAG_DELETED;
+		return ndb_writer_set_note_meta(txn, target_id, existing);
+	}
+
+	// no existing metadata: write a minimal header with DELETED set
+	ndb_note_meta_header_init(&hdr);
+	hdr.flags |= NDB_NOTE_META_FLAG_DELETED;
+	k.mv_data = (unsigned char *)target_id;
+	k.mv_size = 32;
+	v.mv_data = &hdr;
+	v.mv_size = sizeof(hdr);
+	if ((rc = mdb_put(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_META], &k, &v, 0))) {
+		ndb_debug("apply_deletion: mdb_put failed: %s\n", mdb_strerror(rc));
+		return 0;
+	}
+	return 1;
 }
 
 /* write reaction stats if its a valid reaction */
@@ -4609,7 +4706,7 @@ static int ndb_query_plan_execute_ids(struct ndb_txn *txn,
 		// things we've already matched via the filter so we don't have
 		// to check again. This can be pretty important for filters
 		// with a large number of entries.
-		if (!ndb_filter_matches_with(filter, note, 1 << NDB_FILTER_IDS, relay_iter)) {
+		if (!ndb_filter_matches_with(txn, filter, note, 1 << NDB_FILTER_IDS, relay_iter)) {
 			ndb_note_relay_iterate_close(relay_iter);
 			continue;
 		}
@@ -4729,7 +4826,7 @@ static int ndb_query_plan_execute_authors(struct ndb_txn *txn,
 			if (need_relays)
 				ndb_note_relay_iterate_start(txn, &note_relay_iter, note_key);
 
-			if (!ndb_filter_matches_with(filter, note,
+			if (!ndb_filter_matches_with(txn, filter, note,
 						     1 << NDB_FILTER_AUTHORS,
 						     need_relays ? &note_relay_iter : NULL))
 			{
@@ -4806,7 +4903,7 @@ static int ndb_query_plan_execute_created_at(struct ndb_txn *txn,
 			ndb_note_relay_iterate_start(txn, &note_relay_iter, note_id);
 
 		// does this entry match our filter?
-		if (!ndb_filter_matches_with(filter, note, 0, need_relays ? &note_relay_iter : NULL))
+		if (!ndb_filter_matches_with(txn, filter, note, 0, need_relays ? &note_relay_iter : NULL))
 			goto next;
 
 		ndb_query_result_init(&res, note, (uint64_t)note_size, note_id);
@@ -4892,7 +4989,7 @@ static int ndb_query_plan_execute_tags(struct ndb_txn *txn,
 			if (need_relays)
 				ndb_note_relay_iterate_start(txn, &note_relay_iter, note_id);
 
-			if (!ndb_filter_matches_with(filter, note,
+			if (!ndb_filter_matches_with(txn, filter, note,
 						     1 << NDB_FILTER_TAGS,
 						     need_relays ? &note_relay_iter : NULL))
 				goto next;
@@ -5003,7 +5100,7 @@ static int ndb_query_plan_execute_author_kinds(
 			if (relays)
 				ndb_note_relay_iterate_start(txn, &note_relay_iter, note_id);
 
-			if (!ndb_filter_matches_with(filter, note,
+			if (!ndb_filter_matches_with(txn, filter, note,
 						     (1 << NDB_FILTER_KINDS) | (1 << NDB_FILTER_AUTHORS),
 						     relays? &note_relay_iter : NULL))
 				goto next;
@@ -5182,7 +5279,7 @@ static int ndb_query_plan_execute_relay_kinds(
 			if (!(note = ndb_get_note_by_key(txn, note_id, &note_size)))
 				goto next;
 
-			if (!ndb_filter_matches_with(filter, note,
+			if (!ndb_filter_matches_with(txn, filter, note,
 						     (1 << NDB_FILTER_KINDS) | (1 << NDB_FILTER_RELAYS),
 						     NULL))
 				goto next;
@@ -5269,7 +5366,7 @@ static int ndb_query_plan_execute_kinds(struct ndb_txn *txn,
 			if (need_relays)
 				ndb_note_relay_iterate_start(txn, &note_relay_iter, note_id);
 
-			if (!ndb_filter_matches_with(filter, note,
+			if (!ndb_filter_matches_with(txn, filter, note,
 						     1 << NDB_FILTER_KINDS,
 						     need_relays ? &note_relay_iter : NULL))
 				goto next;
@@ -7324,6 +7421,7 @@ static void *ndb_writer_thread(void *data)
 			case NDB_WRITER_BLOCKS:
 			case NDB_WRITER_MIGRATE:
 			case NDB_WRITER_NOTE_RELAY:
+			case NDB_WRITER_DELETE_NOTE:
 				needs_commit = 1;
 				break;
 			case NDB_WRITER_QUIT: break;
@@ -7416,6 +7514,11 @@ static void *ndb_writer_thread(void *data)
 						msg->last_fetch.pubkey,
 						msg->last_fetch.fetched_at
 						);
+				break;
+			case NDB_WRITER_DELETE_NOTE:
+				ndb_writer_apply_deletion(&txn,
+						msg->delete_note.target_id,
+						msg->delete_note.deleter_pubkey);
 				break;
 			}
 		}
