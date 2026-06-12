@@ -1,0 +1,21 @@
+[book]
+title = "nostrdb Docs"
+authors = ["nostrdb maintainers"]
+description = "Architecture, API, and CLI docs for nostrdb"
+language = "en"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "build"
+create-missing = true
+
+[output.html]
+default-theme = "light"
+additional-css = []
+
+[output.html.fold]
+enabled = true
+
+[output.html.playground]
+enabled = false
