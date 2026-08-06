@@ -608,6 +608,9 @@ int ndb_compact(struct ndb *ndb, const char *output_path,
 /* add a key for processing giftwraps */
 int ndb_add_key(struct ndb *ndb, unsigned char *key);
 
+/* register a shared SNS team_root (32 bytes) for monitoring kind-1081 envelopes */
+int ndb_add_team_root(struct ndb *ndb, unsigned char *team_root);
+
 int ndb_process_event(struct ndb *, const char *json, int len);
 void ndb_ingest_meta_init(struct ndb_ingest_meta *meta, unsigned client, const char *relay);
 // Process an event, recording the relay where it came from.
@@ -617,6 +620,8 @@ int ndb_process_events(struct ndb *, const char *ldjson, size_t len);
 int ndb_process_giftwraps(struct ndb *, struct ndb_txn *);
 /* reprocess kind-1080 PNS events that arrived before keys were registered */
 int ndb_process_pns(struct ndb *, struct ndb_txn *);
+/* reprocess kind-1081 SNS envelopes that arrived before the team_root was registered */
+int ndb_process_sns(struct ndb *, struct ndb_txn *);
 int ndb_verify_zap(struct ndb *ndb, struct ndb_txn *txn, const unsigned char *zap_note_id);
 int ndb_process_events_with(struct ndb *ndb, const char *ldjson, size_t json_len, struct ndb_ingest_meta *meta);
 #ifndef _WIN32
