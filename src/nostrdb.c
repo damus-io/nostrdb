@@ -6623,8 +6623,10 @@ static uint64_t ndb_write_note(secp256k1_context *secp,
 	int rc;
 	uint64_t note_key, kind;
 	struct ndb_relay_kind_key relay_key;
+	struct ndb_note *existing;
 	MDB_dbi note_db;
 	MDB_val key, val;
+	int promoted = 0;
 
 	kind = note->note->kind;
 
@@ -6632,9 +6634,26 @@ static uint64_t ndb_write_note(secp256k1_context *secp,
 	if (!note->overwrite_note_id &&
 	    (note_key = ndb_get_notekey_by_id(txn, note->note->id)))
 	{
-		if (ndb_relay_kind_key_init(&relay_key, note_key, kind, ndb_note_created_at(note->note), note->relay))
-			ndb_write_note_relay_indexes(txn, &relay_key);
-		return 0;
+		// Promote a plaintext note to a team-sealed rumor in place: if the
+		// incoming note is a rumor (unwrapped from an SNS envelope) but the
+		// stored record at this id is still plaintext, overwrite it under the
+		// SAME note_key so it gains the NDB_NOTE_FLAG_RUMOR flag + receiver
+		// pubkey (kept in the sig field) that the shared fold's team_sealed check
+		// reads. Reusing the key keeps the DUPSORT id/kind/tag indexes idempotent
+		// (identical key+value). We fall through to the write path and return 0
+		// (below) so no subscription is notified — the note content is unchanged,
+		// only its sealed provenance is.
+		existing = ndb_note_is_rumor(note->note)
+			? ndb_get_note_by_key(txn, note_key, NULL)
+			: NULL;
+		if (existing && !(*ndb_note_flags(existing) & NDB_NOTE_FLAG_RUMOR)) {
+			note->overwrite_note_id = note_key;
+			promoted = 1;
+		} else {
+			if (ndb_relay_kind_key_init(&relay_key, note_key, kind, ndb_note_created_at(note->note), note->relay))
+				ndb_write_note_relay_indexes(txn, &relay_key);
+			return 0;
+		}
 	}
 
 	/* this might be a reprocessed rumor, we need to update the giftwrap
@@ -6697,7 +6716,9 @@ static uint64_t ndb_write_note(secp256k1_context *secp,
 		ndb_write_unverified_zap_stats(txn, note->note, scratch, scratch_size);
 	}
 
-	return note_key;
+	// A promote rewrote an existing note_key in place (plaintext -> sealed rumor);
+	// return 0 so the writer doesn't notify subscriptions for the same content.
+	return promoted ? 0 : note_key;
 }
 
 static int ndb_ingest_rumor(secp256k1_context *secp,
