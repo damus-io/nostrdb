@@ -6877,6 +6877,7 @@ int ndb_process_giftwraps(struct ndb *ndb, struct ndb_txn *txn)
 	uint64_t note_key;
 	struct ndb_ingester_msg msg;
 	struct ndb_u64_ts index_key, *ik;
+	int dispatched = 0;
 
 	MDB_val k, v;
 
@@ -6893,6 +6894,12 @@ int ndb_process_giftwraps(struct ndb *ndb, struct ndb_txn *txn)
 		return 0;
 	}
 
+	// Dispatch *every* not-yet-unwrapped gift wrap, not just the first: a backlog
+	// of 1059s can arrive before a key is registered (e.g. several shared-board
+	// key-shares, or a batch of DMs), and each needs peeling. Reprocessing runs
+	// async on the ingester pool (inbox DEFAULT_QUEUE_SIZE, far larger than any
+	// real backlog); if it fills, stop early and the next call / reboot catches
+	// the rest. Returns the number dispatched.
 	do {
 		ik = (struct ndb_u64_ts *)k.mv_data;
 		note_key = *(uint64_t*)v.mv_data;
@@ -6910,12 +6917,14 @@ int ndb_process_giftwraps(struct ndb *ndb, struct ndb_txn *txn)
 
 		ndb_debug("dispatching process giftwrap %ld\n", note_key);
 
-		mdb_cursor_close(cur);
-		return threadpool_dispatch(&ndb->ingester.tp, &msg);
+		if (!threadpool_dispatch(&ndb->ingester.tp, &msg))
+			break;
+
+		dispatched++;
 	} while (mdb_cursor_get(cur, &k, &v, MDB_PREV) == 0);
 
 	mdb_cursor_close(cur);
-	return 0;
+	return dispatched;
 }
 
 int ndb_process_pns(struct ndb *ndb, struct ndb_txn *txn)
@@ -6925,6 +6934,7 @@ int ndb_process_pns(struct ndb *ndb, struct ndb_txn *txn)
 	uint64_t note_key;
 	struct ndb_ingester_msg msg;
 	struct ndb_u64_ts index_key, *ik;
+	int dispatched = 0;
 
 	MDB_val k, v;
 
@@ -6941,6 +6951,11 @@ int ndb_process_pns(struct ndb *ndb, struct ndb_txn *txn)
 		return 0;
 	}
 
+	// Dispatch *every* not-yet-unwrapped PNS envelope, not just the first: a
+	// backlog can be stored before the key is registered, and each needs peeling.
+	// Reprocessing runs async on the ingester pool (inbox DEFAULT_QUEUE_SIZE, far
+	// larger than any real backlog); if it fills, stop early and the next call /
+	// reboot catches the rest. Returns the number dispatched.
 	do {
 		ik = (struct ndb_u64_ts *)k.mv_data;
 		note_key = *(uint64_t*)v.mv_data;
@@ -6958,12 +6973,14 @@ int ndb_process_pns(struct ndb *ndb, struct ndb_txn *txn)
 
 		ndb_debug("dispatching process pns %ld\n", note_key);
 
-		mdb_cursor_close(cur);
-		return threadpool_dispatch(&ndb->ingester.tp, &msg);
+		if (!threadpool_dispatch(&ndb->ingester.tp, &msg))
+			break;
+
+		dispatched++;
 	} while (mdb_cursor_get(cur, &k, &v, MDB_PREV) == 0);
 
 	mdb_cursor_close(cur);
-	return 0;
+	return dispatched;
 }
 
 /* Re-dispatch stored kind-1081 SNS envelopes for a second unwrap attempt.
@@ -6976,6 +6993,7 @@ int ndb_process_sns(struct ndb *ndb, struct ndb_txn *txn)
 	uint64_t note_key;
 	struct ndb_ingester_msg msg;
 	struct ndb_u64_ts index_key, *ik;
+	int dispatched = 0;
 
 	MDB_val k, v;
 
@@ -6992,6 +7010,12 @@ int ndb_process_sns(struct ndb *ndb, struct ndb_txn *txn)
 		return 0;
 	}
 
+	// Dispatch *every* not-yet-unwrapped 1081 envelope for reprocessing, not just
+	// the first: a whole board (its definition plus every card and overlay) can be
+	// stored before its team root is registered, and each envelope needs peeling.
+	// Reprocessing runs async on the ingester pool, whose inbox (DEFAULT_QUEUE_SIZE)
+	// far exceeds any real board; if it ever fills, stop early and let the next
+	// ndb_process_sns / reboot catch the remainder. Returns the number dispatched.
 	do {
 		ik = (struct ndb_u64_ts *)k.mv_data;
 		note_key = *(uint64_t*)v.mv_data;
@@ -7009,12 +7033,14 @@ int ndb_process_sns(struct ndb *ndb, struct ndb_txn *txn)
 
 		ndb_debug("dispatching process sns %ld\n", note_key);
 
-		mdb_cursor_close(cur);
-		return threadpool_dispatch(&ndb->ingester.tp, &msg);
+		if (!threadpool_dispatch(&ndb->ingester.tp, &msg))
+			break;
+
+		dispatched++;
 	} while (mdb_cursor_get(cur, &k, &v, MDB_PREV) == 0);
 
 	mdb_cursor_close(cur);
-	return 0;
+	return dispatched;
 }
 
 int ndb_process_giftwrap(secp256k1_context *secp,
