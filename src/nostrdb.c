@@ -45,6 +45,49 @@
 #define MAX_FILTERS    16
 #define MAX_INGESTER_KEYS 128
 
+/* Cap on the author*kind scanners NDB_PLAN_AUTHOR_KINDS will open for a
+ * multi-author filter. The alternative for those filters is NDB_PLAN_KINDS,
+ * which opens one cursor per kind and post-filters by author. So the two plans
+ * trade a fixed per-group seek cost against an unbounded scan:
+ *
+ *   author_kinds  O(authors*kinds) seeks, then O(limit)
+ *   kinds         O(kinds) seeks, then scan until `limit` authors match
+ *
+ * Which wins depends on how dense the filter's authors are in the recent tail
+ * of those kinds, which the planner can't know without probing. Measured on an
+ * 863k note db (kind 1, limit 20, warm):
+ *
+ *   authors  authors dense+recent    authors sparse+old
+ *            kinds   author_kinds    kinds   author_kinds
+ *   2        0.20ms  0.058ms         69ms    0.028ms
+ *   8        0.16ms  0.077ms         70ms    0.063ms
+ *   16       0.073ms 0.090ms         68ms    0.086ms
+ *   32       0.049ms 0.126ms         67ms    0.151ms
+ *   500      0.050ms 1.08ms          72ms    6.7ms
+ *
+ * So author_kinds wins hugely when the authors are sparse and loses by a small
+ * absolute margin when they're dense. At the cap the worst measured regression
+ * is ~0.15ms (64 dense authors: 0.046ms -> 0.195ms), against ~67ms saved when
+ * those same 64 authors are sparse.
+ *
+ * The cap matters most at the other end of the scale. A contact list is
+ * thousands of authors, and its members are dense by construction -- you follow
+ * people who post -- so the scan finds `limit` matches almost immediately while
+ * author_kinds would pay a seek per author*kind pair. Uncapped, at the 6144
+ * author ceiling a single filter can hold (data_buf/32) across kinds
+ * 1,6,7,30023, that is 24576 scanners:
+ *
+ *   6144 authors x 4 kinds   kinds 0.005ms   author_kinds 4.44ms
+ *
+ * ~900x worse, on the most common query a client makes. Hence a cap rather than
+ * an unconditional lift: below it we take the plan that can't blow up, above it
+ * we keep the one that can't fan out.
+ *
+ * The gap this leaves is a *large* author set that has gone quiet -- 1000-2000
+ * sparse authors still cost 16-61ms on the kinds plan. Closing that needs a
+ * planner that probes the scan before committing to it, not a constant. */
+#define NDB_MAX_AUTHOR_KIND_SCANNERS 64
+
 // the maximum size of inbox queues
 static const int DEFAULT_QUEUE_SIZE = 32768;
 
@@ -5607,7 +5650,11 @@ static enum ndb_query_plan ndb_filter_plan(struct ndb_filter *filter)
 		return NDB_PLAN_IDS;
 	} else if (relays && kinds && !authors) {
 		return NDB_PLAN_RELAY_KINDS;
-	} else if (kinds && authors && authors->count == 1) {
+	} else if (kinds && authors &&
+		   (authors->count == 1 ||
+		    authors->count * kinds->count <= NDB_MAX_AUTHOR_KIND_SCANNERS)) {
+		// the plan itself has always been multi-author (it merges every
+		// author*kind run); only the scanner count needs bounding
 		return NDB_PLAN_AUTHOR_KINDS;
 	} else if (authors && authors->count == 1) {
 		return NDB_PLAN_AUTHORS;

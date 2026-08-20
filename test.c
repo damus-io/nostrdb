@@ -2910,6 +2910,68 @@ static void test_query_ordering()
 	order_check("author_kinds", &txn, f, 8, 1, 7, 0, -1);
 	ndb_filter_destroy(f);
 
+	// NDB_PLAN_AUTHOR_KINDS with more than one author: merge every
+	// author*kind run. The third author has nothing in the db, so its
+	// scanners start empty and have to drop straight out of the heap.
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_AUTHORS));
+	memset(author, 0, sizeof(author));
+	author[31] = 1; // author 0
+	assert(ndb_filter_add_id_element(f, author));
+	author[31] = 2; // author 1
+	assert(ndb_filter_add_id_element(f, author));
+	author[31] = 3; // nobody
+	assert(ndb_filter_add_id_element(f, author));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	assert(ndb_filter_add_int_element(f, 7));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_end(f));
+	// authors 0 and 1 between them wrote every note, so this is the same
+	// expected set as the kinds-only query above -- what's under test is
+	// that six merged runs still come back newest-first
+	order_check("multi_author_kinds", &txn, f, 12, 1, 7, -1, -1);
+	ndb_filter_destroy(f);
+
+	// the same plan under since/until bounds
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_AUTHORS));
+	author[31] = 1;
+	assert(ndb_filter_add_id_element(f, author));
+	author[31] = 2;
+	assert(ndb_filter_add_id_element(f, author));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	assert(ndb_filter_add_int_element(f, 7));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_UNTIL));
+	assert(ndb_filter_add_int_element(f, ORDER_BASE_TIME + 39));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_end(f));
+	{
+		struct ndb_query_result results[ORDER_NOTES];
+		int count = 0;
+		uint64_t prev;
+
+		assert(ndb_query(&txn, f, 1, results, ORDER_NOTES, &count));
+		assert(count > 0);
+
+		// until is exclusive in the index scan, as elsewhere here
+		prev = UINT64_MAX;
+		for (i = 0; i < count; i++) {
+			uint64_t at = ndb_note_created_at(results[i].note);
+			uint64_t kind = ndb_note_kind(results[i].note);
+
+			assert(at < (uint64_t)(ORDER_BASE_TIME + 39));
+			assert(kind == 1 || kind == 7);
+			assert(at <= prev);
+			prev = at;
+		}
+	}
+	ndb_filter_destroy(f);
+
 	// NDB_PLAN_RELAY_KINDS: merge one relay across kinds 1 and 7
 	assert(ndb_filter_init(f));
 	assert(ndb_filter_start_field(f, NDB_FILTER_RELAYS));
