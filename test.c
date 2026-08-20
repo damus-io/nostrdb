@@ -2710,6 +2710,248 @@ static void test_multifilter_query()
 	ndb_destroy(ndb);
 }
 
+/* Every created_at ordered index in nostrdb is only ordered *within* a group
+ * (a kind, a pubkey+kind, a relay+kind). Query plans that span more than one
+ * group have to merge those groups, so this exercises the plans that do:
+ * created, kinds, author_kinds and relay_kinds. */
+
+#define ORDER_NOTES 60
+#define ORDER_BASE_TIME 1700000000
+
+// all non-replaceable, so every note we write sticks around
+static const uint64_t order_kinds[3] = { 1, 6, 7 };
+static const char *order_relays[2] = { "wss://relay.damus.io", "wss://nos.lol" };
+
+static uint64_t order_note_kind(int i)   { return order_kinds[i % 3]; }
+static int      order_note_author(int i) { return i % 2; }
+static int      order_note_relay(int i)  { return (i % 4) < 2 ? 0 : 1; }
+
+/* Note ids are deliberately uncorrelated with created_at: the note id index
+ * is clustered by id, so a plan that walks it expecting created_at order has
+ * to come back wrong here. Multiplying by an odd number mod 256 keeps these
+ * unique. */
+static int order_note_id(int i) { return ((i * 37) + 11) & 0xff; }
+
+/* Collect the notes we expect back, newest first. `want_*` of -1 means
+ * "don't care". Returns how many we expect. */
+static int order_expected(int *out, int max, int want_kind_a, int want_kind_b,
+			  int want_author, int want_relay)
+{
+	int i, n;
+	uint64_t kind;
+
+	for (i = ORDER_NOTES - 1, n = 0; i >= 0 && n < max; i--) {
+		kind = order_note_kind(i);
+
+		if (want_kind_a != -1 && kind != (uint64_t)want_kind_a &&
+		    kind != (uint64_t)want_kind_b)
+			continue;
+		if (want_author != -1 && order_note_author(i) != want_author)
+			continue;
+		if (want_relay != -1 && order_note_relay(i) != want_relay)
+			continue;
+
+		out[n++] = i;
+	}
+
+	return n;
+}
+
+/* Assert that a query came back as the newest `expected` notes in
+ * created_at-descending order. */
+static void order_check(const char *what, struct ndb_txn *txn,
+			struct ndb_filter *filter, int limit,
+			int want_kind_a, int want_kind_b,
+			int want_author, int want_relay)
+{
+	struct ndb_query_result results[ORDER_NOTES];
+	int expected[ORDER_NOTES];
+	int count, num_expected, i;
+
+	num_expected = order_expected(expected, limit, want_kind_a, want_kind_b,
+				      want_author, want_relay);
+
+	count = 0;
+	assert(ndb_query(txn, filter, 1, results, limit, &count));
+
+	if (count != num_expected) {
+		printf("%s: expected %d results, got %d\n", what,
+		       num_expected, count);
+		assert(!"wrong result count");
+	}
+
+	for (i = 0; i < count; i++) {
+		uint64_t got, want;
+
+		got = ndb_note_created_at(results[i].note);
+		want = ORDER_BASE_TIME + expected[i];
+
+		if (got != want) {
+			printf("%s: result %d created_at %" PRIu64
+			       ", expected %" PRIu64 "\n", what, i, got, want);
+			assert(!"query results out of order");
+		}
+	}
+}
+
+static void test_query_ordering()
+{
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_config config;
+	struct ndb_filter filter, *f = &filter;
+	struct ndb_ingest_meta meta;
+	uint64_t note_ids[ORDER_NOTES], subid;
+	unsigned char author[32];
+	char json[1024];
+	int i, nres, attempts;
+
+	static const char *sig =
+		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+	delete_test_db();
+	ndb_default_config(&config);
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	// subscribe so we can tell when everything has landed
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	for (i = 0; i < 3; i++)
+		assert(ndb_filter_add_int_element(f, order_kinds[i]));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_end(f));
+	assert((subid = ndb_subscribe(ndb, f, 1)));
+	ndb_filter_destroy(f);
+
+	// created_at increases with i, so "newest first" is just i descending
+	for (i = 0; i < ORDER_NOTES; i++) {
+		snprintf(json, sizeof(json),
+			 "[\"EVENT\",{\"id\":\"%064x\",\"pubkey\":\"%064x\","
+			 "\"created_at\":%d,\"kind\":%" PRIu64 ",\"tags\":[],"
+			 "\"content\":\"n%d\",\"sig\":\"%s\"}]",
+			 order_note_id(i), order_note_author(i) + 1,
+			 ORDER_BASE_TIME + i, order_note_kind(i), i, sig);
+
+		ndb_ingest_meta_init(&meta, 1,
+				     order_relays[order_note_relay(i)]);
+		assert(ndb_process_event_with(ndb, json, strlen(json), &meta));
+	}
+
+	// poll rather than block, so a missing note fails the test instead of
+	// hanging it
+	for (nres = 0, attempts = 0; nres < ORDER_NOTES && attempts < 500;
+	     attempts++) {
+		nres += ndb_poll_for_notes(ndb, subid, note_ids + nres,
+					   ORDER_NOTES - nres);
+		if (nres < ORDER_NOTES)
+			usleep(10000);
+	}
+	assert(nres == ORDER_NOTES);
+
+	// the relay index is written asynchronously after the note itself, so
+	// wait for every relay to show up before querying by relay
+	for (attempts = 0; attempts < 500; attempts++) {
+		int seen = 1;
+
+		assert(ndb_begin_query(ndb, &txn));
+		for (i = 0; i < ORDER_NOTES && seen; i++) {
+			unsigned char id[32] = {0};
+			uint64_t note_key;
+
+			id[31] = order_note_id(i); // the %064x id we ingested
+
+			seen = (note_key = ndb_get_notekey_by_id(&txn, id)) &&
+			       ndb_note_seen_on_relay(&txn, note_key,
+					order_relays[order_note_relay(i)]);
+		}
+		ndb_end_query(&txn);
+
+		if (seen)
+			break;
+		usleep(10000);
+	}
+	assert(attempts < 500);
+
+	assert(ndb_begin_query(ndb, &txn));
+
+	// NDB_PLAN_CREATED: no field to index on, must merge every kind
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_LIMIT));
+	assert(ndb_filter_add_int_element(f, 10));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_end(f));
+	order_check("created", &txn, f, 10, -1, -1, -1, -1);
+	ndb_filter_destroy(f);
+
+	// NDB_PLAN_KINDS: merge kinds 1 and 7, skipping 30023
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	assert(ndb_filter_add_int_element(f, 7));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_end(f));
+	order_check("kinds", &txn, f, 12, 1, 7, -1, -1);
+	ndb_filter_destroy(f);
+
+	// NDB_PLAN_AUTHOR_KINDS: merge one author across kinds 1 and 7
+	memset(author, 0, sizeof(author));
+	author[31] = 1; // author 0, matching the %064x pubkey above
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_AUTHORS));
+	assert(ndb_filter_add_id_element(f, author));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	assert(ndb_filter_add_int_element(f, 7));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_end(f));
+	order_check("author_kinds", &txn, f, 8, 1, 7, 0, -1);
+	ndb_filter_destroy(f);
+
+	// NDB_PLAN_RELAY_KINDS: merge one relay across kinds 1 and 7
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_RELAYS));
+	assert(ndb_filter_add_str_element(f, order_relays[0]));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_KINDS));
+	assert(ndb_filter_add_int_element(f, 1));
+	assert(ndb_filter_add_int_element(f, 7));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_end(f));
+	order_check("relay_kinds", &txn, f, 8, 1, 7, -1, 0);
+	ndb_filter_destroy(f);
+
+	// since/until should bound the merged scan, not truncate it at the
+	// first out-of-range group
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_UNTIL));
+	assert(ndb_filter_add_int_element(f, ORDER_BASE_TIME + 39));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_start_field(f, NDB_FILTER_SINCE));
+	assert(ndb_filter_add_int_element(f, ORDER_BASE_TIME + 35));
+	ndb_filter_end_field(f);
+	assert(ndb_filter_end(f));
+	{
+		struct ndb_query_result results[ORDER_NOTES];
+		int count = 0;
+
+		assert(ndb_query(&txn, f, 1, results, ORDER_NOTES, &count));
+
+		// notes 35..39 inclusive, newest first. until is exclusive in
+		// the index scan, so 39 itself is not expected here
+		assert(count == 4);
+		for (i = 0; i < count; i++)
+			assert(ndb_note_created_at(results[i].note) ==
+			       (uint64_t)(ORDER_BASE_TIME + 38 - i));
+	}
+	ndb_filter_destroy(f);
+
+	ndb_end_query(&txn);
+	ndb_destroy(ndb);
+}
+
 static void test_multifilter_query_fair_distribution()
 {
 	struct ndb *ndb;
@@ -3398,6 +3640,7 @@ int main(int argc, const char *argv[]) {
 	test_single_url_parsing();
 	test_url_parsing();
 	test_query();
+	test_query_ordering();
 	test_multifilter_query();
 	test_multifilter_query_fair_distribution();
 	test_tag_query();

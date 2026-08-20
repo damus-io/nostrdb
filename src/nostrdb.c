@@ -1876,7 +1876,9 @@ static int ndb_relay_kind_key_init_high(
 		uint64_t kind,
 		uint64_t until)
 {
-	return ndb_relay_kind_key_init(key, UINT64_MAX, kind, UINT64_MAX, relay);
+	// note_key is the last field in the key, so UINT64_MAX puts us just
+	// past every entry at created_at == until
+	return ndb_relay_kind_key_init(key, UINT64_MAX, kind, until, relay);
 }
 
 static void ndb_parse_relay_kind_key(struct ndb_relay_kind_key *key, unsigned char *buf)
@@ -4802,23 +4804,385 @@ next:
 	return 1;
 }
 
+/* The largest index key we know how to scan over. relay+kind keys are the
+ * biggest: 24 bytes of ints, a length byte, up to 248 bytes of relay url, a
+ * nul terminator and 8-byte alignment padding. */
+#define NDB_SCAN_KEY_MAX 288
+
+/* The index key layouts we know how to walk backwards over.
+ *
+ * Each of these indexes clusters its entries by some group (a kind, a
+ * pubkey+kind, a relay+kind) and orders them by created_at within that group,
+ * so a reverse cursor walk inside a single group is descending by created_at.
+ * Across groups it is not ordered at all. */
+enum ndb_scan_key_type {
+	NDB_SCAN_KEY_U64_TS,     // note_kind:        {kind, created_at}
+	NDB_SCAN_KEY_ID_U64_TS,  // note_pubkey_kind: {pubkey, kind, created_at}
+	NDB_SCAN_KEY_RELAY_KIND, // relay_kind:       {note_key, kind, created_at, relay}
+};
+
+/* A reverse cursor over a single group of an index. */
+struct ndb_index_scanner {
+	/* the key we seeked with, kept so we can tell when we've walked out
+	 * of our group. first member so that it inherits the struct's 8 byte
+	 * alignment, which the relay+kind key parser requires */
+	unsigned char group[NDB_SCAN_KEY_MAX];
+	MDB_cursor *cur;
+	uint64_t created_at;
+	uint64_t note_key;
+};
+
+/* Merges any number of reverse index scans into one created_at-descending
+ * stream.
+ *
+ * Anything that spans more than one group (every kind, several kinds, several
+ * authors) has to merge rather than concatenate. Draining group by group
+ * lets the first group eat the whole limit and starve the rest, which looks
+ * like results arriving out of order. */
+struct ndb_index_merger {
+	struct ndb_index_scanner *scanners;
+	int *heap; // indices into scanners, max-heap on created_at
+	int num_scanners;
+	int capacity;
+	int heap_len;
+	uint64_t since;
+	enum ndb_scan_key_type key_type;
+	MDB_dbi db;
+};
+
+/* is the entry the cursor is sitting on still in this scanner's group? */
+static int ndb_scanner_in_group(struct ndb_index_scanner *s,
+				enum ndb_scan_key_type type, MDB_val *k)
+{
+	struct ndb_u64_ts *kts, *gts;
+	struct ndb_id_u64_ts *kits, *gits;
+	struct ndb_relay_kind_key krk, grk;
+
+	switch (type) {
+	case NDB_SCAN_KEY_U64_TS:
+		if (k->mv_size != sizeof(*kts))
+			return 0;
+		kts = (struct ndb_u64_ts *)k->mv_data;
+		gts = (struct ndb_u64_ts *)s->group;
+		return kts->u64 == gts->u64;
+	case NDB_SCAN_KEY_ID_U64_TS:
+		if (k->mv_size != sizeof(*kits))
+			return 0;
+		kits = (struct ndb_id_u64_ts *)k->mv_data;
+		gits = (struct ndb_id_u64_ts *)s->group;
+		return kits->u64 == gits->u64 && !memcmp(kits->id, gits->id, 32);
+	case NDB_SCAN_KEY_RELAY_KIND:
+		ndb_parse_relay_kind_key(&krk, (unsigned char *)k->mv_data);
+		ndb_parse_relay_kind_key(&grk, s->group);
+		return krk.kind == grk.kind && !strcmp(krk.relay, grk.relay);
+	}
+
+	return 0;
+}
+
+static void ndb_scanner_read(struct ndb_index_scanner *s,
+			     enum ndb_scan_key_type type,
+			     MDB_val *k, MDB_val *v)
+{
+	struct ndb_relay_kind_key rk;
+
+	switch (type) {
+	case NDB_SCAN_KEY_U64_TS:
+		s->created_at = ((struct ndb_u64_ts *)k->mv_data)->timestamp;
+		s->note_key = *(uint64_t *)v->mv_data;
+		return;
+	case NDB_SCAN_KEY_ID_U64_TS:
+		s->created_at = ((struct ndb_id_u64_ts *)k->mv_data)->timestamp;
+		s->note_key = *(uint64_t *)v->mv_data;
+		return;
+	case NDB_SCAN_KEY_RELAY_KIND:
+		// the relay+kind index stores everything in the key
+		ndb_parse_relay_kind_key(&rk, (unsigned char *)k->mv_data);
+		s->created_at = rk.created_at;
+		s->note_key = rk.note_key;
+		return;
+	}
+}
+
+/* Load the entry under the cursor. Returns 0 when this scanner is finished:
+ * off the end of the db, out of its group, or below `since`. Stopping at
+ * `since` is sound here because created_at descends within a group. */
+static int ndb_scanner_load(struct ndb_index_merger *m,
+			    struct ndb_index_scanner *s)
+{
+	MDB_val k, v;
+
+	if (mdb_cursor_get(s->cur, &k, &v, MDB_GET_CURRENT))
+		return 0;
+
+	if (!ndb_scanner_in_group(s, m->key_type, &k))
+		return 0;
+
+	ndb_scanner_read(s, m->key_type, &k, &v);
+
+	return s->created_at >= m->since;
+}
+
+static int ndb_merger_gt(struct ndb_index_merger *m, int a, int b)
+{
+	struct ndb_index_scanner *sa, *sb;
+
+	sa = &m->scanners[a];
+	sb = &m->scanners[b];
+
+	if (sa->created_at != sb->created_at)
+		return sa->created_at > sb->created_at;
+
+	// deterministic tiebreak for notes sharing a created_at
+	return sa->note_key > sb->note_key;
+}
+
+static void ndb_merger_swap(struct ndb_index_merger *m, int a, int b)
+{
+	int tmp;
+
+	tmp = m->heap[a];
+	m->heap[a] = m->heap[b];
+	m->heap[b] = tmp;
+}
+
+static void ndb_merger_push(struct ndb_index_merger *m, int scanner)
+{
+	int i, parent;
+
+	i = m->heap_len++;
+	m->heap[i] = scanner;
+
+	while (i > 0) {
+		parent = (i - 1) / 2;
+		if (!ndb_merger_gt(m, m->heap[i], m->heap[parent]))
+			break;
+		ndb_merger_swap(m, i, parent);
+		i = parent;
+	}
+}
+
+static void ndb_merger_sift(struct ndb_index_merger *m)
+{
+	int i, l, r, big;
+
+	for (i = 0;;) {
+		l = i * 2 + 1;
+		r = l + 1;
+		big = i;
+
+		if (l < m->heap_len && ndb_merger_gt(m, m->heap[l], m->heap[big]))
+			big = l;
+		if (r < m->heap_len && ndb_merger_gt(m, m->heap[r], m->heap[big]))
+			big = r;
+		if (big == i)
+			break;
+
+		ndb_merger_swap(m, i, big);
+		i = big;
+	}
+}
+
+static int ndb_index_merger_init(struct ndb_index_merger *m, MDB_dbi db,
+				 enum ndb_scan_key_type key_type,
+				 uint64_t since, int capacity)
+{
+	if (capacity <= 0)
+		capacity = 1;
+
+	m->scanners = calloc(capacity, sizeof(*m->scanners));
+	m->heap = malloc(capacity * sizeof(*m->heap));
+
+	if (!m->scanners || !m->heap) {
+		free(m->scanners);
+		free(m->heap);
+		return 0;
+	}
+
+	m->db = db;
+	m->key_type = key_type;
+	m->since = since;
+	m->capacity = capacity;
+	m->num_scanners = 0;
+	m->heap_len = 0;
+
+	return 1;
+}
+
+static void ndb_index_merger_destroy(struct ndb_index_merger *m)
+{
+	int i;
+
+	for (i = 0; i < m->num_scanners; i++)
+		mdb_cursor_close(m->scanners[i].cur);
+
+	free(m->scanners);
+	free(m->heap);
+}
+
+/* Add a group to the merge, seeked to the newest entry at or before the
+ * `until` baked into `key`. Groups with nothing in range are dropped. */
+static int ndb_index_merger_add(struct ndb_index_merger *m,
+				struct ndb_txn *txn,
+				const void *key, size_t key_size)
+{
+	struct ndb_index_scanner *s;
+	MDB_val k, v;
+
+	if (m->num_scanners == m->capacity || key_size > NDB_SCAN_KEY_MAX)
+		return 0;
+
+	s = &m->scanners[m->num_scanners];
+
+	if (mdb_cursor_open(txn->mdb_txn, m->db, &s->cur))
+		return 0;
+
+	memcpy(s->group, key, key_size);
+	m->num_scanners++;
+
+	// ndb_cursor_start repoints k at the entry it found, leaving
+	// s->group intact
+	k.mv_data = s->group;
+	k.mv_size = key_size;
+
+	if (!ndb_cursor_start(s->cur, &k, &v))
+		return 1;
+
+	if (ndb_scanner_load(m, s))
+		ndb_merger_push(m, m->num_scanners - 1);
+
+	return 1;
+}
+
+/* Pop the newest note across every group, then advance the group it came
+ * from. */
+static int ndb_index_merger_next(struct ndb_index_merger *m, uint64_t *note_key)
+{
+	struct ndb_index_scanner *s;
+	MDB_val k, v;
+
+	if (m->heap_len == 0)
+		return 0;
+
+	s = &m->scanners[m->heap[0]];
+	*note_key = s->note_key;
+
+	if (mdb_cursor_get(s->cur, &k, &v, MDB_PREV) || !ndb_scanner_load(m, s)) {
+		// this group is done, drop it out of the heap
+		m->heap[0] = m->heap[--m->heap_len];
+	}
+
+	ndb_merger_sift(m);
+
+	return 1;
+}
+
+/* Collect every kind present in the kind index. The index is clustered by
+ * kind, so we can hop from one kind to the next instead of walking every
+ * entry. */
+static int ndb_all_kinds(struct ndb_txn *txn, uint64_t **out, int *out_count)
+{
+	MDB_cursor *cur;
+	MDB_val k, v;
+	struct ndb_u64_ts key;
+	uint64_t *kinds, *tmp, kind;
+	int count, capacity;
+
+	*out = NULL;
+	*out_count = 0;
+
+	capacity = 16;
+	count = 0;
+
+	if (!(kinds = malloc(capacity * sizeof(*kinds))))
+		return 0;
+
+	if (mdb_cursor_open(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE_KIND], &cur)) {
+		free(kinds);
+		return 0;
+	}
+
+	ndb_u64_ts_init(&key, 0, 0);
+	k.mv_data = &key;
+	k.mv_size = sizeof(key);
+
+	while (!mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE)) {
+		kind = ((struct ndb_u64_ts *)k.mv_data)->u64;
+
+		if (count == capacity) {
+			capacity *= 2;
+			if (!(tmp = realloc(kinds, capacity * sizeof(*kinds)))) {
+				mdb_cursor_close(cur);
+				free(kinds);
+				return 0;
+			}
+			kinds = tmp;
+		}
+
+		kinds[count++] = kind;
+
+		if (kind == UINT64_MAX)
+			break;
+
+		// jump past every entry for this kind
+		ndb_u64_ts_init(&key, kind + 1, 0);
+		k.mv_data = &key;
+		k.mv_size = sizeof(key);
+	}
+
+	mdb_cursor_close(cur);
+
+	*out = kinds;
+	*out_count = count;
+
+	return 1;
+}
+
+/* Drain a merged scan into the query results, filtering as we go. */
+static void ndb_query_drain_merger(struct ndb_txn *txn,
+				   struct ndb_filter *filter,
+				   struct ndb_query_state *results,
+				   struct ndb_index_merger *merger,
+				   int already_matched,
+				   int need_relays)
+{
+	struct ndb_query_result res;
+	struct ndb_note *note;
+	struct ndb_note_relay_iterator note_relay_iter;
+	uint64_t note_key;
+	size_t note_size;
+
+	while (!query_is_full(results) &&
+	       ndb_index_merger_next(merger, &note_key)) {
+		if (!(note = ndb_get_note_by_key(txn, note_key, &note_size)))
+			continue;
+
+		if (need_relays)
+			ndb_note_relay_iterate_start(txn, &note_relay_iter, note_key);
+
+		if (!ndb_filter_matches_with(filter, note, already_matched,
+					     need_relays ? &note_relay_iter : NULL))
+			continue;
+
+		ndb_query_result_init(&res, note, (uint64_t)note_size, note_key);
+		if (!push_query_result(results, &res))
+			break;
+	}
+}
+
+/* Newest-first with nothing to index on.
+ *
+ * No index orders every note by created_at, so we merge the per-kind scans of
+ * the kind index instead. The note id index is clustered by id, not
+ * created_at, so scanning it backwards hands back an arbitrary sample. */
 static int ndb_query_plan_execute_created_at(struct ndb_txn *txn,
 					     struct ndb_filter *filter,
 					     struct ndb_query_state *results)
 {
-	MDB_dbi db;
-	MDB_val k, v;
-	MDB_cursor *cur;
-	int rc, need_relays = 0;
-	struct ndb_note *note;
-	struct ndb_tsid key, *pkey;
-	uint64_t *pint, until, since, note_id;
-	size_t note_size;
-	struct ndb_query_result res;
-	struct ndb_note_relay_iterator note_relay_iter;
-	unsigned char high_key[32] = {0xFF};
-
-	db = txn->lmdb->dbs[NDB_DB_NOTE_ID];
+	struct ndb_index_merger merger;
+	struct ndb_u64_ts key;
+	uint64_t *kinds, *pint, until, since;
+	int i, num_kinds, need_relays = 0, ok;
 
 	until = UINT64_MAX;
 	if ((pint = ndb_filter_get_int(filter, NDB_FILTER_UNTIL)))
@@ -4831,46 +5195,32 @@ static int ndb_query_plan_execute_created_at(struct ndb_txn *txn,
 	if (ndb_filter_find_elements(filter, NDB_FILTER_RELAYS))
 		need_relays = 1;
 
-	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur)))
+	if (!ndb_all_kinds(txn, &kinds, &num_kinds))
 		return 0;
 
-	// if we have until, start there, otherwise just use max
-	ndb_tsid_init(&key, high_key, until);
-	k.mv_data = &key;
-	k.mv_size = sizeof(key);
-
-	if (!ndb_cursor_start(cur, &k, &v))
-		return 1;
-
-	while (!query_is_full(results)) {
-		pkey = (struct ndb_tsid *)k.mv_data;
-		note_id = *(uint64_t*)v.mv_data;
-		assert(v.mv_size == 8);
-
-		// don't continue the scan if we're below `since`
-		if (pkey->timestamp < since)
-			break;
-
-		if (!(note = ndb_get_note_by_key(txn, note_id, &note_size)))
-			goto next;
-
-		if (need_relays)
-			ndb_note_relay_iterate_start(txn, &note_relay_iter, note_id);
-
-		// does this entry match our filter?
-		if (!ndb_filter_matches_with(filter, note, 0, need_relays ? &note_relay_iter : NULL))
-			goto next;
-
-		ndb_query_result_init(&res, note, (uint64_t)note_size, note_id);
-		if (!push_query_result(results, &res))
-			break;
-next:
-		if (mdb_cursor_get(cur, &k, &v, MDB_PREV))
-			break;
+	if (!ndb_index_merger_init(&merger, txn->lmdb->dbs[NDB_DB_NOTE_KIND],
+				   NDB_SCAN_KEY_U64_TS, since, num_kinds)) {
+		free(kinds);
+		return 0;
 	}
 
-	mdb_cursor_close(cur);
-	return 1;
+	ok = 1;
+	for (i = 0; i < num_kinds; i++) {
+		ndb_u64_ts_init(&key, kinds[i], until);
+		if (!ndb_index_merger_add(&merger, txn, &key, sizeof(key))) {
+			ok = 0;
+			break;
+		}
+	}
+
+	if (ok)
+		ndb_query_drain_merger(txn, filter, results, &merger, 0,
+				       need_relays);
+
+	ndb_index_merger_destroy(&merger);
+	free(kinds);
+
+	return ok;
 }
 
 static int ndb_query_plan_execute_tags(struct ndb_txn *txn,
@@ -4971,18 +5321,12 @@ static int ndb_query_plan_execute_author_kinds(
 		struct ndb_filter *filter,
 		struct ndb_query_state *results)
 {
-	MDB_cursor *cur;
-	MDB_dbi db;
-	MDB_val k, v;
-	struct ndb_note *note;
+	struct ndb_index_merger merger;
 	struct ndb_filter_elements *kinds, *relays, *authors;
-	struct ndb_query_result res;
-	uint64_t kind, note_id, until, since, *pint;
-	size_t note_size;
+	uint64_t kind, until, since, *pint;
 	unsigned char *author;
-	int i, j, rc;
-	struct ndb_id_u64_ts key, *pkey;
-	struct ndb_note_relay_iterator note_relay_iter;
+	int i, j, ok;
+	struct ndb_id_u64_ts key;
 
 	// we should have kinds in a kinds filter!
 	if (!(kinds = ndb_filter_find_elements(filter, NDB_FILTER_KINDS)))
@@ -5002,77 +5346,40 @@ static int ndb_query_plan_execute_author_kinds(
 	if ((pint = ndb_filter_get_int(filter, NDB_FILTER_SINCE)))
 		since = *pint;
 
-	db = txn->lmdb->dbs[NDB_DB_NOTE_PUBKEY_KIND];
-
-	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur)))
+	// every author+kind pair is its own created_at ordered run, so merge
+	// them instead of draining one pair at a time
+	if (!ndb_index_merger_init(&merger,
+				   txn->lmdb->dbs[NDB_DB_NOTE_PUBKEY_KIND],
+				   NDB_SCAN_KEY_ID_U64_TS, since,
+				   authors->count * kinds->count))
 		return 0;
 
-	for (j = 0; j < authors->count; j++) {
-		if (query_is_full(results))
-			break;
-
+	ok = 1;
+	for (j = 0; ok && j < authors->count; j++) {
 		if (!(author = ndb_filter_get_id_element(filter, authors, j)))
 			continue;
 
-	for (i = 0; i < kinds->count; i++) {
-		if (query_is_full(results))
-			break;
+		for (i = 0; i < kinds->count; i++) {
+			kind = kinds->elements[i];
 
-		kind = kinds->elements[i];
+			ndb_debug("finding kind %"PRIu64"\n", kind);
 
-		ndb_debug("finding kind %"PRIu64"\n", kind);
-
-		ndb_id_u64_ts_init(&key, author, kind, until);
-
-		k.mv_data = &key;
-		k.mv_size = sizeof(key);
-
-		if (!ndb_cursor_start(cur, &k, &v))
-			continue;
-
-		// scan the kind subindex
-		while (!query_is_full(results)) {
-			pkey = (struct ndb_id_u64_ts*)k.mv_data;
-
-			ndb_debug("scanning subindex kind:%"PRIu64" created_at:%"PRIu64" pubkey:",
-					pkey->u64,
-					pkey->timestamp);
-
-			if (pkey->u64 != kind)
+			ndb_id_u64_ts_init(&key, author, kind, until);
+			if (!ndb_index_merger_add(&merger, txn, &key, sizeof(key))) {
+				ok = 0;
 				break;
-
-			// don't continue the scan if we're below `since`
-			if (pkey->timestamp < since)
-				break;
-
-			if (memcmp(pkey->id, author, 32))
-				break;
-
-			note_id = *(uint64_t*)v.mv_data;
-			if (!(note = ndb_get_note_by_key(txn, note_id, &note_size)))
-				goto next;
-
-			if (relays)
-				ndb_note_relay_iterate_start(txn, &note_relay_iter, note_id);
-
-			if (!ndb_filter_matches_with(filter, note,
-						     (1 << NDB_FILTER_KINDS) | (1 << NDB_FILTER_AUTHORS),
-						     relays? &note_relay_iter : NULL))
-				goto next;
-
-			ndb_query_result_init(&res, note, note_size, note_id);
-			if (!push_query_result(results, &res))
-				break;
-
-next:
-			if (mdb_cursor_get(cur, &k, &v, MDB_PREV))
-				break;
+			}
 		}
 	}
-	}
 
-	mdb_cursor_close(cur);
-	return 1;
+	if (ok)
+		ndb_query_drain_merger(txn, filter, results, &merger,
+				       (1 << NDB_FILTER_KINDS) | (1 << NDB_FILTER_AUTHORS),
+				       relays != NULL);
+
+	ndb_index_merger_destroy(&merger);
+
+	return ok;
 }
 
 static int ndb_query_plan_execute_profile_search(
@@ -5146,18 +5453,15 @@ static int ndb_query_plan_execute_relay_kinds(
 		struct ndb_filter *filter,
 		struct ndb_query_state *results)
 {
-	MDB_cursor *cur;
-	MDB_dbi db;
-	MDB_val k, v;
-	struct ndb_note *note;
+	struct ndb_index_merger merger;
 	struct ndb_filter_elements *kinds, *relays;
-	struct ndb_query_result res;
-	uint64_t kind, note_id, until, since, *pint;
-	size_t note_size;
+	uint64_t kind, until, since, *pint;
 	const char *relay;
-	int i, j, rc, len;
+	int i, j, len, ok;
 	struct ndb_relay_kind_key relay_key;
-	unsigned char keybuf[256];
+	// the relay+kind comparator requires 8 byte aligned keys
+	uint64_t keybuf_aligned[NDB_SCAN_KEY_MAX / 8];
+	unsigned char *keybuf = (unsigned char *)keybuf_aligned;
 
 	// we should have kinds in a kinds filter!
 	if (!(kinds = ndb_filter_find_elements(filter, NDB_FILTER_KINDS)))
@@ -5174,101 +5478,62 @@ static int ndb_query_plan_execute_relay_kinds(
 	if ((pint = ndb_filter_get_int(filter, NDB_FILTER_SINCE)))
 		since = *pint;
 
-	db = txn->lmdb->dbs[NDB_DB_NOTE_RELAY_KIND];
-
-	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur)))
+	// every relay+kind pair is its own created_at ordered run, so merge
+	// them instead of draining one pair at a time
+	if (!ndb_index_merger_init(&merger,
+				   txn->lmdb->dbs[NDB_DB_NOTE_RELAY_KIND],
+				   NDB_SCAN_KEY_RELAY_KIND, since,
+				   relays->count * kinds->count))
 		return 0;
 
-	for (j = 0; j < relays->count; j++) {
-		if (query_is_full(results))
-			break;
-
+	ok = 1;
+	for (j = 0; ok && j < relays->count; j++) {
 		if (!(relay = ndb_filter_get_string_element(filter, relays, j)))
 			continue;
 
-	for (i = 0; i < kinds->count; i++) {
-		if (query_is_full(results))
-			break;
+		for (i = 0; i < kinds->count; i++) {
+			kind = kinds->elements[i];
+			ndb_debug("kind %" PRIu64 "\n", kind);
 
-		kind = kinds->elements[i];
-		ndb_debug("kind %" PRIu64 "\n", kind);
+			if (!ndb_relay_kind_key_init_high(&relay_key, relay, kind, until)) {
+				ndb_debug("ndb_relay_kind_key_init_high failed in relay query\n");
+				continue;
+			}
 
-		if (!ndb_relay_kind_key_init_high(&relay_key, relay, kind, until)) {
-			ndb_debug("ndb_relay_kind_key_init_high failed in relay query\n");
-			continue;
-		}
+			if (!(len = ndb_build_relay_kind_key(keybuf, NDB_SCAN_KEY_MAX, &relay_key))) {
+				ndb_debug("ndb_build_relay_kind_key failed in relay query\n");
+				ndb_debug_relay_kind_key(&relay_key);
+				continue;
+			}
 
-		if (!(len = ndb_build_relay_kind_key(keybuf, sizeof(keybuf), &relay_key))) {
-			ndb_debug("ndb_build_relay_kind_key failed in relay query\n");
-			ndb_debug_relay_kind_key(&relay_key);
-			continue;
-		}
-
-		k.mv_data = keybuf;
-		k.mv_size = len;
-
-		ndb_debug("starting with key ");
-		ndb_debug_relay_kind_key(&relay_key);
-
-		if (!ndb_cursor_start(cur, &k, &v))
-			continue;
-
-		// scan the kind subindex
-		while (!query_is_full(results)) {
-			ndb_parse_relay_kind_key(&relay_key, k.mv_data);
-
-			ndb_debug("inside kind subindex ");
+			ndb_debug("starting with key ");
 			ndb_debug_relay_kind_key(&relay_key);
 
-			if (relay_key.kind != kind)
+			if (!ndb_index_merger_add(&merger, txn, keybuf, len)) {
+				ok = 0;
 				break;
-
-			if (strcmp(relay_key.relay, relay))
-				break;
-
-			// don't continue the scan if we're below `since`
-			if (relay_key.created_at < since)
-				break;
-
-			note_id = relay_key.note_key;
-			if (!(note = ndb_get_note_by_key(txn, note_id, &note_size)))
-				goto next;
-
-			if (!ndb_filter_matches_with(filter, note,
-						     (1 << NDB_FILTER_KINDS) | (1 << NDB_FILTER_RELAYS),
-						     NULL))
-				goto next;
-
-			ndb_query_result_init(&res, note, note_size, note_id);
-			if (!push_query_result(results, &res))
-				break;
-
-next:
-			if (mdb_cursor_get(cur, &k, &v, MDB_PREV))
-				break;
+			}
 		}
 	}
-	}
 
-	mdb_cursor_close(cur);
-	return 1;
+	if (ok)
+		ndb_query_drain_merger(txn, filter, results, &merger,
+				       (1 << NDB_FILTER_KINDS) | (1 << NDB_FILTER_RELAYS), 0);
+
+	ndb_index_merger_destroy(&merger);
+
+	return ok;
 }
 
 static int ndb_query_plan_execute_kinds(struct ndb_txn *txn,
 					struct ndb_filter *filter,
 					struct ndb_query_state *results)
 {
-	MDB_cursor *cur;
-	MDB_dbi db;
-	MDB_val k, v;
-	struct ndb_note *note;
-	struct ndb_u64_ts tsid, *ptsid;
+	struct ndb_index_merger merger;
+	struct ndb_u64_ts tsid;
 	struct ndb_filter_elements *kinds;
-	struct ndb_query_result res;
-	uint64_t kind, note_id, until, since, *pint;
-	size_t note_size;
-	int i, rc, need_relays = 0;
-	struct ndb_note_relay_iterator note_relay_iter;
+	uint64_t kind, until, since, *pint;
+	int i, need_relays = 0, ok;
 
 	// we should have kinds in a kinds filter!
 	if (!(kinds = ndb_filter_find_elements(filter, NDB_FILTER_KINDS)))
@@ -5285,59 +5550,31 @@ static int ndb_query_plan_execute_kinds(struct ndb_txn *txn,
 	if ((pint = ndb_filter_get_int(filter, NDB_FILTER_SINCE)))
 		since = *pint;
 
-	db = txn->lmdb->dbs[NDB_DB_NOTE_KIND];
-
-	if ((rc = mdb_cursor_open(txn->mdb_txn, db, &cur)))
+	// the kind index is only created_at ordered within a single kind, so
+	// merge the kinds rather than draining them one at a time
+	if (!ndb_index_merger_init(&merger, txn->lmdb->dbs[NDB_DB_NOTE_KIND],
+				   NDB_SCAN_KEY_U64_TS, since, kinds->count))
 		return 0;
 
+	ok = 1;
 	for (i = 0; i < kinds->count; i++) {
-		if (query_is_full(results))
-			break;
-
 		kind = kinds->elements[i];
 		ndb_debug("kind %" PRIu64 "\n", kind);
+
 		ndb_u64_ts_init(&tsid, kind, until);
-
-		k.mv_data = &tsid;
-		k.mv_size = sizeof(tsid);
-
-		if (!ndb_cursor_start(cur, &k, &v))
-			continue;
-
-		// for each id in our ids filter, find in the db
-		while (!query_is_full(results)) {
-			ptsid = (struct ndb_u64_ts *)k.mv_data;
-			if (ptsid->u64 != kind)
-				break;
-
-			// don't continue the scan if we're below `since`
-			if (ptsid->timestamp < since)
-				break;
-
-			note_id = *(uint64_t*)v.mv_data;
-			if (!(note = ndb_get_note_by_key(txn, note_id, &note_size)))
-				goto next;
-
-			if (need_relays)
-				ndb_note_relay_iterate_start(txn, &note_relay_iter, note_id);
-
-			if (!ndb_filter_matches_with(filter, note,
-						     1 << NDB_FILTER_KINDS,
-						     need_relays ? &note_relay_iter : NULL))
-				goto next;
-
-			ndb_query_result_init(&res, note, note_size, note_id);
-			if (!push_query_result(results, &res))
-				break;
-
-next:
-			if (mdb_cursor_get(cur, &k, &v, MDB_PREV))
-				break;
+		if (!ndb_index_merger_add(&merger, txn, &tsid, sizeof(tsid))) {
+			ok = 0;
+			break;
 		}
 	}
 
-	mdb_cursor_close(cur);
-	return 1;
+	if (ok)
+		ndb_query_drain_merger(txn, filter, results, &merger,
+				       1 << NDB_FILTER_KINDS, need_relays);
+
+	ndb_index_merger_destroy(&merger);
+
+	return ok;
 }
 
 static int filter_is_empty(struct ndb_filter *filter) {
