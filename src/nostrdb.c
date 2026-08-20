@@ -99,6 +99,27 @@ static int ndb_process_pns_event(struct ndb_ingester *ingester,
 				 struct keypair *keys, int nkeys,
 				 secp256k1_context *secp);
 
+/* SNS (NIP-1081) key: a shared team channel derived from a 32-byte team_root.
+ * Any member publishes kind-1081 envelopes signed by the shared team keypair
+ * and symmetrically encrypted with team_nip44_key; each envelope wraps a
+ * kind-13 seal (ECDH-encrypted to the team keypair) carrying the member's real
+ * rumor. Unlike pns_key we keep the secret key: peeling the inner seal needs
+ * the team keypair as the ECDH recipient.
+ */
+struct sns_key {
+	unsigned char pubkey[32];    /* team_pubkey: matches kind-1081 authors */
+	unsigned char nip44_key[32]; /* team_nip44_key: outer envelope key */
+	unsigned char seckey[32];    /* team_root: seal ECDH recipient secret */
+};
+
+static int ndb_process_sns_event(secp256k1_context *secp,
+				 struct ndb_ingester *ingester,
+				 struct ndb_note *note,
+				 struct sns_key *sns_keys, int nsns_keys,
+				 const char *relay,
+				 unsigned char *scratch, size_t scratch_size,
+				 struct keypair *keys, int nkeys);
+
 typedef int (*ndb_migrate_fn)(struct ndb_txn *);
 typedef int (*ndb_word_parser_fn)(void *, const char *word, int word_len,
 				  int word_index);
@@ -2736,6 +2757,8 @@ enum ndb_ingester_msgtype {
 	NDB_INGEST_ADD_KEY, // add a key for monitoring encrypted data
 	NDB_INGEST_PROCESS_GIFTWRAP, // reprocess unwrapped giftwraps
 	NDB_INGEST_PROCESS_PNS, // reprocess kind-1080 events
+	NDB_INGEST_ADD_TEAM_ROOT, // add a shared SNS team_root for monitoring
+	NDB_INGEST_PROCESS_SNS, // reprocess kind-1081 events
 };
 
 struct ndb_ingester_event {
@@ -2749,11 +2772,19 @@ struct ndb_ingester_add_key {
 	unsigned char key[32];
 };
 
+struct ndb_ingester_add_team_root {
+	unsigned char root[32];
+};
+
 struct ndb_ingester_process_giftwrap {
 	uint64_t giftwrap_key;
 };
 
 struct ndb_ingester_process_pns {
+	uint64_t note_key;
+};
+
+struct ndb_ingester_process_sns {
 	uint64_t note_key;
 };
 
@@ -2791,8 +2822,10 @@ struct ndb_ingester_msg {
 	union {
 		struct ndb_ingester_event event;
 		struct ndb_ingester_add_key add_key;
+		struct ndb_ingester_add_team_root add_team_root;
 		struct ndb_ingester_process_giftwrap process_giftwrap;
 		struct ndb_ingester_process_pns process_pns;
+		struct ndb_ingester_process_sns process_sns;
 	};
 };
 
@@ -3358,6 +3391,17 @@ int ndb_add_key(struct ndb *ndb, unsigned char *key)
 	return threadpool_dispatch_all_threads(&ndb->ingester.tp, &msg);
 }
 
+int ndb_add_team_root(struct ndb *ndb, unsigned char *team_root)
+{
+	struct ndb_ingester_msg msg;
+	msg.type = NDB_INGEST_ADD_TEAM_ROOT;
+
+	memcpy(msg.add_team_root.root, team_root, 32);
+
+	/* register the team_root on all ingester threads */
+	return threadpool_dispatch_all_threads(&ndb->ingester.tp, &msg);
+}
+
 void ndb_ingest_meta_init(struct ndb_ingest_meta *meta, unsigned client, const char *relay)
 {
 	meta->client = client;
@@ -3403,7 +3447,8 @@ static int ndb_ingester_process_note(secp256k1_context *secp,
 				     size_t scratch_size,
 				     const char *relay,
 				     struct keypair *keys, int nkeys,
-				     struct pns_key *pns_keys, int npns_keys)
+				     struct pns_key *pns_keys, int npns_keys,
+				     struct sns_key *sns_keys, int nsns_keys)
 {
 	enum ndb_ingest_filter_action action;
 	struct ndb_ingest_meta meta;
@@ -3467,6 +3512,10 @@ static int ndb_ingester_process_note(secp256k1_context *secp,
 		ndb_process_pns_event(ingester, note, pns_keys, npns_keys,
 				      relay, scratch, scratch_size,
 				      keys, nkeys, secp);
+	} else if (note->kind == 1081) {
+		ndb_debug("processing sns\n");
+		ndb_process_sns_event(secp, ingester, note, sns_keys, nsns_keys,
+				      relay, scratch, scratch_size, keys, nkeys);
 	}
 
 	msg.type = NDB_WRITER_NOTE;
@@ -3544,6 +3593,7 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 				      unsigned char *scratch,
 				      struct keypair *keys, int nkeys,
 				      struct pns_key *pns_keys, int npns_keys,
+				      struct sns_key *sns_keys, int nsns_keys,
 				      MDB_txn *read_txn)
 {
 	struct ndb_tce tce;
@@ -3623,7 +3673,8 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 						       scratch,
 						       ingester->scratch_size,
 						       ev->relay, keys, nkeys,
-						       pns_keys, npns_keys)) {
+						       pns_keys, npns_keys,
+						       sns_keys, nsns_keys)) {
 				ndb_debug("failed to process note\n");
 				goto cleanup;
 			} else {
@@ -3648,7 +3699,8 @@ static int ndb_ingester_process_event(secp256k1_context *ctx,
 						       ingester->scratch_size,
 						       ev->relay,
 						       keys, nkeys,
-						       pns_keys, npns_keys)) {
+						       pns_keys, npns_keys,
+						       sns_keys, nsns_keys)) {
 				ndb_debug("failed to process note\n");
 				goto cleanup;
 			} else {
@@ -6597,8 +6649,10 @@ static uint64_t ndb_write_note(secp256k1_context *secp,
 	int rc;
 	uint64_t note_key, kind;
 	struct ndb_relay_kind_key relay_key;
+	struct ndb_note *existing;
 	MDB_dbi note_db;
 	MDB_val key, val;
+	int promoted = 0;
 
 	kind = note->note->kind;
 
@@ -6606,9 +6660,26 @@ static uint64_t ndb_write_note(secp256k1_context *secp,
 	if (!note->overwrite_note_id &&
 	    (note_key = ndb_get_notekey_by_id(txn, note->note->id)))
 	{
-		if (ndb_relay_kind_key_init(&relay_key, note_key, kind, ndb_note_created_at(note->note), note->relay))
-			ndb_write_note_relay_indexes(txn, &relay_key);
-		return 0;
+		// Promote a plaintext note to a team-sealed rumor in place: if the
+		// incoming note is a rumor (unwrapped from an SNS envelope) but the
+		// stored record at this id is still plaintext, overwrite it under the
+		// SAME note_key so it gains the NDB_NOTE_FLAG_RUMOR flag + receiver
+		// pubkey (kept in the sig field) that the shared fold's team_sealed check
+		// reads. Reusing the key keeps the DUPSORT id/kind/tag indexes idempotent
+		// (identical key+value). We fall through to the write path and return 0
+		// (below) so no subscription is notified — the note content is unchanged,
+		// only its sealed provenance is.
+		existing = ndb_note_is_rumor(note->note)
+			? ndb_get_note_by_key(txn, note_key, NULL)
+			: NULL;
+		if (existing && !(*ndb_note_flags(existing) & NDB_NOTE_FLAG_RUMOR)) {
+			note->overwrite_note_id = note_key;
+			promoted = 1;
+		} else {
+			if (ndb_relay_kind_key_init(&relay_key, note_key, kind, ndb_note_created_at(note->note), note->relay))
+				ndb_write_note_relay_indexes(txn, &relay_key);
+			return 0;
+		}
 	}
 
 	/* this might be a reprocessed rumor, we need to update the giftwrap
@@ -6671,7 +6742,9 @@ static uint64_t ndb_write_note(secp256k1_context *secp,
 		ndb_write_unverified_zap_stats(txn, note->note, scratch, scratch_size);
 	}
 
-	return note_key;
+	// A promote rewrote an existing note_key in place (plaintext -> sealed rumor);
+	// return 0 so the writer doesn't notify subscriptions for the same content.
+	return promoted ? 0 : note_key;
 }
 
 static int ndb_ingest_rumor(secp256k1_context *secp,
@@ -6743,7 +6816,7 @@ static int ndb_ingest_rumor(secp256k1_context *secp,
 	return ndb_ingester_process_note(secp, rumor_msg, rc, ingester,
 					 scratch+rc, scratch_size-rc,
 					 relay, keys, nkeys,
-					 NULL, 0);
+					 NULL, 0, NULL, 0);
 }
 
 static int ndb_process_seal(secp256k1_context *secp,
@@ -6830,6 +6903,7 @@ int ndb_process_giftwraps(struct ndb *ndb, struct ndb_txn *txn)
 	uint64_t note_key;
 	struct ndb_ingester_msg msg;
 	struct ndb_u64_ts index_key, *ik;
+	int dispatched = 0;
 
 	MDB_val k, v;
 
@@ -6846,6 +6920,12 @@ int ndb_process_giftwraps(struct ndb *ndb, struct ndb_txn *txn)
 		return 0;
 	}
 
+	// Dispatch *every* not-yet-unwrapped gift wrap, not just the first: a backlog
+	// of 1059s can arrive before a key is registered (e.g. several shared-board
+	// key-shares, or a batch of DMs), and each needs peeling. Reprocessing runs
+	// async on the ingester pool (inbox DEFAULT_QUEUE_SIZE, far larger than any
+	// real backlog); if it fills, stop early and the next call / reboot catches
+	// the rest. Returns the number dispatched.
 	do {
 		ik = (struct ndb_u64_ts *)k.mv_data;
 		note_key = *(uint64_t*)v.mv_data;
@@ -6863,12 +6943,14 @@ int ndb_process_giftwraps(struct ndb *ndb, struct ndb_txn *txn)
 
 		ndb_debug("dispatching process giftwrap %ld\n", note_key);
 
-		mdb_cursor_close(cur);
-		return threadpool_dispatch(&ndb->ingester.tp, &msg);
+		if (!threadpool_dispatch(&ndb->ingester.tp, &msg))
+			break;
+
+		dispatched++;
 	} while (mdb_cursor_get(cur, &k, &v, MDB_PREV) == 0);
 
 	mdb_cursor_close(cur);
-	return 0;
+	return dispatched;
 }
 
 int ndb_process_pns(struct ndb *ndb, struct ndb_txn *txn)
@@ -6878,6 +6960,7 @@ int ndb_process_pns(struct ndb *ndb, struct ndb_txn *txn)
 	uint64_t note_key;
 	struct ndb_ingester_msg msg;
 	struct ndb_u64_ts index_key, *ik;
+	int dispatched = 0;
 
 	MDB_val k, v;
 
@@ -6894,6 +6977,11 @@ int ndb_process_pns(struct ndb *ndb, struct ndb_txn *txn)
 		return 0;
 	}
 
+	// Dispatch *every* not-yet-unwrapped PNS envelope, not just the first: a
+	// backlog can be stored before the key is registered, and each needs peeling.
+	// Reprocessing runs async on the ingester pool (inbox DEFAULT_QUEUE_SIZE, far
+	// larger than any real backlog); if it fills, stop early and the next call /
+	// reboot catches the rest. Returns the number dispatched.
 	do {
 		ik = (struct ndb_u64_ts *)k.mv_data;
 		note_key = *(uint64_t*)v.mv_data;
@@ -6911,12 +6999,74 @@ int ndb_process_pns(struct ndb *ndb, struct ndb_txn *txn)
 
 		ndb_debug("dispatching process pns %ld\n", note_key);
 
-		mdb_cursor_close(cur);
-		return threadpool_dispatch(&ndb->ingester.tp, &msg);
+		if (!threadpool_dispatch(&ndb->ingester.tp, &msg))
+			break;
+
+		dispatched++;
 	} while (mdb_cursor_get(cur, &k, &v, MDB_PREV) == 0);
 
 	mdb_cursor_close(cur);
-	return 0;
+	return dispatched;
+}
+
+/* Re-dispatch stored kind-1081 SNS envelopes for a second unwrap attempt.
+ * Called after a team_root is registered so envelopes that arrived before the
+ * root was known get peeled. Mirrors ndb_process_pns but scans kind 1081. */
+int ndb_process_sns(struct ndb *ndb, struct ndb_txn *txn)
+{
+	MDB_cursor *cur;
+	struct ndb_note *note;
+	uint64_t note_key;
+	struct ndb_ingester_msg msg;
+	struct ndb_u64_ts index_key, *ik;
+	int dispatched = 0;
+
+	MDB_val k, v;
+
+	if (mdb_cursor_open(txn->mdb_txn, txn->lmdb->dbs[NDB_DB_NOTE_KIND], &cur))
+		return 0;
+
+	ndb_u64_ts_init(&index_key, 1081, UINT64_MAX);
+
+	k.mv_data = &index_key;
+	k.mv_size = sizeof(index_key);
+
+	if (!ndb_cursor_start(cur, &k, &v)) {
+		mdb_cursor_close(cur);
+		return 0;
+	}
+
+	// Dispatch *every* not-yet-unwrapped 1081 envelope for reprocessing, not just
+	// the first: a whole board (its definition plus every card and overlay) can be
+	// stored before its team root is registered, and each envelope needs peeling.
+	// Reprocessing runs async on the ingester pool, whose inbox (DEFAULT_QUEUE_SIZE)
+	// far exceeds any real board; if it ever fills, stop early and let the next
+	// ndb_process_sns / reboot catch the remainder. Returns the number dispatched.
+	do {
+		ik = (struct ndb_u64_ts *)k.mv_data;
+		note_key = *(uint64_t*)v.mv_data;
+		if (ik->u64 != 1081)
+			break;
+
+		if (!(note = ndb_get_note_by_key(txn, note_key, NULL)))
+			continue;
+
+		if (*ndb_note_flags(note) & NDB_NOTE_FLAG_UNWRAPPED)
+			continue;
+
+		msg.type = NDB_INGEST_PROCESS_SNS;
+		msg.process_sns.note_key = note_key;
+
+		ndb_debug("dispatching process sns %ld\n", note_key);
+
+		if (!threadpool_dispatch(&ndb->ingester.tp, &msg))
+			break;
+
+		dispatched++;
+	} while (mdb_cursor_get(cur, &k, &v, MDB_PREV) == 0);
+
+	mdb_cursor_close(cur);
+	return dispatched;
 }
 
 int ndb_process_giftwrap(secp256k1_context *secp,
@@ -7116,12 +7266,92 @@ static int ndb_process_pns_event(struct ndb_ingester *ingester,
 					       inner_scratch + note_size,
 					       inner_scratch_size - note_size,
 					       relay, keys, nkeys,
-					       pns_keys, npns_keys)) {
+					       pns_keys, npns_keys, NULL, 0)) {
 			ndb_debug("failed to process pns inner note\n");
 			return 0;
 		}
 
 		/* mark the wrapper as unwrapped */
+		flags = ndb_note_flags(note);
+		*flags = *flags | NDB_NOTE_FLAG_UNWRAPPED;
+		return 1;
+	}
+
+	return 0;
+}
+
+/* Process an SNS (kind-1081) envelope. Three layers like a giftwrap
+ * (envelope -> seal -> rumor) but the outer layer is symmetric (a shared team
+ * key) instead of ECDH:
+ *
+ * 1. Match event.pubkey against a registered team pubkey
+ * 2. Symmetric-decrypt event.content with that team's nip44 key -> seal json
+ * 3. Reuse ndb_process_seal with the team keypair as the ECDH recipient to
+ *    peel the kind-13 seal and ingest the member's rumor, so the machinery is
+ *    shared with giftwrap and this function is just the outer envelope.
+ */
+static int ndb_process_sns_event(secp256k1_context *secp,
+				 struct ndb_ingester *ingester,
+				 struct ndb_note *note,
+				 struct sns_key *sns_keys, int nsns_keys,
+				 const char *relay,
+				 unsigned char *scratch, size_t scratch_size,
+				 struct keypair *keys, int nkeys)
+{
+	const char *payload;
+	unsigned char *sender_pubkey, *decrypted, *wrap_id, *old_scratch;
+	enum ndb_decrypt_result rc;
+	uint16_t decrypted_len, *flags;
+	size_t payload_len;
+	struct sns_key *sk;
+	struct keypair team_kp;
+	int i;
+
+	wrap_id = ndb_note_id(note);
+	payload = ndb_note_content(note);
+	sender_pubkey = ndb_note_pubkey(note);
+	payload_len = ndb_note_content_length(note);
+
+	for (i = 0; i < nsns_keys; i++) {
+		sk = &sns_keys[i];
+
+		/* match by team pubkey */
+		if (memcmp(sender_pubkey, sk->pubkey, 32) != 0)
+			continue;
+
+		/* peel the outer envelope: symmetric nip44 with team_nip44_key */
+		rc = nip44_decrypt_with_key(sk->nip44_key,
+					    payload, payload_len,
+					    scratch, scratch_size,
+					    &decrypted, &decrypted_len);
+		if (rc != NIP44_OK) {
+			ndb_debug("sns envelope nip44 decrypt failed: %s\n",
+				  nip44_err_msg(rc));
+			return 0;
+		}
+
+		/* advance scratch past the decrypted seal json */
+		old_scratch = scratch;
+		scratch = decrypted + decrypted_len;
+		if (scratch - old_scratch <= 0)
+			return 0;
+		scratch_size -= scratch - old_scratch;
+
+		/* reuse the seal machinery with the team keypair as the ECDH
+		 * recipient; the rumor inside carries the member's real pubkey */
+		memcpy(team_kp.pubkey, sk->pubkey, 32);
+		memcpy(team_kp.seckey, sk->seckey, 32);
+
+		if (!ndb_process_seal(secp, ingester,
+				      (const char *)decrypted, decrypted_len,
+				      wrap_id, &team_kp,
+				      relay, scratch, scratch_size,
+				      keys, nkeys)) {
+			ndb_debug("sns: failed to process seal\n");
+			return 0;
+		}
+
+		/* mark the envelope as unwrapped */
 		flags = ndb_note_flags(note);
 		*flags = *flags | NDB_NOTE_FLAG_UNWRAPPED;
 		return 1;
@@ -7555,12 +7785,63 @@ static int ndb_ingester_add_pns_key(secp256k1_context *ctx,
 	return 1;
 }
 
+/* Register a shared SNS team channel from a 32-byte team_root:
+ *   team_seckey    = team_root (used as-is)
+ *   team_pubkey    = secp256k1_xonly_pubkey(team_root)
+ *   team_nip44_key = HMAC-SHA256(key="nip44-v2", msg=team_root)
+ * Unlike ndb_ingester_add_pns_key there is no extra HKDF step deriving the
+ * secret: the root IS the channel secret key. This must byte-match enostr's
+ * derive_sns_keys.
+ */
+static int ndb_ingester_add_sns_key(secp256k1_context *ctx,
+				    unsigned char *team_root,
+				    struct sns_key *sns_keys, int *nsns_keys)
+{
+	struct sns_key *sk;
+	struct hmac_sha256 team_nip44;
+	int pk_parity = 0;
+	secp256k1_pubkey pubkey;
+	secp256k1_xonly_pubkey xonly_pubkey;
+
+	if (*nsns_keys == MAX_INGESTER_KEYS)
+		return 0;
+
+	/* the root arrives over the wire, so validate it as a secp secret */
+	if (!secp256k1_ec_seckey_verify(ctx, team_root))
+		return 0;
+
+	if (!secp256k1_ec_pubkey_create(ctx, &pubkey, team_root))
+		return 0;
+
+	if (!secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_pubkey, &pk_parity,
+						&pubkey))
+		return 0;
+
+	sk = &sns_keys[*nsns_keys];
+
+	if (!secp256k1_xonly_pubkey_serialize(ctx, sk->pubkey, &xonly_pubkey))
+		return 0;
+
+	/* team_nip44_key = HKDF-Extract(salt="nip44-v2", ikm=team_root)
+	 *              = HMAC-SHA256(key="nip44-v2", msg=team_root) */
+	hmac_sha256(&team_nip44, "nip44-v2", 8, team_root, 32);
+	memcpy(sk->nip44_key, team_nip44.sha.u.u8, 32);
+
+	/* keep the secret: peeling the inner seal needs the team keypair */
+	memcpy(sk->seckey, team_root, 32);
+
+	(*nsns_keys)++;
+	return 1;
+}
+
 static const char *ndb_ingest_msg_name(enum ndb_ingester_msgtype type)
 {
 	switch (type) {
 	case NDB_INGEST_PROCESS_GIFTWRAP: return "process_giftwrap";
 	case NDB_INGEST_PROCESS_PNS: return "process_pns";
+	case NDB_INGEST_PROCESS_SNS: return "process_sns";
 	case NDB_INGEST_ADD_KEY: return "add_key";
+	case NDB_INGEST_ADD_TEAM_ROOT: return "add_team_root";
 	case NDB_INGEST_QUIT: return "quit";
 	case NDB_INGEST_EVENT: return "event";
 	}
@@ -7641,6 +7922,42 @@ static int ndb_ingester_reprocess_pns(
 	return 1;
 }
 
+/* reprocess an SNS envelope if we can */
+static int ndb_ingester_reprocess_sns(
+	secp256k1_context *secp,
+	struct ndb_ingester *ingester,
+	struct ndb_txn *txn,
+	struct ndb_ingester_process_sns *proc_sns,
+	unsigned char *scratch, size_t scratch_size,
+	struct sns_key *sns_keys, int nsns_keys,
+	struct keypair *keys, int nkeys)
+{
+	struct ndb_note *note;
+	size_t note_size;
+	int rc;
+
+	note = ndb_get_note_by_key(txn, proc_sns->note_key, &note_size);
+	if (!note) {
+		ndb_debug("failed to find sns note with note_key %ld\n",
+			  proc_sns->note_key);
+		return 0;
+	}
+
+	memcpy(scratch, note, note_size);
+	note = (struct ndb_note *)scratch;
+
+	rc = ndb_process_sns_event(secp, ingester, note, sns_keys, nsns_keys,
+				   NULL, scratch + note_size,
+				   scratch_size - note_size, keys, nkeys);
+	if (!rc) {
+		ndb_debug("failed to reprocess sns %ld\n", proc_sns->note_key);
+		return 0;
+	}
+
+	ndb_debug("reprocess sns %ld success\n", proc_sns->note_key);
+	return 1;
+}
+
 static void *ndb_ingester_thread(void *data)
 {
 	secp256k1_context *ctx;
@@ -7648,17 +7965,20 @@ static void *ndb_ingester_thread(void *data)
 	struct ndb_ingester *ingester = (struct ndb_ingester *)thread->ctx;
 	struct ndb_lmdb *lmdb = ingester->lmdb;
 	struct ndb_ingester_msg msgs[THREAD_QUEUE_BATCH], *msg;
-	int i, popped, done, any_event, rc, nkeys, npns_keys;
+	int i, popped, done, any_event, rc, nkeys, npns_keys, nsns_keys;
 	MDB_txn *read_txn = NULL;
 	struct keypair *keys;
 	struct pns_key *pns_keys;
+	struct sns_key *sns_keys;
 	struct ndb_txn txn;
 	unsigned char *scratch;
 
 	nkeys = 0;
 	npns_keys = 0;
+	nsns_keys = 0;
 	keys = malloc(sizeof(*keys) * MAX_INGESTER_KEYS);
 	pns_keys = malloc(sizeof(*pns_keys) * MAX_INGESTER_KEYS);
+	sns_keys = malloc(sizeof(*sns_keys) * MAX_INGESTER_KEYS);
 
 	// this is used in note verification and anything else that
 	// needs a temporary buffer
@@ -7695,9 +8015,11 @@ static void *ndb_ingester_thread(void *data)
 			case NDB_INGEST_EVENT:
 			case NDB_INGEST_PROCESS_GIFTWRAP:
 			case NDB_INGEST_PROCESS_PNS:
+			case NDB_INGEST_PROCESS_SNS:
 				any_event = 1;
 				break;
 			case NDB_INGEST_ADD_KEY:
+			case NDB_INGEST_ADD_TEAM_ROOT:
 			case NDB_INGEST_QUIT:
 				break;
 			}
@@ -7737,11 +8059,27 @@ static void *ndb_ingester_thread(void *data)
 					keys, nkeys);
 				break;
 
+			case NDB_INGEST_PROCESS_SNS:
+				ndb_txn_from_mdb(&txn, lmdb, read_txn);
+				ndb_ingester_reprocess_sns(
+					ctx, ingester, &txn,
+					&msg->process_sns,
+					scratch, ingester->scratch_size,
+					sns_keys, nsns_keys,
+					keys, nkeys);
+				break;
+
 			case NDB_INGEST_ADD_KEY:
 				ndb_ingester_add_keypair(ctx, msg->add_key.key,
 							 keys, &nkeys);
 				ndb_ingester_add_pns_key(ctx, msg->add_key.key,
 							 pns_keys, &npns_keys);
+				break;
+
+			case NDB_INGEST_ADD_TEAM_ROOT:
+				ndb_ingester_add_sns_key(ctx,
+							 msg->add_team_root.root,
+							 sns_keys, &nsns_keys);
 				break;
 
 			case NDB_INGEST_EVENT:
@@ -7750,6 +8088,7 @@ static void *ndb_ingester_thread(void *data)
 							   scratch,
 							   keys, nkeys,
 							   pns_keys, npns_keys,
+							   sns_keys, nsns_keys,
 							   read_txn);
 				break;
 			}
@@ -7764,6 +8103,7 @@ static void *ndb_ingester_thread(void *data)
 	free(scratch);
 	free(keys);
 	free(pns_keys);
+	free(sns_keys);
 	return NULL;
 }
 

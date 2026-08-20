@@ -680,6 +680,158 @@ static void test_pns_reprocess()
 	printf("ok test_pns_reprocess\n");
 }
 
+/* team_root = 0x11,0x00...0x00,0x22 ; matches enostr::sns derive_matches_fixed_vector */
+static unsigned char sns_team_root[32] = {
+	0x11,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x22
+};
+
+/* team pubkey derived from sns_team_root (the kind-1081 envelope author) */
+static const unsigned char sns_team_pub[32] = {
+	0xd6, 0x62, 0x35, 0x02, 0xbc, 0xf6, 0x7f, 0x67, 0x58, 0xe2,
+	0x50, 0x80, 0x11, 0x1a, 0xd9, 0x22, 0x11, 0x81, 0xc3, 0x3c,
+	0xfc, 0xba, 0x14, 0xd7, 0x4d, 0xc9, 0xe3, 0x78, 0x4e, 0xcf,
+	0xe1, 0xf7
+};
+
+/* member pubkey (secret key 0x02) that signs the inner seal + rumor */
+static const unsigned char sns_member_pub[32] = {
+	0xc6, 0x04, 0x7f, 0x94, 0x41, 0xed, 0x7d, 0x6d, 0x30, 0x45,
+	0x40, 0x6e, 0x95, 0xc0, 0x7c, 0xd8, 0x5c, 0x77, 0x8e, 0x4b,
+	0x8c, 0xef, 0x3c, 0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c, 0x70,
+	0x9e, 0xe5
+};
+
+/* kind-1081 envelope note id (for the UNWRAPPED / giftwrap_id assertions) */
+static const unsigned char sns_envelope_id[32] = {
+	0x99, 0xb8, 0x45, 0x9d, 0x77, 0xdd, 0x68, 0x73, 0xdd, 0xc4,
+	0xb1, 0x96, 0x96, 0xa5, 0x8e, 0xbf, 0xfc, 0x06, 0x76, 0x99,
+	0xe9, 0x22, 0x05, 0xdd, 0xff, 0xac, 0xa5, 0x7d, 0xbd, 0xe7,
+	0xed, 0xd9
+};
+
+/* A kind-1081 SNS envelope produced by enostr::sns::wrap_rumor with
+ * team_root = sns_team_root, member secret 0x02, and inner rumor
+ * {kind:1, content:"hello from sns"}. Signed by the shared team keypair,
+ * symmetric-encrypted with team_nip44_key, wrapping a kind-13 seal. */
+static const char *sns_envelope_json =
+	"{\"id\":\"99b8459d77dd6873ddc4b19696a58ebffc067699e92205ddffaca57dbde7edd9\",\"pubkey\":\"d6623502bcf67f6758e25080111ad9221181c33cfcba14d74dc9e3784ecfe1f7\",\"created_at\":1700000000,\"kind\":1081,\"tags\":[],\"content\":\"ArEfCumINQm1ORoUDeVy/6whNMlLXlux87U/T9fzTTl2+RS4lT3UUb4n9SR/MxOtHcmaq8TKjZGXOgTS/zghs+5cel/cPWWIwX6gZLkFSi3XVGczhG91MPFTph67G5Q/7XJq3DvWR6vJzqF0bXLd9YphI9gs3G7Za3eVtjgcwsvv9Qj+VKmRMQAVKnlksY+qj3BH8tudCm0N6QOJpR0GKw5VKFmvnq6ErnyIM8P+6IMw61sx8KqXMpgpe/ASxC89ZHJNSuf4VPwMaj6q3xuGgfxzI7QjpOfT/L3cca8j9DYK8zbpkT6VIHdXCTYkno3UdPh9Q+9HYjL/07F5+qurLiS0Oxem53YByzgiW3HKRkk/V+j3JyXLm+jNRVXH48+QS+oOUrpBrOYMmxhxd2XIAdTZpSJJMQ2d6u60XBiLeobLuBnSSOQnpKPxGLvTCfEgxX4yFyK1K7TeS5GlnVCnnWNAUFpfpMHhaS6tjt2/gpG9qKa3PSXdh0rSHudYE7Sum6XoreulfDVD6jWW6SscVKBNCG0cDzczRSdgvQ5sDr8S5M1boDvlCQfACWmkBJURFTLOvr/taTk5U+x5+Gdk6t46GteMFITALBPL2l1JEko06ahUk3DYxGdEGesh1+WwpnWjUiYhfTTJ13tzsjxjX2RDPdktRKsPCmfyOd74ooFwq9LaDcm9dAswJkpEmHPqHYdGwsIT68tH5SDMlXygUkqZ/Kt7W2jx0+JB3N3rck/lVWG+8yWfiJsyM5VysMFcvgNdFBslW+f5vK4EVu01zvriwILpuxhKGEl9VyPHPKBlY3IqL43uzZkFQHZvhGSB9WBF8JR2A6UtTWn9jyblkZgo+fyUY0CyX82pY39msDq72i0iHTzIqwZ4nU+kAbDB9xXJQ6W4BIGHXx/l0zIAn+pp0rLHlOMvnxj1iW6UVxZcY4RJBSKsK3xfNrs9xcwDtf+v5vtk0FiHbaRqUvbHKrOfxrBWIIQxsNtLy7dZuoQy3skIeD9uYyf/aqlye+6f+CnVF4WIkYMMlOorwA2EFnnSTiEuMcoaxozDt36dW4ThprAmued7w2cyUa/+jrxO5Z4CJMBAV8Q61s5GfRLd5XxqROj43CA4g7r2sKx2uKnJsiUZvHRH9205OAe9ZpqWW0WIBYRyRvuaEGeaoIJDE+oiPUk4wD1uovx01z0PxO6UsCsFk3P/4a22y6he/NvhClI115dsjvTwf/je78mnLqI0FJ02G7b1ZR7Isx9J5JzEPUqrFT2alsLxLMDix4bWe9mIgpbRfMejshl1vkx6MpwVx538bRrq05ahXarwuMSbREPR/IwoS+mJlTNsUtJ/dHYJXuvIkN3K3cl2zQ5RtWuMBfzX9giEezUydjslJWoZY3CWtA4wFMV6KO7viGJ2dFh/2FRR5dt4VhFotdZ5EmUxjMSzsr0gBuqDJAEfJ7bdGbQ=\",\"sig\":\"77b6dc3e2934d4771c76c4f6d0c76d204a2773450f541328ccccaeeae171f46d810b142708452a17d57bbfdf07c916e24d04c1378689c14ff3ab78e933dcfdef\"}";
+
+/* SNS envelope arrives after the team_root is already registered: it should
+ * auto-unwrap into the member's rumor on ingest. */
+static void test_sns_unwrap()
+{
+	struct ndb *ndb;
+	struct ndb_filter filter;
+	struct ndb_config config;
+	struct ndb_txn txn;
+	struct ndb_note *inner, *envelope;
+	int ok;
+	uint64_t subid;
+	uint64_t note_ids[2];
+	ndb_default_config(&config);
+
+	delete_test_db();
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	/* register the shared team_root before ingestion so it auto-unwraps */
+	ndb_add_team_root(ndb, sns_team_root);
+
+	/* subscribe for the kind-1 inner rumor */
+	kind_filter(&filter, 1);
+	subid = ndb_subscribe(ndb, &filter, 1);
+
+	ndb_process_event(ndb, sns_envelope_json, strlen(sns_envelope_json));
+
+	ok = ndb_wait_for_notes(ndb, subid, note_ids,
+				sizeof(note_ids)/sizeof(note_ids[0]));
+	assert(ok == 1);
+	assert(ndb_unsubscribe(ndb, subid));
+
+	ndb_begin_query(ndb, &txn);
+	inner = ndb_get_note_by_key(&txn, note_ids[0], NULL);
+	assert(inner);
+
+	assert(ndb_note_is_rumor(inner) == 1);
+	assert(ndb_note_kind(inner) == 1);
+	assert(!strcmp(ndb_note_content(inner), "hello from sns"));
+	/* authorship survives the wrap: the rumor is attributed to the member */
+	assert(!memcmp(ndb_note_pubkey(inner), sns_member_pub, 32));
+	/* the "receiver" of an SNS rumor is the shared team channel */
+	assert(!memcmp(ndb_note_rumor_receiver_pubkey(inner), sns_team_pub, 32));
+	assert(!memcmp(ndb_note_rumor_giftwrap_id(inner), sns_envelope_id, 32));
+	ndb_end_query(&txn);
+
+	/* verify the envelope is marked as unwrapped */
+	ndb_begin_query(ndb, &txn);
+	envelope = ndb_get_note_by_id(&txn, sns_envelope_id, NULL, NULL);
+	assert(envelope);
+	assert(*ndb_note_flags(envelope) & NDB_NOTE_FLAG_UNWRAPPED);
+	ndb_end_query(&txn);
+
+	ndb_filter_destroy(&filter);
+	ndb_destroy(ndb);
+	printf("ok test_sns_unwrap\n");
+}
+
+/* SNS envelope arrives before the team_root is registered: registering the
+ * root and calling ndb_process_sns should peel the stored envelope. */
+static void test_sns_reprocess()
+{
+	struct ndb *ndb;
+	struct ndb_filter filter;
+	struct ndb_config config;
+	struct ndb_txn txn;
+	struct ndb_note *inner;
+	int ok;
+	uint64_t subid;
+	uint64_t note_ids[2];
+	ndb_default_config(&config);
+
+	delete_test_db();
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	/* ingest the envelope BEFORE registering the team_root */
+	kind_filter(&filter, 1081);
+	subid = ndb_subscribe(ndb, &filter, 1);
+
+	ndb_process_event(ndb, sns_envelope_json, strlen(sns_envelope_json));
+
+	ok = ndb_wait_for_notes(ndb, subid, note_ids,
+				sizeof(note_ids)/sizeof(note_ids[0]));
+	assert(ok == 1);
+	assert(ndb_unsubscribe(ndb, subid));
+
+	/* now register the root and reprocess */
+	ndb_filter_destroy(&filter);
+	kind_filter(&filter, 1);
+	subid = ndb_subscribe(ndb, &filter, 1);
+
+	ndb_add_team_root(ndb, sns_team_root);
+	ndb_begin_query(ndb, &txn);
+	ndb_process_sns(ndb, &txn);
+	ndb_end_query(&txn);
+
+	ok = ndb_wait_for_notes(ndb, subid, note_ids,
+				sizeof(note_ids)/sizeof(note_ids[0]));
+	assert(ndb_unsubscribe(ndb, subid));
+
+	ndb_begin_query(ndb, &txn);
+	inner = ndb_get_note_by_key(&txn, note_ids[0], NULL);
+	assert(inner);
+
+	assert(ndb_note_is_rumor(inner) == 1);
+	assert(ndb_note_kind(inner) == 1);
+	assert(!strcmp(ndb_note_content(inner), "hello from sns"));
+	assert(!memcmp(ndb_note_pubkey(inner), sns_member_pub, 32));
+	assert(!memcmp(ndb_note_rumor_receiver_pubkey(inner), sns_team_pub, 32));
+	ndb_end_query(&txn);
+
+	ndb_filter_destroy(&filter);
+	ndb_destroy(ndb);
+	printf("ok test_sns_reprocess\n");
+}
+
 static void test_zap_verification()
 {
 	struct ndb *ndb;
@@ -3222,6 +3374,8 @@ int main(int argc, const char *argv[]) {
 	test_giftwrap_unwrap();
 	test_pns_unwrap();
 	test_pns_reprocess();
+	test_sns_unwrap();
+	test_sns_reprocess();
 	test_zap_verification();
 	test_multiple_zaps();
 	test_nip44_round_trip();
