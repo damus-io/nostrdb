@@ -631,6 +631,99 @@ static void test_nip44_round_trip()
 	secp256k1_context_destroy(context);
 }
 
+/* NIP-44's calc_padded_len, written straight from the spec so the test
+ * does not share arithmetic with the implementation it checks. */
+static uint32_t nip44_spec_padded_len(uint32_t unpadded_len)
+{
+	uint32_t next_power = 1, chunk;
+
+	if (unpadded_len <= 32)
+		return 32;
+
+	while (next_power < unpadded_len)
+		next_power <<= 1;
+
+	chunk = next_power <= 256 ? 32 : next_power / 8;
+	return chunk * ((unpadded_len - 1) / chunk + 1);
+}
+
+static void nip44_large_round_trip(const unsigned char *key,
+				   unsigned char *plaintext, uint32_t len,
+				   unsigned char *enc_buf, size_t enc_size,
+				   unsigned char *dec_buf, size_t dec_size)
+{
+	struct nip44_payload decoded;
+	unsigned char *decrypted;
+	uint16_t decrypted_len;
+	char *out;
+	ssize_t out_len;
+	enum ndb_decrypt_result rc;
+
+	rc = nip44_encrypt_with_key(key, plaintext, len, enc_buf, enc_size,
+				    &out, &out_len);
+	if (rc != NIP44_OK)
+		printf("nip44 encrypt %u: %s\n", len, nip44_err_msg(rc));
+	assert(rc == NIP44_OK);
+
+	/* the padded blob is the spec's size, so a spec-compliant peer
+	 * (the Rust nostr crate encrypts for notedeck) agrees with us */
+	rc = nip44_decode_payload(&decoded, dec_buf, dec_size, out, out_len);
+	assert(rc == NIP44_OK);
+	if (decoded.ciphertext_len != 2 + nip44_spec_padded_len(len))
+		printf("nip44 %u: padded blob %zu, spec says %u\n", len,
+		       decoded.ciphertext_len, 2 + nip44_spec_padded_len(len));
+	assert(decoded.ciphertext_len == 2 + nip44_spec_padded_len(len));
+
+	rc = nip44_decrypt_with_key(key, out, out_len, dec_buf, dec_size,
+				    &decrypted, &decrypted_len);
+	if (rc != NIP44_OK)
+		printf("nip44 decrypt %u: %s\n", len, nip44_err_msg(rc));
+	assert(rc == NIP44_OK);
+	assert(decrypted_len == len);
+	assert(!memcmp(decrypted, plaintext, len));
+}
+
+/* Plaintexts over 32KB used to fail: calc_padded_len did uint16_t
+ * arithmetic, so the next power of two above 32768 wrapped to 0 and the
+ * padded length came out as 65536. The spec pads 32769..57344 bytes to a
+ * smaller multiple of 8192, so those were rejected as "padding size is
+ * wrong" (57345..65535 pad to 65536 either way). Sweep 32769..65535, with
+ * its edges, both ways. */
+static void test_nip44_large_padding()
+{
+	static const uint32_t edges[] = {
+		256, 257, 32767, 32768, 32769, 40960, 40961, 49152,
+		57344, 57345, 65534, 65535,
+	};
+	unsigned char key[32];
+	unsigned char *plaintext, *enc_buf, *dec_buf;
+	size_t enc_size = 200000, dec_size = 100000;
+	uint32_t len;
+	size_t i;
+
+	memset(key, 0x42, sizeof(key));
+	plaintext = malloc(65535);
+	enc_buf = malloc(enc_size);
+	dec_buf = malloc(dec_size);
+	assert(plaintext && enc_buf && dec_buf);
+
+	for (i = 0; i < 65535; i++)
+		plaintext[i] = 'a' + (i % 26);
+
+	for (i = 0; i < sizeof(edges)/sizeof(edges[0]); i++)
+		nip44_large_round_trip(key, plaintext, edges[i],
+				       enc_buf, enc_size, dec_buf, dec_size);
+
+	for (len = 32769; len <= 65535; len += 127)
+		nip44_large_round_trip(key, plaintext, len,
+				       enc_buf, enc_size, dec_buf, dec_size);
+
+	free(plaintext);
+	free(enc_buf);
+	free(dec_buf);
+	printf("ok test_nip44_large_padding\n");
+}
+
 static void kind_filter(struct ndb_filter *f, uint64_t kind)
 {
 	ndb_filter_init(f);
@@ -3978,6 +4071,7 @@ int main(int argc, const char *argv[]) {
 	test_zap_verification();
 	test_multiple_zaps();
 	test_nip44_round_trip();
+	test_nip44_large_padding();
 	test_nip44_test_vector();
 	test_nip44_decrypt();
 	test_replay_attack();

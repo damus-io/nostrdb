@@ -164,7 +164,7 @@ static int cursor_push_b16(struct cursor *c, uint16_t s)
 	return 1;
 }
 
-static inline uint16_t next_pow2_16(uint16_t v)
+static inline uint32_t next_pow2_32(uint32_t v)
 {
 	if (v <= 1)
 		return 1;
@@ -174,14 +174,22 @@ static inline uint16_t next_pow2_16(uint16_t v)
 	v |= v >> 2;
 	v |= v >> 4;
 	v |= v >> 8;
+	v |= v >> 16;
 	v++; /* now v is next power of two */
 
 	return v;
 }
 
-static int calc_padded_len(uint16_t unpadded_len)
+/* NIP-44 padded length for 1..65535 bytes of plaintext.
+ *
+ * The arithmetic is 32-bit: a plaintext over 32768 bytes has a next power
+ * of two of 65536, which a uint16_t wraps to 0. That gave a 65536-byte pad
+ * instead of the spec's multiple of 8192, so unpad rejected spec-padded
+ * payloads of 32769..57344 bytes and our own encrypt truncated its length.
+ */
+static uint32_t calc_padded_len(uint32_t unpadded_len)
 {
-	uint16_t chunk;
+	uint32_t chunk;
 
 	/* enforce minimum of 32 */
 	if (unpadded_len <= 32)
@@ -192,7 +200,7 @@ static int calc_padded_len(uint16_t unpadded_len)
 		chunk = 32;
 	} else {
 		/* next_power / 8 */
-		chunk = next_pow2_16(unpadded_len) >> 3;
+		chunk = next_pow2_32(unpadded_len) >> 3;
 	}
 
 	chunk--;
@@ -205,7 +213,8 @@ static int unpad(unsigned char *padded_buf, size_t len, uint16_t *unpadded_len)
 {
 	struct cursor c;
 	unsigned char *decoded_end;
-	uint16_t decoded_len, decoded_end_len;
+	uint16_t decoded_len;
+	size_t decoded_end_len;
 
 	make_cursor(padded_buf, padded_buf+len, &c);
 
@@ -214,12 +223,12 @@ static int unpad(unsigned char *padded_buf, size_t len, uint16_t *unpadded_len)
 		return 0;
 	}
 
-	decoded_end_len = decoded_len + 2;
+	decoded_end_len = (size_t)decoded_len + 2;
 	decoded_end = padded_buf + decoded_end_len;
 
 	if (decoded_end > c.end) {
 		fprintf(stderr, "decode debug: '%.*s'\n", (int)len-2, (const char *)(padded_buf + 2));
-		fprintf(stderr, "unpad: decoded end (%d) is larger then original buf (%ld)\n",
+		fprintf(stderr, "unpad: decoded end (%zu) is larger then original buf (%zu)\n",
 				decoded_end_len, len);
 		return 0;
 	}
@@ -234,7 +243,7 @@ static int unpad(unsigned char *padded_buf, size_t len, uint16_t *unpadded_len)
 		return 0;
 	}
 
-	if (decoded_len == 0 || len != (2 + calc_padded_len(decoded_len))) {
+	if (decoded_len == 0 || len != (2 + (size_t)calc_padded_len(decoded_len))) {
 		fprintf(stderr, "padding size is wrong\n");
 		return 0;
 	}
@@ -408,7 +417,7 @@ nip44_encrypt(void *secp, const unsigned char *sender_seckey,
 	unsigned char nonce[32];
 	unsigned char *ciphertext;
 	struct message_keys keys;
-	uint16_t ciphertext_len;
+	size_t ciphertext_len;
 	
 	make_cursor(buf, buf+bufsize, &cursor);
 
@@ -531,7 +540,7 @@ nip44_encrypt_with_key(const unsigned char *conversation_key,
 	unsigned char nonce[32];
 	unsigned char *ciphertext;
 	struct message_keys keys;
-	uint16_t ciphertext_len;
+	size_t ciphertext_len;
 
 	make_cursor(buf, buf+bufsize, &cursor);
 
