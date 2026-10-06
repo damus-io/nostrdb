@@ -3603,6 +3603,95 @@ static void test_subscriptions()
 	ndb_destroy(ndb);
 }
 
+// Iterating a copy of parsed blocks must stop at the last block, not run on
+// into whatever memory follows the copy (the bytes after a value in an lmdb
+// page, say). blocks_size used to be measured from the content pointer.
+static void test_blocks_size_stops_iteration() {
+	unsigned char buf[4096], copy[4096];
+	const char *content = "split this commit in two";
+	struct ndb_blocks *blocks, *copied;
+	struct ndb_block *block;
+	struct ndb_block_iterator iterator, *iter = &iterator;
+	int n = 0;
+
+	assert(ndb_parse_content(buf, sizeof(buf), content, strlen(content), &blocks));
+	assert(blocks->num_blocks == 1);
+	assert(blocks->blocks_size + sizeof(struct ndb_blocks) <= blocks->total_size);
+
+	// garbage after the copy, as there would be past an lmdb value
+	memset(copy, 0x03, sizeof(copy));
+	memcpy(copy, buf, ndb_blocks_total_size(blocks));
+	copied = (struct ndb_blocks *)copy;
+
+	ndb_blocks_iterate_start(content, copied, iter);
+	while ((block = ndb_blocks_iterate_next(iter))) {
+		n++;
+		assert(ndb_get_block_type(block) == BLOCK_TEXT);
+		assert(ndb_block_str(block)->len == strlen(content));
+	}
+	assert(n == 1);
+}
+
+// A note of a kind nostrdb doesn't parse at ingest (a kind-1111 comment) has
+// its blocks made on first read. A short one used to come back with none,
+// because the lazy path passed the content's length as the buffer size, and
+// then read back with garbage blocks once that empty parse was stored.
+static void test_lazy_blocks_short_note() {
+	struct ndb *ndb;
+	struct ndb_config config;
+	struct ndb_filter filter;
+	struct ndb_txn txn;
+	struct ndb_note *note;
+	struct ndb_blocks *blocks;
+	struct ndb_block *block;
+	struct ndb_block_iterator iterator, *iter = &iterator;
+	uint64_t subid, note_key = 0;
+	int pass, n;
+	const char *content = "split this commit in two";
+	const char *ev = "[\"EVENT\",\"s\",{\"id\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\","
+		"\"pubkey\":\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\","
+		"\"created_at\":1700000000,\"kind\":1111,\"tags\":[],"
+		"\"content\":\"split this commit in two\","
+		"\"sig\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"}]";
+
+	delete_test_db();
+	ndb_default_config(&config);
+	ndb_config_set_flags(&config, NDB_FLAG_SKIP_NOTE_VERIFY);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	kind_filter(&filter, 1111);
+	subid = ndb_subscribe(ndb, &filter, 1);
+	assert(ndb_process_event(ndb, ev, strlen(ev)));
+	assert(ndb_wait_for_notes(ndb, subid, &note_key, 1) == 1);
+	ndb_unsubscribe(ndb, subid);
+	ndb_filter_destroy(&filter);
+
+	// pass 0 makes the blocks and hands them to the writer, pass 1 (after
+	// a restart flushes the writer) reads the stored copy
+	for (pass = 0; pass < 2; pass++) {
+		assert(ndb_begin_query(ndb, &txn));
+		assert((note = ndb_get_note_by_key(&txn, note_key, NULL)));
+		assert((blocks = ndb_get_blocks_by_key(ndb, &txn, note_key)));
+
+		n = 0;
+		ndb_blocks_iterate_start(ndb_note_content(note), blocks, iter);
+		while ((block = ndb_blocks_iterate_next(iter))) {
+			n++;
+			assert(ndb_get_block_type(block) == BLOCK_TEXT);
+			assert(ndb_block_str(block)->len == strlen(content));
+		}
+		assert(n == 1);
+
+		ndb_blocks_free(blocks);
+		ndb_end_query(&txn);
+
+		ndb_destroy(ndb);
+		assert(ndb_init(&ndb, test_dir, &config));
+	}
+
+	ndb_destroy(ndb);
+}
+
 static void test_weird_note_corruption() {
 	struct ndb *ndb;
 	struct ndb_config config;
@@ -4098,6 +4187,8 @@ int main(int argc, const char *argv[]) {
 	test_tag_query();
 	test_weird_note_corruption();
 	test_parse_content();
+	test_blocks_size_stops_iteration();
+	test_lazy_blocks_short_note();
 	test_subscriptions();
 	test_comma_url_parsing();
 	test_varints();

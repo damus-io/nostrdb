@@ -11447,6 +11447,7 @@ static struct ndb_blocks *ndb_note_to_blocks(struct ndb_note *note)
 	size_t content_len;
 	struct ndb_blocks *blocks;
 	unsigned char *buffer;
+	const int buffer_size = 2<<18; // Not carefully calculated, but ok because we will not need this once we switch to the local relay model
 
 	content = ndb_note_content(note);
 	content_len = ndb_note_content_length(note);
@@ -11455,11 +11456,11 @@ static struct ndb_blocks *ndb_note_to_blocks(struct ndb_note *note)
 	if (content_len >= INT32_MAX)
 		return NULL;
 
-	buffer = malloc(2<<18);  // Not carefully calculated, but ok because we will not need this once we switch to the local relay model
+	buffer = malloc(buffer_size);
 	if (!buffer)
 		return NULL;
 
-	if (!ndb_parse_content(buffer, content_len, content, content_len, &blocks)) {
+	if (!ndb_parse_content(buffer, buffer_size, content, content_len, &blocks)) {
 		free(buffer);
 		return NULL;
 	}

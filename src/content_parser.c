@@ -529,11 +529,20 @@ int ndb_parse_content(unsigned char *buf, int buf_size,
 
 	unsigned char *start, *pre_mention, *blocks_start;
 	
+	// the header is written without the cursor, so make sure it fits
+	if (buf_size < (int)sizeof(struct ndb_blocks))
+		return 0;
+
 	make_cursor(buf, buf + buf_size, &parser.buffer);
 
 	// allocate some space for the blocks header
 	*blocks_p = parser.blocks = (struct ndb_blocks *)buf;
 	parser.buffer.p += sizeof(struct ndb_blocks);
+
+	// blocks_size counts the encoded blocks, which start right after the
+	// header. Iterators read up to it, so measuring it from anywhere else
+	// sends them past the blocks into whatever memory follows.
+	blocks_start = parser.buffer.p;
 
 	make_cursor((unsigned char *)content,
 		    (unsigned char*)content + content_len, &parser.content);
@@ -544,7 +553,7 @@ int ndb_parse_content(unsigned char *buf, int buf_size,
 	parser.blocks->flags = 0;
 	parser.blocks->version = 1;
 
-	blocks_start = start = parser.content.p;
+	start = parser.content.p;
 	while (parser.content.p < parser.content.end) {
 		cp = peek_char(&parser.content, -1);
 		c  = peek_char(&parser.content, 0);
