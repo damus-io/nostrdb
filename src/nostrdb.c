@@ -2734,6 +2734,107 @@ static int ndb_migrate_search_key_cmp_fix(struct ndb_txn *txn)
 	return ndb_migrate_user_search_indices(txn);
 }
 
+// Whether a stored blocks row is one we can trust: its header agrees with
+// the size of the row, and every string block lies inside the note's
+// content.
+static int ndb_stored_blocks_ok(struct ndb_blocks *blocks, size_t row_size,
+				struct ndb_note *note)
+{
+	struct ndb_block_iterator iter;
+	struct ndb_block *block;
+	struct ndb_str_block *str;
+	const char *content;
+	size_t content_len, slack;
+
+	if (row_size < sizeof(*blocks) || blocks->total_size > row_size)
+		return 0;
+
+	// blocks_size covers everything after the header but the padding
+	// that aligns total_size to 8 bytes
+	if (blocks->total_size < sizeof(*blocks) + blocks->blocks_size)
+		return 0;
+	slack = blocks->total_size - sizeof(*blocks) - blocks->blocks_size;
+	if (slack >= 8)
+		return 0;
+
+	content = ndb_note_content(note);
+	content_len = ndb_note_content_length(note);
+
+	ndb_blocks_iterate_start(content, blocks, &iter);
+	while ((block = ndb_blocks_iterate_next(&iter))) {
+		if (!(str = ndb_block_str(block)))
+			continue;
+
+		if (str->str < content ||
+		    (size_t)(str->str - content) + str->len > content_len)
+			return 0;
+	}
+
+	return 1;
+}
+
+static int ndb_migrate_bad_note_blocks(struct ndb_txn *txn)
+{
+	// Blocks are cached per note and never reparsed, so rows written by
+	// two old parser bugs live on after the fixes:
+	//
+	//  - a damus.io link measured its bech32 from the start of the
+	//    content, and fell back to a text block running past the end of
+	//    the note
+	//  - blocks_size was measured from the content pointer rather than
+	//    the blocks, so iterators walked off the end of the row
+	//
+	// Delete just those rows. ndb_get_blocks_by_key reparses a note
+	// whose blocks are missing, so they come back right on next read.
+	MDB_val k, v;
+	MDB_cursor *cur;
+	MDB_dbi blocks_db;
+	struct ndb_note *note;
+	uint64_t note_key;
+	size_t note_len;
+	int rc, scanned, deleted;
+
+	blocks_db = txn->lmdb->dbs[NDB_DB_NOTE_BLOCKS];
+
+	if ((rc = mdb_cursor_open(txn->mdb_txn, blocks_db, &cur))) {
+		fprintf(stderr, "ndb_migrate_bad_note_blocks: mdb_cursor_open failed, error %d\n", rc);
+		return 0;
+	}
+
+	scanned = 0;
+	deleted = 0;
+
+	while (mdb_cursor_get(cur, &k, &v, MDB_NEXT) == 0) {
+		scanned++;
+
+		if (k.mv_size != sizeof(note_key))
+			continue;
+		memcpy(&note_key, k.mv_data, sizeof(note_key));
+
+		// a row whose note is gone is unreachable; leave it be
+		if (!(note = ndb_get_note_by_key(txn, note_key, &note_len)))
+			continue;
+
+		if (ndb_stored_blocks_ok(v.mv_data, v.mv_size, note))
+			continue;
+
+		if ((rc = mdb_cursor_del(cur, 0))) {
+			fprintf(stderr, "ndb_migrate_bad_note_blocks: mdb_cursor_del failed, error %d\n", rc);
+			mdb_cursor_close(cur);
+			return 0;
+		}
+
+		deleted++;
+	}
+
+	mdb_cursor_close(cur);
+
+	fprintf(stderr, "nostrdb: dropped %d of %d cached note blocks to reparse\n",
+		deleted, scanned);
+
+	return 1;
+}
+
 int ndb_process_profile_note(struct ndb_note *note, struct ndb_profile_record_builder *profile);
 
 
@@ -3041,6 +3142,7 @@ static struct ndb_migration MIGRATIONS[] = {
 	{ .fn = ndb_migrate_profile_indices },
 	{ .fn = ndb_migrate_metadata },
 	{ .fn = ndb_migrate_search_key_cmp_fix },
+	{ .fn = ndb_migrate_bad_note_blocks },
 };
 
 
