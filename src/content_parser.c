@@ -445,7 +445,9 @@ static int parse_url(struct cursor *cur, struct ndb_block *block) {
 	&& !strncmp((const char *)host, "damus.io", 8)
 	&& parse_nostr_bech32_str(&path_cur, &type))
 	{
-		block->block.str.len = path_cur.p - path_cur.start;
+		// path_cur.start is the start of the whole content, so
+		// measure from where the bech32 string starts instead
+		block->block.str.len = path_cur.p - (unsigned char *)block->block.str.str;
 		block->type = BLOCK_MENTION_BECH32;
 		return 1;
 	}
