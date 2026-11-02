@@ -3963,6 +3963,63 @@ static void test_note_relay_index()
 	printf("ok test_note_relay_index\n");
 }
 
+static void test_no_pubkey_index()
+{
+	struct ndb *ndb;
+	struct ndb_txn txn;
+	struct ndb_config config;
+	struct ndb_filter filter, *f = &filter;
+	struct ndb_query_result results[4];
+	struct ndb_stat stat;
+	unsigned char pubkey[32], id[32];
+	uint64_t note_key = 0;
+	int count, attempts;
+
+	const char *json = "[\"EVENT\",{\"id\": \"0f20295584a62d983a4fa85f7e50b460cd0049f94d8cd250b864bb822a747114\",\"pubkey\": \"55c882cf4a255ac66fc8507e718a1d1283ba46eb7d678d0573184dada1a4f376\",\"created_at\": 1742498339,\"kind\": 1,\"tags\": [],\"content\": \"hi\",\"sig\": \"ae1218280f554ea0b04ae09921031493d60fb7831dfd2dbd7086efeace2719a46842ce80342ebc002da8943df02e98b8b4abb4629c7103ca2114e6c4425f97fe\"}]";
+
+	delete_test_db();
+	ndb_default_config(&config);
+	ndb_config_set_flags(&config, NDB_FLAG_NO_PUBKEY_INDEX);
+	assert(ndb_init(&ndb, test_dir, &config));
+
+	assert(ndb_process_client_event(ndb, json, strlen(json)));
+	hex_decode("0f20295584a62d983a4fa85f7e50b460cd0049f94d8cd250b864bb822a747114", 64, id, 32);
+	// the write goes through the writer thread, so poll until it lands
+	for (attempts = 0; attempts < 100; attempts++) {
+		assert(ndb_begin_query(ndb, &txn));
+		note_key = ndb_get_notekey_by_id(&txn, id);
+		ndb_end_query(&txn);
+		if (note_key) break;
+		usleep(10000);
+	}
+	assert(note_key);
+
+	// the note landed, but nothing went into the author-only index
+	assert(ndb_stat(ndb, &stat));
+	assert(stat.dbs[NDB_DB_NOTE_PUBKEY].count == 0);
+	assert(stat.dbs[NDB_DB_NOTE_PUBKEY_KIND].count == 1);
+
+	// a single-author query without kinds still finds it, by another plan
+	hex_decode("55c882cf4a255ac66fc8507e718a1d1283ba46eb7d678d0573184dada1a4f376", 64, pubkey, 32);
+	assert(ndb_filter_init(f));
+	assert(ndb_filter_start_field(f, NDB_FILTER_AUTHORS));
+	assert(ndb_filter_add_id_element(f, pubkey));
+	ndb_filter_end_field(f);
+	ndb_filter_end(f);
+
+	assert(ndb_begin_query(ndb, &txn));
+	assert(ndb_query(&txn, f, 1, results, 4, &count));
+	assert(count == 1);
+	assert(results[0].note_id == note_key);
+	ndb_end_query(&txn);
+
+	ndb_filter_destroy(f);
+	ndb_destroy(ndb);
+	delete_test_db();
+
+	printf("ok test_no_pubkey_index\n");
+}
+
 static void test_nip50_profile_search() {
 	struct ndb *ndb;
 	struct ndb_txn txn;
@@ -4171,6 +4228,7 @@ int main(int argc, const char *argv[]) {
 	test_reaction_encoding();
 	test_reaction_counter();
 	test_note_relay_index();
+	test_no_pubkey_index();
 	test_filter_search();
 	test_filter_parse_search_json();
 	test_parse_filter_json();

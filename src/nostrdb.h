@@ -23,6 +23,11 @@
 #define NDB_FLAG_NO_FULLTEXT      (1 << 2)
 #define NDB_FLAG_NO_NOTE_BLOCKS   (1 << 3)
 #define NDB_FLAG_NO_STATS         (1 << 4)
+/* Don't write the author-only note_pubkey index. Queries for a single author
+ * without kinds fall back to another plan, so they still answer correctly, just
+ * by scanning. The note_pubkey_kind index is still written. Turning this back
+ * off on a db written with it on leaves that index missing those notes. */
+#define NDB_FLAG_NO_PUBKEY_INDEX  (1 << 5)
 
 //#define DEBUG 1
 

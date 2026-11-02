@@ -281,6 +281,7 @@ struct ndb_json_parser {
 struct ndb_lmdb {
 	MDB_env *env;
 	MDB_dbi dbs[NDB_DBS];
+	uint32_t flags; // the ndb's config flags, for the query planner
 };
 
 /**
@@ -5788,7 +5789,8 @@ static int filter_is_empty(struct ndb_filter *filter) {
 	return filter->elem_buf.start == NULL;
 }
 
-static enum ndb_query_plan ndb_filter_plan(struct ndb_filter *filter)
+static enum ndb_query_plan ndb_filter_plan(struct ndb_filter *filter,
+					   uint32_t ndb_flags)
 {
 	struct ndb_filter_elements *ids, *kinds, *authors, *tags, *search, *relays;
 
@@ -5820,7 +5822,8 @@ static enum ndb_query_plan ndb_filter_plan(struct ndb_filter *filter)
 		// the plan itself has always been multi-author (it merges every
 		// author*kind run); only the scanner count needs bounding
 		return NDB_PLAN_AUTHOR_KINDS;
-	} else if (authors && authors->count == 1) {
+	} else if (authors && authors->count == 1 &&
+		   !ndb_flag_set(ndb_flags, NDB_FLAG_NO_PUBKEY_INDEX)) {
 		return NDB_PLAN_AUTHORS;
 	} else if (tags && tags->count == 1) {
 		return NDB_PLAN_TAGS;
@@ -5887,7 +5890,7 @@ static int ndb_query_filter(struct ndb_txn *txn, struct ndb_filter *filter,
 {
 	enum ndb_query_plan plan;
 
-	plan = ndb_filter_plan(filter);
+	plan = ndb_filter_plan(filter, txn->lmdb->flags);
 	ndb_debug("using query plan '%s'\n", ndb_query_plan_name(plan));
 	switch (plan) {
 	// We have a list of ids, just open a cursor and jump to each once
@@ -7163,7 +7166,8 @@ static uint64_t ndb_write_note(secp256k1_context *secp,
 	ndb_write_note_id_index(txn, note->note, note_key);
 	ndb_write_note_kind_index(txn, note->note, note_key);
 	ndb_write_note_tag_index(txn, note->note, note_key);
-	ndb_write_note_pubkey_index(txn, note->note, note_key);
+	if (!ndb_flag_set(ndb_flags, NDB_FLAG_NO_PUBKEY_INDEX))
+		ndb_write_note_pubkey_index(txn, note->note, note_key);
 	ndb_write_note_pubkey_kind_index(txn, note->note, note_key);
 
 	if (ndb_relay_kind_key_init(&relay_key, note_key, kind, ndb_note_created_at(note->note), note->relay))
@@ -8894,6 +8898,7 @@ int ndb_init(struct ndb **pndb, const char *filename, const struct ndb_config *c
 
 	if (!ndb_init_lmdb(filename, &ndb->lmdb, config->mapsize))
 		return 0;
+	ndb->lmdb.flags = ndb->flags;
 
 	ndb_monitor_init(&ndb->monitor, config->sub_cb, config->sub_cb_ctx);
 
