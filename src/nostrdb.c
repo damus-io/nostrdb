@@ -349,6 +349,7 @@ struct ndb_monitor {
 	ndb_sub_fn sub_cb;
 	void *sub_cb_ctx;
 	int num_subscriptions;
+	uint64_t next_sub_id;
 
 	// monitor isn't a full inbox. We want pollers to be able to poll
 	// subscriptions efficiently without going through a message queue, so
@@ -709,27 +710,32 @@ static inline int ndb_filter_elem_is_ptr(struct ndb_filter_field *field) {
 int ndb_filter_clone(struct ndb_filter *dst, struct ndb_filter *src)
 {
 	size_t src_size, elem_size, data_size;
+	unsigned char *buf;
 
-	memcpy(dst, src, sizeof(*src));
+	if (!src || !src->finalized)
+		return 0;
+
+	if (!src->elem_buf.start) {
+		memcpy(dst, src, sizeof(*src));
+		return 1;
+	}
 
 	elem_size = src->elem_buf.end - src->elem_buf.start;
 	data_size = src->data_buf.end - src->data_buf.start;
 	src_size = data_size + elem_size;
 
-	// let's only allow finalized filters to be cloned
-	if (!src || !src->finalized)
+	buf = malloc(src_size);
+	if (!buf)
 		return 0;
 
-	dst->elem_buf.start = malloc(src_size);
+	memcpy(dst, src, sizeof(*src));
+	dst->elem_buf.start = buf;
 	dst->elem_buf.end = dst->elem_buf.start + elem_size;
 	dst->elem_buf.p = dst->elem_buf.end;
 
 	dst->data_buf.start = dst->elem_buf.start + elem_size;
 	dst->data_buf.end = dst->data_buf.start + data_size;
 	dst->data_buf.p = dst->data_buf.end;
-
-	if (dst->elem_buf.start == NULL)
-		return 0;
 
 	memcpy(dst->elem_buf.start, src->elem_buf.start, src_size);
 
@@ -1654,7 +1660,11 @@ static int ndb_filter_group_add(struct ndb_filter_group *group,
 	if (group->num_filters + 1 > MAX_FILTERS)
 		return 0;
 
-	return ndb_filter_clone(&group->filters[group->num_filters++], filter);
+	if (!ndb_filter_clone(&group->filters[group->num_filters], filter))
+		return 0;
+
+	group->num_filters++;
+	return 1;
 }
 
 static int ndb_filter_group_matches(struct ndb_filter_group *group, struct ndb_note *note)
@@ -8836,6 +8846,7 @@ static void ndb_monitor_init(struct ndb_monitor *monitor, ndb_sub_fn cb,
 			     void *sub_cb_ctx)
 {
 	monitor->num_subscriptions = 0;
+	monitor->next_sub_id = 0;
 	monitor->sub_cb = cb;
 	monitor->sub_cb_ctx = sub_cb_ctx;
 	pthread_mutex_init(&monitor->mutex, NULL);
@@ -11729,41 +11740,43 @@ int ndb_num_subscriptions(struct ndb *ndb)
 
 uint64_t ndb_subscribe(struct ndb *ndb, struct ndb_filter *filters, int num_filters)
 {
-	static uint64_t subids = 0;
 	struct ndb_subscription *sub;
 	size_t buflen;
-	uint64_t subid;
+	uint64_t subid = 0;
 	char *buf;
 
 	ndb_monitor_lock(&ndb->monitor);
 
 	if (ndb->monitor.num_subscriptions + 1 >= MAX_SUBSCRIPTIONS) {
 		fprintf(stderr, "too many subscriptions\n");
-		subid = 0;
 		goto done;
 	}
+	if (ndb->monitor.next_sub_id == UINT64_MAX)
+		goto done;
 
 	sub = &ndb->monitor.subscriptions[ndb->monitor.num_subscriptions];
-	subid = ++subids;
-	sub->subid = subid;
 
 	ndb_filter_group_init(&sub->group);
-	if (!ndb_filter_group_add_filters(&sub->group, filters, num_filters)) {
-		subid = 0;
-		goto done;
-	}
+	if (!ndb_filter_group_add_filters(&sub->group, filters, num_filters))
+		goto destroy_filters;
 
 	// 500k ought to be enough for anyone
 	buflen = sizeof(uint64_t) * DEFAULT_QUEUE_SIZE;
 	buf = malloc(buflen);
 
-	if (!prot_queue_init(&sub->inbox, buf, buflen, sizeof(uint64_t))) {
+	if (!buf || !prot_queue_init(&sub->inbox, buf, buflen, sizeof(uint64_t))) {
 		fprintf(stderr, "failed to push prot queue\n");
-		subid = 0;
-		goto done;
+		free(buf);
+		goto destroy_filters;
 	}
 
+	subid = ++ndb->monitor.next_sub_id;
+	sub->subid = subid;
 	ndb->monitor.num_subscriptions++;
+	goto done;
+
+destroy_filters:
+	ndb_filter_group_destroy(&sub->group);
 done:
 	ndb_monitor_unlock(&ndb->monitor);
 
