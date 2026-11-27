@@ -21,6 +21,8 @@ struct threadpool
 	void *quit_msg;
 };
 
+static inline void threadpool_destroy(struct threadpool *tp);
+
 static int threadpool_init(struct threadpool *tp, int num_threads,
 			   int q_elem_size, int q_num_elems,
 			   void *quit_msg, void *ctx, void* (*thread_fn)(void*))
@@ -48,21 +50,29 @@ static int threadpool_init(struct threadpool *tp, int num_threads,
 
 		if (t->qmem == NULL) {
 			fprintf(stderr, "threadpool_init: couldn't allocate memory for queue");
-			return 0;
+			goto fail;
 		}
 
 		if (!prot_queue_init(&t->inbox, t->qmem, q_elem_size * q_num_elems, q_elem_size)) {
 			fprintf(stderr, "threadpool_init: couldn't init queue. buffer alignment is wrong.");
-			return 0;
+			free(t->qmem);
+			goto fail;
 		}
 
 		if (THREAD_CREATE(t->thread_id, thread_fn, t) != 0) {
 			fprintf(stderr, "threadpool_init: failed to create thread\n");
-			return 0;
+			prot_queue_destroy(&t->inbox);
+			free(t->qmem);
+			goto fail;
 		}
 	}
 
 	return 1;
+
+fail:
+	tp->num_threads = i;
+	threadpool_destroy(tp);
+	return 0;
 }
 
 static inline struct thread *threadpool_next_thread(struct threadpool *tp)
