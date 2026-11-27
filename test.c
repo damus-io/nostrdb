@@ -3565,7 +3565,7 @@ static void test_subscriptions()
 {
 	struct ndb *ndb;
 	struct ndb_config config;
-	struct ndb_filter filter, *f = &filter;
+	struct ndb_filter filters[2], *f = &filters[0];
 	uint64_t subid;
 	uint64_t note_id = 0;
 	struct ndb_txn txn;
@@ -3581,6 +3581,11 @@ static void test_subscriptions()
 	assert(ndb_filter_add_int_element(f, 1337));
 	ndb_filter_end_field(f);
 	ndb_filter_end(f);
+
+	assert(ndb_filter_init(&filters[1]));
+	assert(ndb_subscribe(ndb, filters, 2) == 0);
+	assert(ndb_num_subscriptions(ndb) == 0);
+	ndb_filter_destroy(&filters[1]);
 
 	assert((subid = ndb_subscribe(ndb, f, 1)));
 
