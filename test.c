@@ -89,6 +89,25 @@ static void print_search(struct ndb_txn *txn, struct ndb_search *search)
 	printf("\n");
 }
 
+static void test_init_failure_cleanup(void)
+{
+	struct ndb *ndb = NULL;
+	struct ndb_config config;
+
+	ndb_default_config(&config);
+	assert(!ndb_init(&ndb, "./test.c", &config));
+	assert(ndb == NULL);
+
+	ndb_config_set_ingest_threads(&config, 0);
+	assert(!ndb_init(&ndb, test_dir, &config));
+	assert(ndb == NULL);
+
+	ndb_config_set_ingest_threads(&config, 1);
+	assert(ndb_init(&ndb, test_dir, &config));
+	ndb_destroy(ndb);
+	delete_test_db();
+}
+
 static void test_count_metadata()
 {
 	struct ndb *ndb;
@@ -4151,6 +4170,7 @@ void test_replay_attack() {
 int main(int argc, const char *argv[]) {
 	delete_test_db();
 
+	test_init_failure_cleanup();
 	test_giftwrap_reprocess();
 	test_giftwrap_unwrap();
 	test_pns_unwrap();
